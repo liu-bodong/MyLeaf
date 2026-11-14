@@ -1,6 +1,7 @@
 # Spike: live preview with pdfLaTeX
 
-Status: in progress (analysis done; pdfTeX build and hook prototype next).
+Status: paused (analysis done; pdfTeX build and hook prototype not started).
+The owner decides whether to continue.
 Date: 2026-11-14. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
