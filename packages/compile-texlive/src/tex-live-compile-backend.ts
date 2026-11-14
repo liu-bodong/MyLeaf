@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm, rmdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parseTexLog } from '@myleaf/compile';
 import type {
@@ -147,7 +147,10 @@ export class TexLiveCompileBackend implements CompileBackend {
       `${point.page}:${point.x}:${point.y}:${pdf}`,
     ]);
     const record = parseSynctexRecords(result, 'Output')[0];
-    const file = this.#toProjectPath(projectId, record?.get('Input') ?? '');
+    // SyncTeX records the directory TeX ran in with symlinks resolved
+    // (e.g. /private/var/... for /var/... on macOS).
+    const srcDir = await realpath(this.#srcDir(projectId));
+    const file = this.#toProjectPath(projectId, record?.get('Input') ?? '', srcDir);
     const line = Number(record?.get('Line'));
     const column = Number(record?.get('Column'));
     if (file === null || !Number.isInteger(line) || line < 1) {
@@ -333,11 +336,14 @@ export class TexLiveCompileBackend implements CompileBackend {
   }
 
   /** Maps a path printed by TeX or SyncTeX (relative to src, or absolute) to a project path. */
-  #toProjectPath(projectId: ProjectId, raw: string): ProjectPath | null {
+  #toProjectPath(
+    projectId: ProjectId,
+    raw: string,
+    srcDir = this.#srcDir(projectId),
+  ): ProjectPath | null {
     if (raw === '') {
       return null;
     }
-    const srcDir = this.#srcDir(projectId);
     const relativePath = relative(srcDir, resolve(srcDir, raw));
     if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
       return null;

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CompileRequest } from '@myleaf/compile';
@@ -50,13 +50,20 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
     ...overrides,
   });
 
+  let tempDir: string;
+
   beforeAll(async () => {
-    workRoot = await mkdtemp(join(tmpdir(), 'myleaf-compile-'));
+    tempDir = await mkdtemp(join(tmpdir(), 'myleaf-compile-'));
+    // Reached through a symlink, like macOS's /var -> /private/var: SyncTeX
+    // reports paths with symlinks resolved.
+    await mkdir(join(tempDir, 'real'));
+    await symlink(join(tempDir, 'real'), join(tempDir, 'link'));
+    workRoot = join(tempDir, 'link');
     backend = new TexLiveCompileBackend({ workRoot, timeoutMs: 20_000 });
   });
 
   afterAll(async () => {
-    await rm(workRoot, { recursive: true, force: true });
+    await rm(tempDir, { recursive: true, force: true });
   });
 
   it('compiles a multi-file document to PDF', async () => {
