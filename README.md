@@ -24,14 +24,14 @@ pnpm bench        # compile-time benchmark (ADR 0011)
 
 Server configuration (environment variables):
 
-| Variable                   | Default     | Purpose                                                    |
-| -------------------------- | ----------- | ---------------------------------------------------------- |
-| `HOST`                     | `127.0.0.1` | Address to listen on                                       |
-| `PORT`                     | `3000`      | Port to listen on                                          |
-| `MYLEAF_DATA_DIR`          | `./data`    | Project files (`projects/`) and builds (`builds/`)         |
-| `MYLEAF_TEXPRESSO`         | (unset)     | Patched TeXpresso binary; enables live preview (see below) |
-| `MYLEAF_LIVE_MAX_SESSIONS` | `4`         | Live previews open at once (~250 MB each)                  |
-| `MYLEAF_LIVE_IDLE_MINUTES` | `10`        | Inactivity before a live preview is closed                 |
+| Variable                   | Default     | Purpose                                                                  |
+| -------------------------- | ----------- | ------------------------------------------------------------------------ |
+| `HOST`                     | `127.0.0.1` | Address to listen on                                                     |
+| `PORT`                     | `3000`      | Port to listen on                                                        |
+| `MYLEAF_DATA_DIR`          | `./data`    | Project files (`projects/`) and builds (`builds/`)                       |
+| `MYLEAF_TEXPRESSO`         | (unset)     | Patched TeXpresso binary for live preview; `off` disables it (see below) |
+| `MYLEAF_LIVE_MAX_SESSIONS` | `4`         | Live previews open at once (~250 MB each)                                |
+| `MYLEAF_LIVE_IDLE_MINUTES` | `10`        | Inactivity before a live preview is closed                               |
 
 Live preview (optional, ADR 0012) needs the patched TeXpresso: install the
 packages listed in `vendor/texpresso/README.md` (Ubuntu and macOS; only
@@ -42,11 +42,13 @@ vendor/texpresso/build.sh
 ```
 
 ```bash
-MYLEAF_TEXPRESSO=$PWD/vendor/texpresso/build/bin/texpresso pnpm dev
+pnpm dev
 ```
 
-If that file is missing or not executable, the server logs a warning at
-startup and runs with live preview disabled.
+The server uses `vendor/texpresso/build/bin/texpresso` when it exists, or
+the binary `MYLEAF_TEXPRESSO` points to (`MYLEAF_TEXPRESSO=off` turns live
+preview off). Without a usable binary it runs with live preview disabled and
+says why in its startup log.
 
 There is no authentication yet, and compilation is hardened but not
 sandboxed (see [ADR 0010](docs/adr/0010-projects-storage-and-compile-service.md)).

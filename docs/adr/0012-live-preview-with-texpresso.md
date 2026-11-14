@@ -71,14 +71,16 @@ the nearest snapshot is further back.
   text on every change, independent of the debounced save; saved files and
   uploads are forwarded to open sessions too.
 - `LiveSessionPool` limits sessions (`MYLEAF_LIVE_MAX_SESSIONS`, default 4)
-  and closes idle ones (`MYLEAF_LIVE_IDLE_MINUTES`, default 10). Live preview
-  is enabled by `MYLEAF_TEXPRESSO`. These are environment variables for now;
+  and closes idle ones (`MYLEAF_LIVE_IDLE_MINUTES`, default 10). These and
+  `MYLEAF_TEXPRESSO` (below) are environment variables for now;
   engine choice, compile settings and resource limits are to become
   configurable in the UI later.
 - The web app shows live pages when the project setting `livePreview` is on
   (Compile menu, off by default). A PDF/Live switch keeps the PDF reachable;
   when a session ends, the pane offers Retry and Show PDF.
-- The server checks at startup that `MYLEAF_TEXPRESSO` is executable and
+- The server uses the binary `MYLEAF_TEXPRESSO` names, or else the build of
+  `vendor/texpresso/build.sh` if present; `MYLEAF_TEXPRESSO=off` disables
+  live preview. It checks at startup that the binary is executable and
   otherwise reports live preview as unavailable.
 - Process cleanup: the server closes all sessions on SIGINT/SIGTERM. If it
   dies without closing them (crash, SIGKILL), each session's process group
