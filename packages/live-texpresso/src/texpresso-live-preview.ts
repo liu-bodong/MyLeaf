@@ -152,6 +152,10 @@ class TexpressoSession implements LivePreviewSession {
       });
     });
 
+    // Writes after TeXpresso exited fail with EPIPE; the exit is reported
+    // through 'exit' above, so the write error itself is not needed.
+    child.stdin?.on('error', () => {});
+
     let buffer = '';
     child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
       buffer += chunk;

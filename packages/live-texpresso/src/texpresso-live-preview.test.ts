@@ -54,6 +54,11 @@ describe('TexpressoLivePreview with a missing binary', () => {
       .toEqual([
         { type: 'stopped', reason: expect.stringContaining('could not be started') as string },
       ]);
+    // Commands to an exited process must not raise (EPIPE).
+    for (let i = 0; i < 50; i++) {
+      session.updateFile({ path: parseProjectPath('main.tex'), content: main(`edit ${i}`) });
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
     await session.close();
     expect(readdirSync(join(workRoot, 'missing'))).toEqual([]);
     await rm(workRoot, { recursive: true, force: true });
