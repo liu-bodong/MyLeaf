@@ -25,6 +25,13 @@ const livePreview = texpresso
   : null;
 
 const app = buildApp({ store, compiler, livePreview }, { logger: true });
+
+// Close live-preview sessions (and their TeXpresso processes) on shutdown.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void app.close().then(() => process.exit(0));
+  });
+}
 await app.listen({ host, port });
 app.log.info(`Data directory: ${dataDir}`);
 app.log.info(`Live preview: ${livePreview ? `enabled (${texpresso})` : 'disabled'}`);

@@ -77,6 +77,11 @@ the nearest snapshot is further back.
   configurable in the UI later.
 - The web app shows live pages in place of the PDF when the project setting
   `livePreview` is on (Compile menu, off by default).
+- Process cleanup: the server closes all sessions on SIGINT/SIGTERM. On
+  Linux the adapter starts TeXpresso through `setpriv --pdeathsig TERM`, so
+  sessions also stop if the server dies abruptly; TeXpresso itself keeps
+  running when its stdin closes while idle. Other platforms rely on the
+  graceful shutdown only.
 - CI builds TeXpresso; adapter and end-to-end tests cover it.
 
 Measured in Chromium against the dev server (benchmark paper, page 1):

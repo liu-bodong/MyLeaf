@@ -27,5 +27,9 @@ done
 # `all` generates Makefile.config before building, in the right order.
 make -C "$src" -j"$(nproc)" all >/dev/null
 mkdir -p "$out/bin"
-cp "$src/build/texpresso" "$src/build/texpresso-xetex" "$out/bin/"
+# Copy then rename, so binaries in use by running sessions can be replaced.
+for binary in texpresso texpresso-xetex; do
+  cp "$src/build/$binary" "$out/bin/.$binary.new"
+  mv -f "$out/bin/.$binary.new" "$out/bin/$binary"
+done
 echo "Built $out/bin/texpresso and $out/bin/texpresso-xetex"

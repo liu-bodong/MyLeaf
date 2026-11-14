@@ -17,6 +17,12 @@ export interface TexpressoLivePreviewOptions {
   readonly command: string;
   /** Directory holding per-session workspaces. */
   readonly workRoot: string;
+  /**
+   * Start TeXpresso through `setpriv --pdeathsig TERM` (util-linux), so it is
+   * stopped if the server dies without closing its sessions. Default: on
+   * Linux. Other platforms rely on the server closing sessions on shutdown.
+   */
+  readonly stopWithServer?: boolean;
 }
 
 /** Time allowed for a graceful shutdown before the process group is killed. */
@@ -35,10 +41,12 @@ const STOP_GRACE_MS = 2_000;
 export class TexpressoLivePreview implements LivePreviewBackend {
   readonly #command: string;
   readonly #workRoot: string;
+  readonly #stopWithServer: boolean;
 
   constructor(options: TexpressoLivePreviewOptions) {
     this.#command = options.command;
     this.#workRoot = resolve(options.workRoot);
+    this.#stopWithServer = options.stopWithServer ?? process.platform === 'linux';
   }
 
   async open(
@@ -55,7 +63,11 @@ export class TexpressoLivePreview implements LivePreviewBackend {
       await writeFile(path, file.content);
     }
 
-    const child = spawn(this.#command, ['-json', '-texlive', request.rootFile], {
+    const args = ['-json', '-texlive', request.rootFile];
+    const [command, commandArgs] = this.#stopWithServer
+      ? ['setpriv', ['--pdeathsig', 'TERM', '--', this.#command, ...args]]
+      : [this.#command, args];
+    const child = spawn(command, commandArgs, {
       cwd: srcDir,
       env: { ...process.env, SDL_VIDEODRIVER: 'dummy', TEXPRESSO_EXPORT_DIR: pagesDir },
       stdio: ['pipe', 'pipe', 'ignore'],
