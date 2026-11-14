@@ -25,7 +25,8 @@ Collaboration is the top-priority feature set:
    thread has a resolved state.
 4. **Suggestions (suggest mode).**
    - A suggested insertion is real text in the document, marked with its
-     suggestion id and author.
+     suggestion id. Author, reviewers and status live on the suggestion
+     record, not in the text.
    - A suggested deletion leaves the text in the document, marked as
      "suggested deletion", until accepted.
    - Accept/reject applies or reverts the marked change.
