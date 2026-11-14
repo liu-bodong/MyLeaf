@@ -1,0 +1,30 @@
+{
+  "name": "@myleaf/annotations",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Comment threads and suggestions (track changes) on top of the TextDocument port.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@myleaf/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@myleaf/doc-model": "workspace:*"
+  },
+  "devDependencies": {
+    "@myleaf/testing": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

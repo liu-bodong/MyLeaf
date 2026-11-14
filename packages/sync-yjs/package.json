@@ -1,0 +1,31 @@
+{
+  "name": "@myleaf/sync-yjs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Yjs adapter implementing the TextDocument port.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@myleaf/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@myleaf/doc-model": "workspace:*",
+    "yjs": "catalog:"
+  },
+  "devDependencies": {
+    "@myleaf/testing": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

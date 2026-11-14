@@ -37,11 +37,11 @@ Verified from its repository:
    - **Live preview:** fast, possibly approximate, clearly labeled as preview.
 3. **Speed levels**, implemented in order:
 
-   | Level | Technique |
-   |---|---|
-   | L1 | Precompiled preamble format (`mylatexformat`), persistent warm worker, `\includeonly` for the edited chapter |
-   | L2 | Instant in-editor rendering of the edited paragraph/equation (shared with visual mode) |
-   | L3 | Checkpoint/resume incremental compilation (TeXpresso technique) |
+   | Level | Technique                                                                                                    |
+   | ----- | ------------------------------------------------------------------------------------------------------------ |
+   | L1    | Precompiled preamble format (`mylatexformat`), persistent warm worker, `\includeonly` for the edited chapter |
+   | L2    | Instant in-editor rendering of the edited paragraph/equation (shared with visual mode)                       |
+   | L3    | Checkpoint/resume incremental compilation (TeXpresso technique)                                              |
 
 4. **L3 path:** first integrate TeXpresso as a preview backend on
    Linux/macOS hosts. Its rendering output must be adapted to deliver pages to

@@ -26,15 +26,15 @@ editor platform.
 Libraries and projects to reuse or reference (each license to be re-checked
 when the dependency is added):
 
-| Concern | Library / project |
-|---|---|
-| Source editor | CodeMirror 6 |
-| PDF viewer | PDF.js |
-| Real-time sync | Yjs |
-| LaTeX parsing | unified-latex |
-| Math rendering (visual mode) | KaTeX or MathJax |
-| Source ↔ PDF mapping | SyncTeX |
-| Compilation | TeX Live (latexmk); TeXpresso for live preview (see ADR 0006) |
+| Concern                      | Library / project                                             |
+| ---------------------------- | ------------------------------------------------------------- |
+| Source editor                | CodeMirror 6                                                  |
+| PDF viewer                   | PDF.js                                                        |
+| Real-time sync               | Yjs                                                           |
+| LaTeX parsing                | unified-latex                                                 |
+| Math rendering (visual mode) | KaTeX or MathJax                                              |
+| Source ↔ PDF mapping         | SyncTeX                                                       |
+| Compilation                  | TeX Live (latexmk); TeXpresso for live preview (see ADR 0006) |
 
 ## Consequences
 

@@ -44,3 +44,12 @@ Collaboration is the top-priority feature set:
   wrapping arbitrary changed spans in markup macros can break compilation
   inside math or across environment boundaries.
 - Notification delivery mechanism.
+- **Deleting text that another suggestion inserted.** A character carries at
+  most one suggestion mark. Deleting text inserted by the _same_ suggestion
+  removes it outright; deleting text inserted by a _different_ pending
+  suggestion is currently refused (`SuggestionConflictError`). Final behaviour
+  to be decided.
+- **Editor binding.** `Y.Text#insert` copies neighbouring formatting when no
+  attributes are given; the editor binding must insert typed text through the
+  `TextDocument` port (which always passes explicit marks), or typing next to a
+  suggestion would extend it.

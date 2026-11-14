@@ -18,12 +18,12 @@ others connect", but the codebase must allow other topologies later
 2. **Infrastructure sits behind interfaces**, with one implementation each in
    the MVP:
 
-   | Interface | MVP implementation |
-   |---|---|
-   | Storage | SQLite + local filesystem |
-   | Auth | Local accounts |
-   | Sync transport | WebSocket via the host server |
-   | Compile backend | Local TeX Live (ADR 0006) |
+   | Interface       | MVP implementation            |
+   | --------------- | ----------------------------- |
+   | Storage         | SQLite + local filesystem     |
+   | Auth            | Local accounts                |
+   | Sync transport  | WebSocket via the host server |
+   | Compile backend | Local TeX Live (ADR 0006)     |
 
 3. **Core domain logic depends on interfaces only**, never on a concrete
    implementation.
