@@ -30,7 +30,12 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       onCloseRef.current();
     };
     // Cover a close that does not go through `cancel`, e.g. a dialog form.
-    const onCloseEvent = () => onCloseRef.current();
+    // The `close` event is queued, so one from an earlier `close()` can arrive
+    // after the dialog was shown again (React runs effects twice in
+    // development); only a dialog that is still closed counts.
+    const onCloseEvent = () => {
+      if (!dialog.open) onCloseRef.current();
+    };
     dialog.addEventListener('cancel', onCancel);
     dialog.addEventListener('close', onCloseEvent);
     dialog.showModal();
