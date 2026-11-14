@@ -6,6 +6,10 @@ import { parseProjectPath } from '@myleaf/project';
 import type { ProjectPath } from '@myleaf/project';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
+import { FilePreview } from '../files/FilePreview.js';
+import { previewType } from '../files/file-types.js';
+import { itemsFromFileList } from '../files/upload-items.js';
+import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { LatexEditorHandle } from '../editor/LatexEditor.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
@@ -19,7 +23,7 @@ const AUTO_COMPILE_DELAY_MS = 1000;
 
 type OpenDocument =
   | { readonly kind: 'text'; readonly path: ProjectPath; readonly text: string }
-  | { readonly kind: 'binary'; readonly path: ProjectPath; readonly size: number };
+  | { readonly kind: 'binary'; readonly path: ProjectPath; readonly bytes: Uint8Array };
 
 type SaveState = 'saved' | 'unsaved' | 'saving' | 'error';
 
@@ -48,6 +52,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [compiling, setCompiling] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  /** Folder that the next file-picker upload goes to (`''` is the root). */
+  const uploadTarget = useRef('');
   const [result, setResult] = useState<CompileResult | null>(null);
   const [pdfVersion, setPdfVersion] = useState(0);
   const [highlights, setHighlights] = useState<readonly PdfRect[]>([]);
@@ -93,11 +102,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       const bytes = await api.readFile(projectId, path);
       const text = decodeText(bytes);
       pendingLine.current = line ?? null;
-      setDocument(
-        text === null
-          ? { kind: 'binary', path, size: bytes.byteLength }
-          : { kind: 'text', path, text },
-      );
+      setDocument(text === null ? { kind: 'binary', path, bytes } : { kind: 'text', path, text });
     },
     [document?.path, flushSave, projectId],
   );
@@ -235,23 +240,54 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     }
   };
 
-  const newFile = async () => {
-    const path = askForPath('New file path (e.g. chapters/intro.tex)', '');
+  const newFile = async (folder: string) => {
+    const path = askForPath(
+      'New file path (e.g. chapters/intro.tex)',
+      folder === '' ? '' : `${folder}/`,
+    );
     if (path === null) return;
     await api.writeFile(projectId, path, '');
     await refreshFiles();
     await openFile(path);
   };
 
-  const uploadFiles = async (list: FileList) => {
-    for (const file of Array.from(list)) {
-      await api.writeFile(
-        projectId,
-        parseProjectPath(file.name),
-        new Uint8Array(await file.arrayBuffer()),
+  /** Uploads files into `folder`, asking once before replacing existing files. */
+  const uploadItems = async (items: readonly UploadItem[], folder: string) => {
+    const targets = items.map((item) => ({
+      file: item.file,
+      path: parseProjectPath(folder === '' ? item.path : `${folder}/${item.path}`),
+    }));
+    const existing = new Set<string>(files.map((entry) => entry.path));
+    const replacing = targets.filter((target) => existing.has(target.path));
+    const replace =
+      replacing.length === 0 ||
+      window.confirm(
+        `Replace ${replacing.length} existing file(s)?\n${replacing.map((t) => t.path).join('\n')}`,
       );
+    const uploads = replace ? targets : targets.filter((target) => !existing.has(target.path));
+    try {
+      for (const [index, { file, path }] of uploads.entries()) {
+        setUploadStatus(`Uploading ${index + 1} of ${uploads.length}: ${path}`);
+        await api.writeFile(projectId, path, new Uint8Array(await file.arrayBuffer()));
+        // Reload an open file whose content was replaced.
+        if (path === document?.path) setDocument(null);
+      }
+    } finally {
+      setUploadStatus(null);
+      await refreshFiles();
     }
-    await refreshFiles();
+  };
+
+  const onFilesChosen = (input: HTMLInputElement) => {
+    if (input.files !== null) {
+      void uploadItems(itemsFromFileList(input.files), uploadTarget.current).catch(report);
+    }
+    input.value = '';
+  };
+
+  const chooseUpload = (folder: string, input: HTMLInputElement | null) => {
+    uploadTarget.current = folder;
+    input?.click();
   };
 
   const renameFile = async (from: ProjectPath) => {
@@ -357,20 +393,35 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       )}
       <aside className="sidebar">
         <div className="sidebar-actions">
-          <button onClick={() => void newFile().catch(report)}>New file</button>
-          <label className="upload">
-            Upload
-            <input
-              type="file"
-              multiple
-              onChange={(event) => {
-                const list = event.currentTarget.files;
-                if (list !== null) void uploadFiles(list).catch(report);
-                event.currentTarget.value = '';
-              }}
-            />
-          </label>
+          <button onClick={() => void newFile('').catch(report)}>New file</button>
+          <button onClick={() => chooseUpload('', fileInput.current)}>Upload files</button>
+          <button onClick={() => chooseUpload('', folderInput.current)}>Upload folder</button>
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            data-testid="upload-files-input"
+            onChange={(event) => onFilesChosen(event.currentTarget)}
+          />
+          <input
+            ref={(element) => {
+              folderInput.current = element;
+              // Not in React's typings; makes the picker select a folder.
+              element?.setAttribute('webkitdirectory', '');
+            }}
+            type="file"
+            multiple
+            hidden
+            data-testid="upload-folder-input"
+            onChange={(event) => onFilesChosen(event.currentTarget)}
+          />
         </div>
+        {uploadStatus !== null && (
+          <p className="upload-status" role="status">
+            {uploadStatus}
+          </p>
+        )}
         <FileTree
           files={files}
           openPath={document?.path ?? null}
@@ -379,6 +430,9 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
           onRename={(path) => void renameFile(path).catch(report)}
           onDelete={(path) => void deleteFile(path).catch(report)}
           onSetRoot={(path) => void setRoot(path).catch(report)}
+          onNewFile={(folder) => void newFile(folder).catch(report)}
+          onUpload={(folder) => chooseUpload(folder, fileInput.current)}
+          onDropFiles={(items, folder) => void uploadItems(items, folder).catch(report)}
         />
       </aside>
       <main className="source">
@@ -392,9 +446,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
           />
         )}
         {document?.kind === 'binary' && (
-          <p className="placeholder">
-            {document.path} is a binary file ({document.size} bytes) and cannot be edited here.
-          </p>
+          <FilePreview
+            path={document.path}
+            bytes={document.bytes}
+            type={previewType(document.path)}
+          />
         )}
         {document === null && <p className="placeholder">Select a file.</p>}
       </main>
