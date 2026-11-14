@@ -7,12 +7,26 @@ interface EditorToolbarProps {
   readonly history: EditHistory | null;
   readonly onUndo: () => void;
   readonly onRedo: () => void;
+  readonly fileTreeOpen: boolean;
+  readonly onToggleFileTree: () => void;
 }
 
-/** Above the editor: Code/Visual switch (Visual is planned) and undo/redo. */
-export function EditorToolbar({ history, onUndo, onRedo }: EditorToolbarProps) {
+/** Above the editor: file-tree toggle, Code/Visual switch (Visual is planned) and undo/redo. */
+export function EditorToolbar(props: EditorToolbarProps) {
+  const { history, onUndo, onRedo, fileTreeOpen, onToggleFileTree } = props;
   return (
     <div className="pane-toolbar editor-toolbar" role="toolbar" aria-label="Editor">
+      <button
+        type="button"
+        className="icon-button"
+        aria-label="File tree"
+        aria-pressed={fileTreeOpen}
+        title={fileTreeOpen ? 'Hide file tree' : 'Show file tree'}
+        onClick={onToggleFileTree}
+      >
+        <Icon name="file-tree" />
+      </button>
+      <span className="toolbar-separator" />
       <div className="segmented" role="radiogroup" aria-label="Editor mode">
         <button type="button" role="radio" aria-checked="true">
           Code

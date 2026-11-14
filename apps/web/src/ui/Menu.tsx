@@ -15,8 +15,9 @@ export type MenuItem =
       /** Tooltip, e.g. why the item is disabled. */
       readonly hint?: string;
       readonly shortcut?: string;
-      /** Set for one-of-many choices; renders a radio item. */
+      /** Set for choices; renders a radio item, or a checkbox item with `checkbox`. */
       readonly checked?: boolean;
+      readonly checkbox?: boolean;
     }
   | { readonly kind: 'separator' };
 
@@ -86,7 +87,13 @@ export function MenuList({
           <button
             key={index}
             type="button"
-            role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
+            role={
+              item.checked === undefined
+                ? 'menuitem'
+                : item.checkbox === true
+                  ? 'menuitemcheckbox'
+                  : 'menuitemradio'
+            }
             aria-checked={item.checked}
             aria-disabled={disabled}
             title={item.hint ?? (item.onSelect === undefined ? NOT_AVAILABLE : undefined)}

@@ -11,6 +11,7 @@ const PATHS = {
   minus: 'M3.5 8h9',
   history: 'M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5V5H5M8 5v3l2 1.5',
   layout: 'M2 3h12v10H2zM8 3v10',
+  'file-tree': 'M2 3h12v10H2zM6 3v10',
   share: 'M8 2.5v7M5 5.5l3-3 3 3M3.5 9v4h9V9',
   recompile: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3',
   home: 'M2.5 7.5L8 3l5.5 4.5M4 6.5V13h8V6.5',

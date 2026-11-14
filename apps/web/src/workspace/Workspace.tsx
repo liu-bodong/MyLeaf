@@ -478,6 +478,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       items: [
         ...viewItems,
         { kind: 'separator' },
+        {
+          label: 'File tree',
+          checkbox: true,
+          checked: layout.fileTree,
+          onSelect: () => updateLayout({ fileTree: !layout.fileTree }),
+        },
+        { kind: 'separator' },
         { label: 'Show in PDF', onSelect: goToPdf, disabled: !canShowInPdf },
         { label: 'Show in source', onSelect: goToSource, disabled: !hasPdf },
       ],
@@ -529,6 +536,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       )}
       <div className="workspace-body">
         <Sidebar
+          open={layout.fileTree}
           width={layout.sidebar}
           min={SIDEBAR_MIN}
           max={SIDEBAR_MAX}
@@ -638,6 +646,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 history={document?.kind === 'text' ? editHistory : null}
                 onUndo={() => editorRef.current?.undo()}
                 onRedo={() => editorRef.current?.redo()}
+                fileTreeOpen={layout.fileTree}
+                onToggleFileTree={() => updateLayout({ fileTree: !layout.fileTree })}
               />
               <main className="source">
                 {document?.kind === 'text' && (

@@ -3,6 +3,8 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { SIDEBAR_DEFAULT } from './layout.js';
 
 interface SidebarProps {
+  /** False hides the sidebar and its resizer; the content stays mounted. */
+  readonly open: boolean;
   readonly width: number;
   readonly min: number;
   readonly max: number;
@@ -19,7 +21,7 @@ const SHIFT_KEY_STEP = 40;
  * handle to reset. The resizer is hidden on narrow layouts, where the sidebar
  * stacks above the panes.
  */
-export function Sidebar({ width, min, max, onWidthChange, children }: SidebarProps) {
+export function Sidebar({ open, width, min, max, onWidthChange, children }: SidebarProps) {
   const [dragged, setDragged] = useState<number | null>(null);
   const shown = Math.round(dragged ?? width);
   const clamp = (value: number) => Math.min(max, Math.max(min, value));
@@ -67,11 +69,12 @@ export function Sidebar({ width, min, max, onWidthChange, children }: SidebarPro
 
   return (
     <>
-      <aside className="sidebar" aria-label="Files" style={{ width: shown }}>
+      <aside className="sidebar" aria-label="Files" hidden={!open} style={{ width: shown }}>
         {children}
       </aside>
       <div
         className="sidebar-resizer"
+        hidden={!open}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize file tree"

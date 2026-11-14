@@ -3,15 +3,18 @@ import { DEFAULT_LAYOUT, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, parseLayout } from
 
 describe('parseLayout', () => {
   it('reads a saved layout', () => {
-    expect(parseLayout('{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true}')).toEqual(
-      {
-        view: 'pdf',
-        split: 0.4,
-        sidebar: 300,
-        zoom: 1.25,
-        logs: true,
-      },
-    );
+    expect(
+      parseLayout(
+        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false}',
+      ),
+    ).toEqual({
+      view: 'pdf',
+      split: 0.4,
+      sidebar: 300,
+      zoom: 1.25,
+      logs: true,
+      fileTree: false,
+    });
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');
   });
 

@@ -158,6 +158,37 @@ test('the file tree sidebar can be resized', async ({ page }) => {
   );
 });
 
+test('the file tree can be collapsed entirely', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Collapse');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+
+  const sidebar = page.getByRole('complementary', { name: 'Files' });
+  const toggle = page.getByRole('button', { name: 'File tree' });
+  await expect(sidebar).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+  // The toolbar toggle hides the sidebar and its resizer; the editor takes the space.
+  const editorBefore = (await page.locator('.cm-editor').boundingBox())?.width ?? 0;
+  await toggle.click();
+  await expect(sidebar).toBeHidden();
+  await expect(page.getByRole('separator', { name: 'Resize file tree' })).toBeHidden();
+  const editorAfter = (await page.locator('.cm-editor').boundingBox())?.width ?? 0;
+  expect(editorAfter).toBeGreaterThan(editorBefore);
+
+  // Collapsed stays collapsed after a reload; the View menu brings it back.
+  await page.reload();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+  await expect(sidebar).toBeHidden();
+  await page.getByRole('menuitem', { name: 'View', exact: true }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: 'File tree' });
+  await expect(item).toHaveAttribute('aria-checked', 'false');
+  await item.click();
+  await expect(sidebar).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('menus open and navigate with the keyboard', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('New project name').fill('Menus');
