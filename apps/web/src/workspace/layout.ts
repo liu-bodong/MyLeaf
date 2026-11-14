@@ -9,18 +9,32 @@ export interface Layout {
   readonly view: LayoutView;
   /** Share of the width given to the editor in the split view. */
   readonly split: number;
+  /** Width of the file-tree sidebar in CSS pixels. */
+  readonly sidebar: number;
   readonly zoom: PdfZoom;
 }
 
 export const SPLIT_MIN = 0.2;
 export const SPLIT_MAX = 0.8;
-export const DEFAULT_LAYOUT: Layout = { view: 'split', split: 0.5, zoom: 'fit-width' };
+export const SIDEBAR_MIN = 160;
+export const SIDEBAR_MAX = 480;
+export const SIDEBAR_DEFAULT = 240;
+export const DEFAULT_LAYOUT: Layout = {
+  view: 'split',
+  split: 0.5,
+  sidebar: SIDEBAR_DEFAULT,
+  zoom: 'fit-width',
+};
 
 const STORAGE_KEY = 'myleaf.layout';
 const VIEWS: readonly LayoutView[] = ['split', 'editor', 'pdf'];
 
 export function clampSplit(split: number): number {
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split));
+}
+
+export function clampSidebar(width: number): number {
+  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width));
 }
 
 function parseZoom(value: unknown): PdfZoom | null {
@@ -51,6 +65,10 @@ export function parseLayout(raw: string | null): Layout {
       typeof saved.split === 'number' && Number.isFinite(saved.split)
         ? clampSplit(saved.split)
         : DEFAULT_LAYOUT.split,
+    sidebar:
+      typeof saved.sidebar === 'number' && Number.isFinite(saved.sidebar)
+        ? clampSidebar(saved.sidebar)
+        : DEFAULT_LAYOUT.sidebar,
     zoom: parseZoom(saved.zoom) ?? DEFAULT_LAYOUT.zoom,
   };
 }

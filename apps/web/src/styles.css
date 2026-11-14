@@ -177,10 +177,22 @@ a {
 }
 
 .sidebar {
-  flex: 0 0 clamp(180px, 16vw, 240px);
+  flex: 0 0 auto;
   overflow: auto;
   border-right: 1px solid var(--border);
   background: var(--bg-muted);
+}
+
+.sidebar-resizer {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible {
+  background: var(--bg-hover);
 }
 
 .sidebar-actions {
@@ -1009,7 +1021,12 @@ button.icon-button:hover:not(:disabled) {
 
   .sidebar {
     flex: none;
+    width: auto !important;
     max-height: 30vh;
+  }
+
+  .sidebar-resizer {
+    display: none;
   }
 
   .split {

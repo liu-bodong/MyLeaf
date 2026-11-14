@@ -116,6 +116,39 @@ test('double-clicking the divider resets the split', async ({ page }) => {
   await expect(handle).toHaveAttribute('aria-valuenow', '50');
 });
 
+test('the file tree sidebar can be resized', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Sidebar');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+
+  const resizer = page.getByRole('separator', { name: 'Resize file tree' });
+  const sidebar = page.locator('.sidebar');
+  await expect(resizer).toHaveAttribute('aria-valuenow', '240');
+
+  // The keyboard resizes it and the rendered width follows.
+  const before = (await sidebar.boundingBox())?.width ?? 0;
+  await resizer.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(resizer).toHaveAttribute('aria-valuenow', '248');
+  const after = (await sidebar.boundingBox())?.width ?? 0;
+  expect(after).toBeGreaterThan(before);
+
+  // Double-click resets to the default width.
+  await resizer.dblclick();
+  await expect(resizer).toHaveAttribute('aria-valuenow', '240');
+
+  // The width persists across reloads.
+  await resizer.focus();
+  await page.keyboard.press('End');
+  await expect(resizer).toHaveAttribute('aria-valuenow', '480');
+  await page.reload();
+  await expect(page.getByRole('separator', { name: 'Resize file tree' })).toHaveAttribute(
+    'aria-valuenow',
+    '480',
+  );
+});
+
 test('menus open and navigate with the keyboard', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('New project name').fill('Menus');

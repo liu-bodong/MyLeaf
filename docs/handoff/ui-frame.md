@@ -143,16 +143,17 @@ diagnostics strip under the PDF (open by default).
   close on success, remember the choice, show the warning count too.
 - Done: behaviour agreed and covered by `e2e/ui-frame.spec.ts`.
 
-### 8. Split and sidebar
+### 8. Split and sidebar — done (except collapsing)
 
 - Split ratio is limited to 20–80 % and saved per browser. Double-click on
   the divider resets it to 50 % (covered by `e2e/ui-frame.spec.ts`). Still
   open: touch drag on a device.
-- The sidebar has a fixed width (`clamp(180px, 16vw, 240px)`) and is not
-  resizable or collapsible.
-- Files: `ui/SplitPane.tsx`, `styles.css`, `Workspace.tsx`.
-- Done: double-click reset with an e2e check; sidebar behaviour agreed with
-  the project owner.
+- The sidebar is resizable by dragging its right edge or with the keyboard
+  (focus the separator; arrows/Home/End), double-click resets it, and the
+  width is saved per browser. Still open: collapsing it.
+- Files: `ui/SplitPane.tsx`, `workspace/Sidebar.tsx`, `workspace/layout.ts`,
+  `styles.css`, `Workspace.tsx`.
+- Done: divider reset and sidebar resize, both with e2e checks.
 
 ### 9. PDF viewer details
 
