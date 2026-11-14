@@ -18,5 +18,6 @@ Status values: `Proposed`, `Accepted`, `Superseded by NNNN`.
 | [0009](0009-module-boundaries.md)                    | Module boundaries: ports and adapters     | Accepted |
 | [0010](0010-projects-storage-and-compile-service.md) | Projects, storage and the compile service | Accepted |
 | [0011](0011-compile-on-host-and-fast-compiles.md)    | Compile on the host; fast compiles (L1)   | Accepted |
+| [0012](0012-live-preview-with-texpresso.md)          | Live preview with a patched TeXpresso     | Accepted |
 
 Template: copy [0000-template.md](0000-template.md).

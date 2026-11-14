@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Builds TeXpresso at a pinned upstream commit with MyLeaf's patches applied.
+#
+# Usage: vendor/texpresso/build.sh [output-dir]   (default: vendor/texpresso/build)
+#
+# Requires the build dependencies listed in vendor/texpresso/README.md.
+set -euo pipefail
+
+UPSTREAM=https://github.com/let-def/texpresso.git
+COMMIT=e8df7709077b2f86f6e16e6c86ceefb86de06f8d
+
+here="$(cd "$(dirname "$0")" && pwd)"
+out="${1:-$here/build}"
+src="$out/src"
+
+if [ ! -d "$src/.git" ]; then
+  git clone --quiet "$UPSTREAM" "$src"
+fi
+git -C "$src" fetch --quiet origin "$COMMIT"
+git -C "$src" checkout --quiet --force "$COMMIT"
+git -C "$src" clean --quiet -fdx
+
+for patch in "$here"/*.patch; do
+  git -C "$src" apply "$patch"
+done
+
+# `all` generates Makefile.config before building, in the right order.
+make -C "$src" -j"$(nproc)" all >/dev/null
+mkdir -p "$out/bin"
+cp "$src/build/texpresso" "$src/build/texpresso-xetex" "$out/bin/"
+echo "Built $out/bin/texpresso and $out/bin/texpresso-xetex"

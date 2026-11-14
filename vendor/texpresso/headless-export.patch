@@ -1,0 +1,79 @@
+diff --git a/src/frontend/main.c b/src/frontend/main.c
+index c202294..08e29e6 100644
+--- a/src/frontend/main.c
++++ b/src/frontend/main.c
+@@ -917,9 +917,74 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
+   return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
+ }
+ 
++// Headless page export (MyLeaf patch). When TEXPRESSO_EXPORT_DIR is set,
++// every displayed page is written atomically to <dir>/page-<n>.svg (or .png
++// with TEXPRESSO_EXPORT_FORMAT=png) and announced on stdout as
++// ["page-exported", n, "path", milliseconds].
++static void export_page(fz_context *ctx, fz_display_list *dl, int page)
++{
++  const char *dir = getenv("TEXPRESSO_EXPORT_DIR");
++  if (!dir)
++    return;
++  const char *format = getenv("TEXPRESSO_EXPORT_FORMAT");
++  bool png = format && strcmp(format, "png") == 0;
++
++  char path[4096], tmp[4200];
++  snprintf(path, sizeof(path), "%s/page-%d.%s", dir, page + 1, png ? "png" : "svg");
++  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
++
++  struct timespec start, end;
++  clock_gettime(CLOCK_MONOTONIC, &start);
++  fz_rect bounds = fz_bound_display_list(ctx, dl);
++  fz_output *out = NULL;
++  fz_device *dev = NULL;
++  fz_pixmap *pix = NULL;
++  fz_var(out);
++  fz_var(dev);
++  fz_var(pix);
++  fz_try(ctx)
++  {
++    if (png)
++    {
++      pix = fz_new_pixmap_from_display_list(ctx, dl, fz_scale(2, 2), fz_device_rgb(ctx), 0);
++      fz_save_pixmap_as_png(ctx, pix, tmp);
++    }
++    else
++    {
++      out = fz_new_output_with_path(ctx, tmp, 0);
++      dev = fz_new_svg_device(ctx, out, bounds.x1 - bounds.x0, bounds.y1 - bounds.y0,
++                              FZ_SVG_TEXT_AS_PATH, 1);
++      fz_run_display_list(ctx, dl, dev, fz_identity, fz_infinite_rect, NULL);
++      fz_close_device(ctx, dev);
++      fz_close_output(ctx, out);
++    }
++  }
++  fz_always(ctx)
++  {
++    fz_drop_device(ctx, dev);
++    fz_drop_output(ctx, out);
++    fz_drop_pixmap(ctx, pix);
++  }
++  fz_catch(ctx)
++  {
++    fprintf(stderr, "[export] page %d: %s\n", page + 1, fz_caught_message(ctx));
++    return;
++  }
++  if (rename(tmp, path) != 0)
++  {
++    perror("[export] rename");
++    return;
++  }
++  clock_gettime(CLOCK_MONOTONIC, &end);
++  int ms = (int)((end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000);
++  printf("[\"page-exported\", %d, \"%s\", %d]\n", page + 1, path, ms);
++  fflush(stdout);
++}
++
+ static void display_page(struct persistent_state *ps, ui_state *ui)
+ {
+   fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
++  export_page(ps->ctx, dl, ui->page);
+   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
+   fz_drop_display_list(ps->ctx, dl);
+   schedule_event(RENDER_EVENT);

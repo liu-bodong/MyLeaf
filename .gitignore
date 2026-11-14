@@ -8,3 +8,4 @@ coverage/
 data/
 test-results/
 playwright-report/
+vendor/texpresso/build/
