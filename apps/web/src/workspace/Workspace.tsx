@@ -13,10 +13,21 @@ import { LiveChannel } from '../live/live-channel.js';
 import { LivePreviewPane } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
-import type { LatexEditorHandle } from '../editor/LatexEditor.js';
+import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
+import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
+import { Icon } from '../ui/icons.js';
+import type { MenuDefinition, MenuItem } from '../ui/Menu.js';
+import { SplitPane } from '../ui/SplitPane.js';
+import { CompileSettings } from './CompileSettings.js';
 import { Diagnostics } from './Diagnostics.js';
+import { EditorToolbar } from './EditorToolbar.js';
 import { FileTree } from './FileTree.js';
+import { SPLIT_MAX, SPLIT_MIN, loadLayout, saveLayout } from './layout.js';
+import type { Layout, LayoutView } from './layout.js';
+import { PdfToolbar } from './PdfToolbar.js';
+import { shortcut } from './shortcuts.js';
+import { TopBar } from './TopBar.js';
 
 /** Delay between the last keystroke and saving. */
 const SAVE_DELAY_MS = 800;
@@ -53,7 +64,10 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [document, setDocument] = useState<OpenDocument | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [compiling, setCompiling] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [layout, setLayout] = useState<Layout>(loadLayout);
+  const [editHistory, setEditHistory] = useState<EditHistory | null>(null);
+  const [pdfView, setPdfView] = useState<PdfViewState>({ page: 0, pages: 0, zoom: null });
+  const [logsOpen, setLogsOpen] = useState(true);
   const [liveAvailable, setLiveAvailable] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
   /** Output shown while live preview is on; the PDF stays reachable. */
@@ -70,6 +84,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [highlights, setHighlights] = useState<readonly PdfRect[]>([]);
   const [error, setError] = useState<string | null>(null);
   const editorRef = useRef<LatexEditorHandle>(null);
+  const pdfRef = useRef<PdfViewerHandle>(null);
   const pendingSave = useRef<PendingSave | null>(null);
   /** Line to move to once a newly opened document is in the editor. */
   const pendingLine = useRef<number | null>(null);
@@ -79,6 +94,18 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const autoCompileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const report = useCallback((reason: unknown) => setError(errorMessage(reason)), []);
+
+  const updateLayout = useCallback((change: Partial<Layout>) => {
+    setLayout((current) => {
+      const next = { ...current, ...change };
+      saveLayout(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (project !== null) window.document.title = `${project.name} – MyLeaf`;
+  }, [project]);
 
   const refreshFiles = useCallback(async () => {
     setFiles(await api.listFiles(projectId));
@@ -239,6 +266,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     [openFile, projectId],
   );
 
+  /** Inverse search from the PDF's reading line. */
+  const showInSource = useCallback(async () => {
+    const point = pdfRef.current?.readingPoint() ?? null;
+    if (point !== null) await inverseSearch(point);
+  }, [inverseSearch]);
+
   const selectDiagnostic = useCallback(
     (diagnostic: Diagnostic) => {
       if (diagnostic.line === null) return;
@@ -336,199 +369,329 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     setProject(await api.updateProject(projectId, { rootFile: path }));
   };
 
+  const renameProject = async () => {
+    const name = window.prompt('Project name', project?.name)?.trim();
+    if (name === undefined || name === '' || name === project?.name) return;
+    setProject(await api.updateProject(projectId, { name }));
+  };
+
   if (project === null) {
     return error === null ? <p className="loading">Loading…</p> : <p className="error">{error}</p>;
   }
 
+  const hasPdf = pdfVersion > 0;
+  const pdfUrl = hasPdf ? api.pdfUrl(projectId, pdfVersion) : null;
+  const pdfShown = !showLive || outputView === 'pdf';
+  const canShowInPdf = document?.kind === 'text' && hasPdf;
+  const canShowInSource = hasPdf && pdfShown && layout.view !== 'editor';
+  const downloadPdf = () => {
+    if (pdfUrl === null) return;
+    const link = window.document.createElement('a');
+    link.href = pdfUrl;
+    link.download = `${project.name}.pdf`;
+    link.click();
+  };
+
+  /** Forward search; makes the PDF visible first. */
+  const goToPdf = () => {
+    if (layout.view === 'editor') updateLayout({ view: 'split' });
+    setOutputView('pdf');
+    void showInPdf().catch(report);
+  };
+  /** Inverse search from the PDF; makes the editor visible. */
+  const goToSource = () => {
+    if (layout.view === 'pdf') updateLayout({ view: 'split' });
+    void showInSource().catch(report);
+  };
+
+  const viewItems = (
+    [
+      ['split', 'Editor & PDF'],
+      ['editor', 'Editor only'],
+      ['pdf', 'PDF only'],
+    ] as const
+  ).map(([view, label]): MenuItem => ({
+    label,
+    checked: layout.view === view,
+    onSelect: () => updateLayout({ view: view satisfies LayoutView }),
+  }));
+
+  const menus: MenuDefinition[] = [
+    {
+      label: 'File',
+      items: [
+        { label: 'New file…', onSelect: () => void newFile('').catch(report) },
+        { label: 'Upload files…', onSelect: () => chooseUpload('', fileInput.current) },
+        { label: 'Upload folder…', onSelect: () => chooseUpload('', folderInput.current) },
+        { kind: 'separator' },
+        { label: 'Download PDF', onSelect: downloadPdf, disabled: !hasPdf },
+        { label: 'Download source (.zip)' },
+        { kind: 'separator' },
+        { label: 'Back to projects', onSelect: () => (window.location.hash = '#/') },
+      ],
+    },
+    {
+      label: 'Edit',
+      items: [
+        {
+          label: 'Undo',
+          shortcut: shortcut('Z'),
+          onSelect: () => editorRef.current?.undo(),
+          disabled: editHistory?.canUndo !== true,
+        },
+        {
+          label: 'Redo',
+          shortcut: shortcut('Z', { shift: true }),
+          onSelect: () => editorRef.current?.redo(),
+          disabled: editHistory?.canRedo !== true,
+        },
+        { kind: 'separator' },
+        {
+          label: 'Find and replace',
+          shortcut: shortcut('F'),
+          onSelect: () => editorRef.current?.openSearch(),
+          disabled: document?.kind !== 'text',
+        },
+      ],
+    },
+    {
+      label: 'Insert',
+      items: [
+        { label: 'Figure…' },
+        { label: 'Table…' },
+        { label: 'Citation…' },
+        { label: 'Cross-reference…' },
+      ],
+    },
+    {
+      label: 'View',
+      items: [
+        ...viewItems,
+        { kind: 'separator' },
+        { label: 'Show in PDF', onSelect: goToPdf, disabled: !canShowInPdf },
+        { label: 'Show in source', onSelect: goToSource, disabled: !hasPdf },
+      ],
+    },
+    {
+      label: 'Format',
+      items: [
+        { label: 'Bold', shortcut: shortcut('B') },
+        { label: 'Italic', shortcut: shortcut('I') },
+        { kind: 'separator' },
+        { label: 'Bulleted list' },
+        { label: 'Numbered list' },
+      ],
+    },
+    {
+      label: 'Help',
+      items: [{ label: 'Keyboard shortcuts' }, { label: 'Documentation' }],
+    },
+  ];
+
+  const projectItems: MenuItem[] = [
+    { label: 'Rename…', onSelect: () => void renameProject().catch(report) },
+    { label: 'Download PDF', onSelect: downloadPdf, disabled: !hasPdf },
+    { label: 'Download source (.zip)' },
+    { kind: 'separator' },
+    { label: 'Back to projects', onSelect: () => (window.location.hash = '#/') },
+  ];
+
+  const errorCount =
+    result === null ? null : result.diagnostics.filter((d) => d.severity === 'error').length;
+
   return (
     <div className="workspace">
-      <header className="toolbar">
-        <a href="#/" className="back">
-          ← Projects
-        </a>
-        <h1>{project.name}</h1>
-        <span className={`save-state ${saveState}`} data-testid="save-state">
-          {saveState}
-        </span>
-        <button
-          onClick={() => void showInPdf().catch(report)}
-          disabled={document?.kind !== 'text' || pdfVersion === 0}
-        >
-          Show in PDF
-        </button>
-        <div className="compile-group">
-          <button
-            className="primary"
-            onClick={() => void compile().catch(report)}
-            disabled={compiling}
-          >
-            {compiling ? 'Compiling…' : 'Compile'}
-          </button>
-          <button
-            className="primary menu-toggle"
-            aria-label="Compile settings"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            ▾
-          </button>
-          {menuOpen && (
-            <div className="compile-menu" role="group" aria-label="Compile settings">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={project.settings.autoCompile}
-                  onChange={(event) =>
-                    void updateSettings({ autoCompile: event.target.checked }).catch(report)
-                  }
-                />
-                <span>
-                  Auto-compile
-                  <small>After a 1 s pause in typing</small>
-                </span>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={project.settings.precompilePreamble}
-                  onChange={(event) =>
-                    void updateSettings({ precompilePreamble: event.target.checked }).catch(report)
-                  }
-                />
-                <span>
-                  Precompile preamble
-                  <small>Faster pdfLaTeX compiles; turn off if a package misbehaves</small>
-                </span>
-              </label>
-              <label title={liveAvailable ? undefined : 'Not enabled on this server'}>
-                <input
-                  type="checkbox"
-                  disabled={!liveAvailable}
-                  checked={showLive}
-                  onChange={(event) => {
-                    if (event.target.checked) setOutputView('live');
-                    void updateSettings({ livePreview: event.target.checked }).catch(report);
-                  }}
-                />
-                <span>
-                  Live preview (XeLaTeX)
-                  <small>
-                    {liveAvailable
-                      ? 'Pages update as you type; may differ from the pdfLaTeX PDF'
-                      : 'Not enabled on this server'}
-                  </small>
-                </span>
-              </label>
-            </div>
-          )}
-        </div>
-      </header>
+      <TopBar
+        projectName={project.name}
+        saveState={saveState}
+        menus={menus}
+        projectItems={projectItems}
+        layoutItems={viewItems}
+      />
       {error !== null && (
         <div className="error-bar" role="alert">
           {error}
           <button onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
-      <aside className="sidebar">
-        <div className="sidebar-actions">
-          <button onClick={() => void newFile('').catch(report)}>New file</button>
-          <button onClick={() => chooseUpload('', fileInput.current)}>Upload files</button>
-          <button onClick={() => chooseUpload('', folderInput.current)}>Upload folder</button>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            data-testid="upload-files-input"
-            onChange={(event) => onFilesChosen(event.currentTarget)}
-          />
-          <input
-            ref={(element) => {
-              folderInput.current = element;
-              // Not in React's typings; makes the picker select a folder.
-              element?.setAttribute('webkitdirectory', '');
-            }}
-            type="file"
-            multiple
-            hidden
-            data-testid="upload-folder-input"
-            onChange={(event) => onFilesChosen(event.currentTarget)}
-          />
-        </div>
-        {uploadStatus !== null && (
-          <p className="upload-status" role="status">
-            {uploadStatus}
-          </p>
-        )}
-        <FileTree
-          files={files}
-          openPath={document?.path ?? null}
-          rootFile={project.rootFile}
-          onOpen={(path) => void openFile(path).catch(report)}
-          onRename={(path) => void renameFile(path).catch(report)}
-          onDelete={(path) => void deleteFile(path).catch(report)}
-          onSetRoot={(path) => void setRoot(path).catch(report)}
-          onNewFile={(folder) => void newFile(folder).catch(report)}
-          onUpload={(folder) => chooseUpload(folder, fileInput.current)}
-          onDropFiles={(items, folder) => void uploadItems(items, folder).catch(report)}
-        />
-      </aside>
-      <main className="source">
-        {document?.kind === 'text' && (
-          <LatexEditor
-            ref={editorRef}
-            documentId={document.path}
-            initialText={document.text}
-            onChange={handleChange}
-            onCompile={() => void compile()}
-          />
-        )}
-        {document?.kind === 'binary' && (
-          <FilePreview
-            path={document.path}
-            bytes={document.bytes}
-            type={previewType(document.path)}
-          />
-        )}
-        {document === null && <p className="placeholder">Select a file.</p>}
-      </main>
-      <section className="output">
-        {showLive && (
-          <div className="output-tabs" role="tablist" aria-label="Output">
-            {(['live', 'pdf'] as const).map((view) => (
-              <button
-                key={view}
-                role="tab"
-                aria-selected={outputView === view}
-                onClick={() => setOutputView(view)}
-              >
-                {view === 'live' ? 'Live' : 'PDF'}
-              </button>
-            ))}
-          </div>
-        )}
-        {/* The live pane stays mounted while the PDF is shown, keeping its session. */}
-        {showLive && (
-          <div className="output-view" hidden={outputView !== 'live'}>
-            <LivePreviewPane
-              key={liveAttempt}
-              projectId={projectId}
-              channel={liveChannel}
-              onReady={sendOpenDocumentToLive}
-              onShowPdf={() => setOutputView('pdf')}
-              onRetry={() => setLiveAttempt((attempt) => attempt + 1)}
+      <div className="workspace-body">
+        <aside className="sidebar">
+          <div className="sidebar-actions">
+            <button onClick={() => void newFile('').catch(report)}>New file</button>
+            <button onClick={() => chooseUpload('', fileInput.current)}>Upload files</button>
+            <button onClick={() => chooseUpload('', folderInput.current)}>Upload folder</button>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              data-testid="upload-files-input"
+              onChange={(event) => onFilesChosen(event.currentTarget)}
+            />
+            <input
+              ref={(element) => {
+                folderInput.current = element;
+                // Not in React's typings; makes the picker select a folder.
+                element?.setAttribute('webkitdirectory', '');
+              }}
+              type="file"
+              multiple
+              hidden
+              data-testid="upload-folder-input"
+              onChange={(event) => onFilesChosen(event.currentTarget)}
             />
           </div>
-        )}
-        <div className="output-view" hidden={showLive && outputView !== 'pdf'}>
-          <PdfViewer
-            url={pdfVersion === 0 ? null : api.pdfUrl(projectId, pdfVersion)}
-            highlights={highlights}
-            onInverseSearch={(point) => void inverseSearch(point).catch(report)}
+          {uploadStatus !== null && (
+            <p className="upload-status" role="status">
+              {uploadStatus}
+            </p>
+          )}
+          <FileTree
+            files={files}
+            openPath={document?.path ?? null}
+            rootFile={project.rootFile}
+            onOpen={(path) => void openFile(path).catch(report)}
+            onRename={(path) => void renameFile(path).catch(report)}
+            onDelete={(path) => void deleteFile(path).catch(report)}
+            onSetRoot={(path) => void setRoot(path).catch(report)}
+            onNewFile={(folder) => void newFile(folder).catch(report)}
+            onUpload={(folder) => chooseUpload(folder, fileInput.current)}
+            onDropFiles={(items, folder) => void uploadItems(items, folder).catch(report)}
           />
-        </div>
-        {result !== null && <Diagnostics result={result} onSelect={selectDiagnostic} />}
-      </section>
+        </aside>
+        <SplitPane
+          view={layout.view === 'split' ? 'both' : layout.view === 'editor' ? 'start' : 'end'}
+          ratio={layout.split}
+          min={SPLIT_MIN}
+          max={SPLIT_MAX}
+          onRatioChange={(split) => updateLayout({ split })}
+          label="Resize editor and PDF"
+          divider={
+            <div className="sync-buttons">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Show in PDF"
+                title="Go to this location in the PDF"
+                disabled={!canShowInPdf}
+                onClick={goToPdf}
+              >
+                <Icon name="arrow-right" />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Show in source"
+                title="Go to this location in the source"
+                disabled={!canShowInSource}
+                onClick={goToSource}
+              >
+                <Icon name="arrow-left" />
+              </button>
+            </div>
+          }
+          start={
+            <section className="source-pane" aria-label="Editor">
+              <EditorToolbar
+                history={document?.kind === 'text' ? editHistory : null}
+                onUndo={() => editorRef.current?.undo()}
+                onRedo={() => editorRef.current?.redo()}
+              />
+              <main className="source">
+                {document?.kind === 'text' && (
+                  <LatexEditor
+                    ref={editorRef}
+                    documentId={document.path}
+                    initialText={document.text}
+                    onChange={handleChange}
+                    onCompile={() => void compile()}
+                    onHistoryChange={setEditHistory}
+                  />
+                )}
+                {document?.kind === 'binary' && (
+                  <FilePreview
+                    path={document.path}
+                    bytes={document.bytes}
+                    type={previewType(document.path)}
+                  />
+                )}
+                {document === null && <p className="placeholder">Select a file.</p>}
+              </main>
+            </section>
+          }
+          end={
+            <section className="output" aria-label="Output">
+              <PdfToolbar
+                compiling={compiling}
+                onRecompile={() => void compile().catch(report)}
+                compileSettings={
+                  <CompileSettings
+                    settings={project.settings}
+                    liveAvailable={liveAvailable}
+                    livePreviewOn={showLive}
+                    onChange={(settings) => {
+                      if (settings.livePreview === true) setOutputView('live');
+                      void updateSettings(settings).catch(report);
+                    }}
+                  />
+                }
+                errorCount={errorCount}
+                logsOpen={logsOpen}
+                onToggleLogs={() => setLogsOpen((open) => !open)}
+                downloadUrl={pdfUrl}
+                downloadName={`${project.name}.pdf`}
+                outputTabs={
+                  showLive && (
+                    <div className="segmented output-tabs" role="tablist" aria-label="Output">
+                      {(['live', 'pdf'] as const).map((view) => (
+                        <button
+                          key={view}
+                          type="button"
+                          role="tab"
+                          aria-selected={outputView === view}
+                          onClick={() => setOutputView(view)}
+                        >
+                          {view === 'live' ? 'Live' : 'PDF'}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                }
+                pdfControls={pdfShown}
+                view={pdfView}
+                onGoToPage={(page) => pdfRef.current?.goToPage(page)}
+                onZoom={(zoom) => updateLayout({ zoom })}
+              />
+              {/* The live pane stays mounted while the PDF is shown, keeping its session. */}
+              {showLive && (
+                <div className="output-view" hidden={outputView !== 'live'}>
+                  <LivePreviewPane
+                    key={liveAttempt}
+                    projectId={projectId}
+                    channel={liveChannel}
+                    onReady={sendOpenDocumentToLive}
+                    onShowPdf={() => setOutputView('pdf')}
+                    onRetry={() => setLiveAttempt((attempt) => attempt + 1)}
+                  />
+                </div>
+              )}
+              <div className="output-view" hidden={!pdfShown}>
+                <PdfViewer
+                  ref={pdfRef}
+                  url={pdfUrl}
+                  highlights={highlights}
+                  onInverseSearch={(point) => void inverseSearch(point).catch(report)}
+                  zoom={layout.zoom}
+                  onViewChange={setPdfView}
+                />
+              </div>
+              {result !== null && logsOpen && (
+                <Diagnostics result={result} onSelect={selectDiagnostic} />
+              )}
+            </section>
+          }
+        />
+      </div>
     </div>
   );
 }

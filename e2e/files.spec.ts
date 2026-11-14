@@ -63,7 +63,7 @@ test('folders, uploads, image preview and images in the PDF', async ({ page }) =
   await page.keyboard.press('ControlOrMeta+A');
   await page.keyboard.press('Delete');
   await page.keyboard.insertText(MAIN);
-  await page.getByRole('button', { name: 'Compile', exact: true }).click();
+  await page.getByRole('button', { name: 'Recompile', exact: true }).click();
   await expect(page.locator('.diagnostics .status')).toHaveText('success');
   await expect(page.locator('.diagnostic.error')).toHaveCount(0);
 

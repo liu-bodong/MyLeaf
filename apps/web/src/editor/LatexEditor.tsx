@@ -1,4 +1,13 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  redo,
+  redoDepth,
+  undo,
+  undoDepth,
+} from '@codemirror/commands';
 import {
   StreamLanguage,
   bracketMatching,
@@ -6,7 +15,7 @@ import {
   syntaxHighlighting,
 } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import { highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codemirror/search';
 import { EditorState } from '@codemirror/state';
 import {
   EditorView,
@@ -26,6 +35,16 @@ export interface LatexEditorHandle {
   cursorLine(): number;
   /** Current text, including unsaved edits. */
   text(): string;
+  undo(): void;
+  redo(): void;
+  /** Opens find and replace. */
+  openSearch(): void;
+}
+
+/** Whether undo and redo have anything to do. */
+export interface EditHistory {
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
 }
 
 interface LatexEditorProps {
@@ -35,7 +54,15 @@ interface LatexEditorProps {
   readonly onChange: (text: string) => void;
   /** Mod-S / Mod-Enter. */
   readonly onCompile: () => void;
+  readonly onHistoryChange?: (history: EditHistory) => void;
   readonly ref?: Ref<LatexEditorHandle>;
+}
+
+/** Runs a command and returns focus to the editor, e.g. after a toolbar click. */
+function runCommand(view: EditorView | null, command: (view: EditorView) => boolean) {
+  if (view === null) return;
+  command(view);
+  view.focus();
 }
 
 /** CodeMirror 6 source editor for LaTeX. CodeMirror is confined to this module. */
@@ -44,14 +71,15 @@ export function LatexEditor({
   initialText,
   onChange,
   onCompile,
+  onHistoryChange,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // Latest callbacks, so the editor does not need recreating when they change.
-  const callbacks = useRef({ onChange, onCompile });
+  const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
-    callbacks.current = { onChange, onCompile };
+    callbacks.current = { onChange, onCompile, onHistoryChange };
   });
 
   useEffect(() => {
@@ -59,6 +87,11 @@ export function LatexEditor({
       callbacks.current.onCompile();
       return true;
     };
+    const reportHistory = (state: EditorState) =>
+      callbacks.current.onHistoryChange?.({
+        canUndo: undoDepth(state) > 0,
+        canRedo: redoDepth(state) > 0,
+      });
     const view = new EditorView({
       parent: containerRef.current!,
       state: EditorState.create({
@@ -86,11 +119,13 @@ export function LatexEditor({
             if (update.docChanged) {
               callbacks.current.onChange(update.state.doc.toString());
             }
+            if (update.transactions.length > 0) reportHistory(update.state);
           }),
         ],
       }),
     });
     viewRef.current = view;
+    reportHistory(view.state);
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -118,6 +153,15 @@ export function LatexEditor({
       },
       text() {
         return viewRef.current?.state.doc.toString() ?? '';
+      },
+      undo() {
+        runCommand(viewRef.current, undo);
+      },
+      redo() {
+        runCommand(viewRef.current, redo);
+      },
+      openSearch() {
+        runCommand(viewRef.current, openSearchPanel);
       },
     }),
     [],
