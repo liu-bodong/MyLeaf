@@ -12,6 +12,7 @@ import { ProjectId } from '@myleaf/doc-model';
 import { ProjectNotFoundError, parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
+import type { LiveSessionPool } from '../live/live-session-pool.js';
 
 interface IdParams {
   readonly id: string;
@@ -21,6 +22,7 @@ export function registerCompileRoutes(
   app: FastifyInstance,
   store: ProjectStore,
   compiler: CompileBackend,
+  livePreview: LiveSessionPool | null,
 ): void {
   app.post<{ Params: IdParams; Body: CompileRequestBody | undefined }>(
     '/api/projects/:id/compile',
@@ -43,13 +45,20 @@ export function registerCompileRoutes(
       const files = await Promise.all(
         entries.map(async ({ path }) => ({ path, content: await store.readFile(id, path) })),
       );
-      return compiler.compile({
+      const result = await compiler.compile({
         projectId: id,
         rootFile: project.rootFile,
         engine: request.body?.engine ?? 'pdflatex',
         files,
         options: { precompilePreamble: project.settings.precompilePreamble },
       });
+      // Live previews do not run BibTeX: give them the new bibliography.
+      const sessions = livePreview?.forProject(id) ?? [];
+      const bibliography = sessions.length > 0 ? await compiler.readBibliography(id) : null;
+      if (bibliography !== null) {
+        for (const handle of sessions) handle.session.updateFile(bibliography);
+      }
+      return result;
     },
   );
 

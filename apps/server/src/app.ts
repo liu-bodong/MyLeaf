@@ -30,10 +30,10 @@ export function buildApp(
   app.get('/health', () => ({ status: 'ok' }));
   registerProjectRoutes(app, store, compiler);
   registerFileRoutes(app, store, livePreview);
-  registerCompileRoutes(app, store, compiler);
+  registerCompileRoutes(app, store, compiler, livePreview);
   void app.register(websocket);
   void app.register((scoped, _options, done) => {
-    registerLiveRoutes(scoped, store, livePreview);
+    registerLiveRoutes(scoped, store, compiler, livePreview);
     done();
   });
   app.addHook('onClose', async () => {

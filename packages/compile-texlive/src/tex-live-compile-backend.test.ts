@@ -240,6 +240,27 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
     });
   });
 
+  it('provides the bibliography of the latest compile', async () => {
+    const main = String.raw`\documentclass{article}
+\begin{document}
+See \cite{knuth}.
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}
+`;
+    const refs = '@book{knuth, author = {Donald Knuth}, title = {The TeXbook}, year = {1984}}\n';
+    const withBib = request([file('main.tex', main), file('refs.bib', refs)]);
+    expect(await backend.readBibliography(withBib.projectId)).toBeNull();
+    await backend.compile(withBib);
+    const bbl = await backend.readBibliography(withBib.projectId);
+    expect(bbl?.path).toBe('main.bbl');
+    expect(new TextDecoder().decode(bbl?.content)).toContain('\\bibitem{knuth}');
+
+    const withoutBib = request([file('main.tex', MAIN), file('chapters/one.tex', CHAPTER)]);
+    await backend.compile(withoutBib);
+    expect(await backend.readBibliography(withoutBib.projectId)).toBeNull();
+  });
+
   it('has no output before the first compile and after discard', async () => {
     const req = request([file('main.tex', MAIN), file('chapters/one.tex', CHAPTER)]);
     expect(await backend.readPdf(req.projectId)).toBeNull();

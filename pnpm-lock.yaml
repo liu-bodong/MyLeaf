@@ -588,6 +588,9 @@ importers:
 
   packages/testing:
     dependencies:
+      '@myleaf/compile':
+        specifier: workspace:*
+        version: link:../compile
       '@myleaf/doc-model':
         specifier: workspace:*
         version: link:../doc-model

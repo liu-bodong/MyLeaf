@@ -80,6 +80,13 @@ export interface CompileBackend {
   /** The PDF of the latest compile, or `null` if none exists. */
   readPdf(projectId: ProjectId): Promise<Uint8Array | null>;
 
+  /**
+   * The bibliography (`<job>.bbl`, BibTeX or Biber output) of the latest
+   * compile, with the project path where TeX looks for it, or `null` if none.
+   * Lets engines that do not run BibTeX, such as live preview, show citations.
+   */
+  readBibliography(projectId: ProjectId): Promise<ProjectFile | null>;
+
   /** PDF boxes produced by a source location (empty if none). */
   forwardSearch(projectId: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]>;
 

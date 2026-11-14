@@ -109,7 +109,11 @@ export class TexpressoLivePreview implements LivePreviewBackend {
         detached: true,
       },
     );
-    return new TexpressoSession(child, dir, onEvent);
+    const session = new TexpressoSession(child, dir, onEvent);
+    // Rerun with the previous pass's .aux once edits pause, so \ref, \pageref
+    // and the table of contents resolve (at most 5 passes, upstream default).
+    session.enableReruns();
+    return session;
   }
 }
 
@@ -157,6 +161,10 @@ class TexpressoSession implements LivePreviewSession {
         buffer = buffer.slice(newline + 1);
       }
     });
+  }
+
+  enableReruns(): void {
+    this.#send(['rerun', true]);
   }
 
   updateFile(file: ProjectFile): void {

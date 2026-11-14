@@ -156,6 +156,17 @@ describe.skipIf(!available)(
       expect(after).not.toEqual(before);
     });
 
+    it('resolves references once edits pause', async () => {
+      // Expected page: the same text with the number typed in.
+      const typed = await open('See Section~1.\n\\section{Alpha}');
+      const expected = await waitFor(isPage(1));
+      if (expected.type !== 'page') throw new Error('expected a page');
+      await typed.close();
+      events.length = 0;
+      await open('See Section~\\ref{s}.\n\\section{Alpha}\\label{s}');
+      await waitFor((e) => e.type === 'page' && e.page === 1 && e.svg === expected.svg);
+    });
+
     it('shows other pages on request', async () => {
       const live = await open();
       await waitFor(isPage(1));

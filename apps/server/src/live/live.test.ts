@@ -1,5 +1,4 @@
 import type { LiveServerMessage, ProjectDto } from '@myleaf/api';
-import type { CompileBackend } from '@myleaf/compile';
 import type {
   LivePreviewBackend,
   LivePreviewEvent,
@@ -7,7 +6,7 @@ import type {
   LivePreviewSession,
 } from '@myleaf/live-preview';
 import type { ProjectFile } from '@myleaf/project';
-import { InMemoryProjectStore } from '@myleaf/testing';
+import { FakeCompileBackend, InMemoryProjectStore } from '@myleaf/testing';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WebSocket as WsSocket } from 'ws';
@@ -46,7 +45,6 @@ class FakeLivePreview implements LivePreviewBackend {
   }
 }
 
-const unusedCompiler = {} as CompileBackend;
 const text = (file: ProjectFile | undefined) => new TextDecoder().decode(file?.content);
 
 async function until<T>(read: () => T | undefined, what: string): Promise<T> {
@@ -114,6 +112,7 @@ describe('LiveSessionPool', () => {
 describe('live preview routes', () => {
   let app: FastifyInstance;
   let backend: FakeLivePreview;
+  let compiler: FakeCompileBackend;
   let project: ProjectDto;
   const sockets: WsSocket[] = [];
 
@@ -121,6 +120,7 @@ describe('live preview routes', () => {
     options: { maxSessions?: number; idleMs?: number; enabled?: boolean } = {},
   ) => {
     backend = new FakeLivePreview();
+    compiler = new FakeCompileBackend();
     const pool =
       options.enabled === false
         ? null
@@ -130,7 +130,7 @@ describe('live preview routes', () => {
           });
     app = buildApp({
       store: new InMemoryProjectStore(),
-      compiler: unusedCompiler,
+      compiler,
       livePreview: pool,
     });
     await app.ready();
@@ -226,6 +226,37 @@ describe('live preview routes', () => {
     expect(backend.sessions[0]?.updates.map((f) => [f.path, [...f.content]])).toEqual([
       ['fig.png', [1, 2, 3]],
     ]);
+  });
+
+  it('starts sessions with the latest bibliography, replacing a stored one', async () => {
+    await start();
+    await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${project.id}/files/main.bbl`,
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from('stored'),
+    });
+    compiler.bibliography = {
+      path: 'main.bbl' as ProjectFile['path'],
+      content: new TextEncoder().encode('compiled'),
+    };
+    const { messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const files = backend.sessions[0]?.request.files ?? [];
+    expect(files.filter((f) => f.path === 'main.bbl').map(text)).toEqual(['compiled']);
+  });
+
+  it('sends the bibliography of each compile to open sessions', async () => {
+    await start();
+    const { messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    compiler.bibliography = {
+      path: 'main.bbl' as ProjectFile['path'],
+      content: new TextEncoder().encode('\\bibitem{knuth}'),
+    };
+    await app.inject({ method: 'POST', url: `/api/projects/${project.id}/compile` });
+    const updates = backend.sessions[0]?.updates ?? [];
+    expect(updates.map((f) => [f.path, text(f)])).toEqual([['main.bbl', '\\bibitem{knuth}']]);
   });
 
   it('turns connections away when the pool is full', async () => {

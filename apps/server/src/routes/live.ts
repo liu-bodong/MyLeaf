@@ -1,4 +1,5 @@
 import type { LiveClientMessage, LivePreviewInfo, LiveServerMessage } from '@myleaf/api';
+import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
@@ -41,6 +42,7 @@ function parseClientMessage(raw: string): LiveClientMessage | null {
 export function registerLiveRoutes(
   app: FastifyInstance,
   store: ProjectStore,
+  compiler: CompileBackend,
   pool: LiveSessionPool | null,
 ): void {
   app.get('/api/live-preview', (): LivePreviewInfo => ({ available: pool !== null }));
@@ -102,9 +104,16 @@ export function registerLiveRoutes(
       });
 
       const entries = await store.listFiles(projectId);
-      const files = await Promise.all(
+      const stored = await Promise.all(
         entries.map(async ({ path }) => ({ path, content: await store.readFile(projectId, path) })),
       );
+      // Citations come from the latest compile's bibliography (TeXpresso does
+      // not run BibTeX); it replaces a stored file of the same name.
+      const bibliography = await compiler.readBibliography(projectId);
+      const files =
+        bibliography === null
+          ? stored
+          : [...stored.filter((file) => file.path !== bibliography.path), bibliography];
       handle = await pool.open(
         { projectId, rootFile: project.rootFile, files },
         (event) => {

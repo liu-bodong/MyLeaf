@@ -1,54 +1,8 @@
 import type { ProjectDto } from '@myleaf/api';
-import type {
-  CompileBackend,
-  CompileRequest,
-  CompileResult,
-  PdfPoint,
-  PdfRect,
-  SourceLocation,
-} from '@myleaf/compile';
-import type { ProjectId } from '@myleaf/doc-model';
-import { InMemoryProjectStore } from '@myleaf/testing';
+import { FakeCompileBackend, InMemoryProjectStore } from '@myleaf/testing';
 import type { FastifyInstance } from 'fastify';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
-
-class FakeCompileBackend implements CompileBackend {
-  readonly requests: CompileRequest[] = [];
-  readonly discarded: ProjectId[] = [];
-  pdf: Uint8Array | null = null;
-  readonly rect: PdfRect = { page: 1, x: 10, y: 20, width: 30, height: 5 };
-
-  compile(request: CompileRequest): Promise<CompileResult> {
-    this.requests.push(request);
-    this.pdf = new TextEncoder().encode('%PDF-fake');
-    return Promise.resolve({
-      status: 'success',
-      hasPdf: true,
-      durationMs: 1,
-      log: '',
-      diagnostics: [],
-      preamble: request.options.precompilePreamble ? 'reused' : 'disabled',
-    });
-  }
-  readPdf(): Promise<Uint8Array | null> {
-    return Promise.resolve(this.pdf);
-  }
-  forwardSearch(_id: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]> {
-    return Promise.resolve(location.line === 1 ? [this.rect] : []);
-  }
-  inverseSearch(_id: ProjectId, point: PdfPoint): Promise<SourceLocation | null> {
-    return Promise.resolve({
-      file: 'main.tex' as SourceLocation['file'],
-      line: point.page,
-      column: null,
-    });
-  }
-  discard(projectId: ProjectId): Promise<void> {
-    this.discarded.push(projectId);
-    return Promise.resolve();
-  }
-}
 
 describe('server API', () => {
   let app: FastifyInstance;

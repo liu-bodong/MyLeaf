@@ -106,6 +106,17 @@ export class TexLiveCompileBackend implements CompileBackend {
     return readOptional(join(this.#outDir(projectId), `${state.jobName}.pdf`));
   }
 
+  async readBibliography(projectId: ProjectId): Promise<ProjectFile | null> {
+    const state = await this.#readState(projectId);
+    if (state === null) {
+      return null;
+    }
+    const name = `${state.jobName}.bbl`;
+    const content = await readOptional(join(this.#outDir(projectId), name));
+    // TeX reads \jobname.bbl from its working directory: the project root.
+    return content === null ? null : { path: parseProjectPath(name), content };
+  }
+
   async forwardSearch(projectId: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]> {
     const pdf = await this.#pdfPath(projectId);
     if (pdf === null) {
