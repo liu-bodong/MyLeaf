@@ -1,0 +1,31 @@
+{
+  "name": "@myleaf/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "HTTP API contract shared by server and web: routes and DTO types.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@myleaf/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@myleaf/compile": "workspace:*",
+    "@myleaf/doc-model": "workspace:*",
+    "@myleaf/project": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

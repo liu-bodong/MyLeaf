@@ -31,8 +31,9 @@ Packages are organized in three layers. Dependencies point inward only.
 5. **Enforcement:**
    - ESLint `no-restricted-imports` rejects non-domain imports in domain
      packages (`eslint.config.js`).
-   - Domain packages compile with `types: []`, so platform globals (Node or
-     DOM) are unavailable.
+   - Domain packages are built (`tsconfig.build.json`, production code only)
+     with `types: []`, so platform globals (Node or DOM) are unavailable to
+     them. Their tests may use Node types.
    - pnpm's strict `node_modules` rejects imports of undeclared dependencies.
 
 ## Consequences

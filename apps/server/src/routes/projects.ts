@@ -1,0 +1,91 @@
+import type { CreateProjectRequest, ProjectDto, UpdateProjectRequest } from '@myleaf/api';
+import type { CompileBackend } from '@myleaf/compile';
+import { ProjectId } from '@myleaf/doc-model';
+import { ProjectNotFoundError, parseProjectPath } from '@myleaf/project';
+import type { ProjectStore } from '@myleaf/project';
+import type { FastifyInstance } from 'fastify';
+
+const NEW_PROJECT_ROOT = 'main.tex';
+const NEW_PROJECT_CONTENT = String.raw`\documentclass{article}
+
+\begin{document}
+
+Start writing here.
+
+\end{document}
+`;
+
+interface IdParams {
+  readonly id: string;
+}
+
+export function registerProjectRoutes(
+  app: FastifyInstance,
+  store: ProjectStore,
+  compiler: CompileBackend,
+): void {
+  app.get('/api/projects', async (): Promise<readonly ProjectDto[]> => {
+    const projects = await store.listProjects();
+    return [...projects].sort((a, b) => a.createdAt - b.createdAt);
+  });
+
+  app.post<{ Body: CreateProjectRequest }>(
+    '/api/projects',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['name'],
+          properties: { name: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply): Promise<ProjectDto> => {
+      const rootFile = parseProjectPath(NEW_PROJECT_ROOT);
+      const project = await store.createProject({
+        name: request.body.name,
+        rootFile,
+        files: [{ path: rootFile, content: new TextEncoder().encode(NEW_PROJECT_CONTENT) }],
+      });
+      reply.status(201);
+      return project;
+    },
+  );
+
+  app.get<{ Params: IdParams }>('/api/projects/:id', async (request): Promise<ProjectDto> => {
+    const id = ProjectId(request.params.id);
+    const project = await store.getProject(id);
+    if (project === null) {
+      throw new ProjectNotFoundError(id);
+    }
+    return project;
+  });
+
+  app.patch<{ Params: IdParams; Body: UpdateProjectRequest }>(
+    '/api/projects/:id',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          properties: { name: { type: 'string' }, rootFile: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request): Promise<ProjectDto> => {
+      const { name, rootFile } = request.body;
+      return store.updateProject(ProjectId(request.params.id), {
+        ...(name === undefined ? {} : { name }),
+        ...(rootFile === undefined ? {} : { rootFile: parseProjectPath(rootFile) }),
+      });
+    },
+  );
+
+  app.delete<{ Params: IdParams }>('/api/projects/:id', async (request, reply) => {
+    const id = ProjectId(request.params.id);
+    await store.deleteProject(id);
+    await compiler.discard(id);
+    return reply.status(204).send();
+  });
+}

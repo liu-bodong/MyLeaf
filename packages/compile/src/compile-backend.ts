@@ -1,0 +1,71 @@
+import type { ProjectId } from '@myleaf/doc-model';
+import type { ProjectFile, ProjectPath } from '@myleaf/project';
+import type { Diagnostic } from './diagnostics.js';
+
+export type TexEngine = 'pdflatex' | 'xelatex' | 'lualatex';
+
+export interface CompileRequest {
+  readonly projectId: ProjectId;
+  readonly rootFile: ProjectPath;
+  readonly engine: TexEngine;
+  /**
+   * The complete source tree to compile. Passed explicitly (rather than read
+   * from storage) so callers can compile a projection, e.g. with suggestions
+   * applied (ADR 0005).
+   */
+  readonly files: readonly ProjectFile[];
+}
+
+/** `failure`: the engine reported errors (a PDF may still exist). `timeout`: the run was killed. */
+export type CompileStatus = 'success' | 'failure' | 'timeout';
+
+export interface CompileResult {
+  readonly status: CompileStatus;
+  readonly hasPdf: boolean;
+  readonly durationMs: number;
+  /** The engine's log file for the root document (empty if none was written). */
+  readonly log: string;
+  readonly diagnostics: readonly Diagnostic[];
+}
+
+/** A position in a source file. `line` is 1-based; `column` is 1-based or null if unknown. */
+export interface SourceLocation {
+  readonly file: ProjectPath;
+  readonly line: number;
+  readonly column: number | null;
+}
+
+/** A point on a PDF page, in PDF points (1/72 in) from the page's top-left corner. */
+export interface PdfPoint {
+  readonly page: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** A box on a PDF page; `x`/`y` is its top-left corner. Units as in PdfPoint. */
+export interface PdfRect extends PdfPoint {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * Port: turns a project's source into a PDF and maps between source and PDF
+ * positions (SyncTeX). Implementations keep per-project build state so
+ * repeated compiles can be incremental. Compiles of one project are
+ * serialized; compiles of different projects may run concurrently.
+ */
+export interface CompileBackend {
+  compile(request: CompileRequest): Promise<CompileResult>;
+
+  /** The PDF of the latest compile, or `null` if none exists. */
+  readPdf(projectId: ProjectId): Promise<Uint8Array | null>;
+
+  /** PDF boxes produced by a source location (empty if none). */
+  forwardSearch(projectId: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]>;
+
+  /** Source location that produced a PDF point, or `null` if none. */
+  inverseSearch(projectId: ProjectId, point: PdfPoint): Promise<SourceLocation | null>;
+
+  /** Removes all build state of a project. */
+  discard(projectId: ProjectId): Promise<void>;
+}

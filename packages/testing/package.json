@@ -21,9 +21,11 @@
   },
   "dependencies": {
     "@myleaf/doc-model": "workspace:*",
+    "@myleaf/project": "workspace:*",
     "vitest": "catalog:"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:"
   }
 }

@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@myleaf/testing": "workspace:*",
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
