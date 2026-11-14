@@ -147,6 +147,22 @@ test('menus open and navigate with the keyboard', async ({ page }) => {
   await expect(page.getByRole('menuitem', { name: 'Format', exact: true })).toBeFocused();
   await page.keyboard.press('ArrowLeft');
   await expect(view).toBeFocused();
+
+  // With a menu open, Left/Right switch menus and focus stays in the menu bar.
+  await view.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitemradio', { name: 'Editor & PDF' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  const format = page.getByRole('menuitem', { name: 'Format', exact: true });
+  await expect(format).toBeFocused();
+  await expect(format).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('End');
+  const help = page.getByRole('menuitem', { name: 'Help', exact: true });
+  await expect(help).toBeFocused();
+  await expect(help).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(help).toBeFocused();
 });
 
 test('PDF keyboard shortcuts change pages and zoom', async ({ page }) => {

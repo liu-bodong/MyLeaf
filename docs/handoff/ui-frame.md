@@ -55,12 +55,12 @@ branding, logo, colours or exact visual style.
 
 Each item: what to do, files, and what done looks like.
 
-### 1. Menu keyboard behaviour
+### 1. Menu keyboard behaviour — done
 
-Menus open on click, close on Escape or an outside click, and Up/Down move
-between enabled items. Missing: Left/Right between top-level menus, focus on
-the first item when a menu opens from the keyboard, focus back to the
-trigger on Escape, Home/End.
+Menus open on click or ArrowDown/ArrowUp, close on Escape or an outside
+click, and Up/Down/Home/End move between enabled items. Left/Right move
+between the top-level menus; Escape and choosing an item return focus to the
+trigger. Covered by `e2e/ui-frame.spec.ts`.
 
 - Files: `ui/Menu.tsx`, `ui/useDismiss.ts`.
 - Done: the menu bar and dropdowns follow the WAI-ARIA menubar/menu-button
@@ -81,10 +81,11 @@ Citation, Cross-reference), Format menu (Bold, Italic, lists), Help menu
 - A cheap one: Help → Keyboard shortcuts as a dialog listing the existing
   shortcuts (Mod-S / Mod-Enter compile, Mod-Z, Mod-Shift-Z, Mod-F).
 
-### 3. Keyboard shortcuts for the PDF
+### 3. Keyboard shortcuts for the PDF — done
 
-No shortcuts yet for zoom or page navigation. Do not show a shortcut in a
-tooltip until it works.
+Mod-+/Mod-- zoom and PageUp/PageDown move pages while the PDF pane has
+focus; elsewhere the browser's page zoom is untouched. The toolbar tooltips
+show the shortcuts.
 
 - Files: `PdfToolbar.tsx`, `PdfViewer.tsx`.
 - Done: Mod-+/Mod-- zoom and PageUp/PageDown move pages while the PDF pane
@@ -144,9 +145,9 @@ diagnostics strip under the PDF (open by default).
 
 ### 8. Split and sidebar
 
-- Split ratio is limited to 20–80 % and saved per browser. Missing:
-  double-click on the divider to reset to 50 %, touch drag check (pointer
-  events with `touch-action: none` should work, not tested on a device).
+- Split ratio is limited to 20–80 % and saved per browser. Double-click on
+  the divider resets it to 50 % (covered by `e2e/ui-frame.spec.ts`). Still
+  open: touch drag on a device.
 - The sidebar has a fixed width (`clamp(180px, 16vw, 240px)`) and is not
   resizable or collapsible.
 - Files: `ui/SplitPane.tsx`, `styles.css`, `Workspace.tsx`.

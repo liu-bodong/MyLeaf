@@ -160,7 +160,9 @@ export function MenuBar({ menus }: { readonly menus: readonly MenuDefinition[] }
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(null), []);
   const triggers = useCallback(
-    () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])],
+    // Only the top-level buttons: menu items also have role="menuitem" and
+    // would otherwise shift the indices of the menus after the open one.
+    () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('.menubar-item') ?? [])],
     [],
   );
   const closeAndFocus = useCallback(() => {

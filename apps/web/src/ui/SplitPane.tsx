@@ -24,8 +24,6 @@ const KEY_STEP = 0.02;
 const SHIFT_KEY_STEP = 0.1;
 /** Ratio a double-click on the divider resets to. */
 const RESET_RATIO = 0.5;
-const DOUBLE_PRESS_MS = 350;
-const DOUBLE_PRESS_PX = 5;
 
 /**
  * Two panes side by side with a draggable divider. While dragging, only this
@@ -45,7 +43,6 @@ export function SplitPane(props: SplitPaneProps) {
 
   /** Ratio of the drag in progress; a ref so events between renders see it. */
   const drag = useRef<number | null>(null);
-  const lastPress = useRef<{ time: number; x: number } | null>(null);
   const moveTo = (value: number | null) => {
     drag.current = value;
     setDragRatio(value);
@@ -54,20 +51,6 @@ export function SplitPane(props: SplitPaneProps) {
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as Element).closest('button') !== null) return;
     event.preventDefault();
-    const now = performance.now();
-    const previous = lastPress.current;
-    lastPress.current = { time: now, x: event.clientX };
-    if (
-      previous !== null &&
-      now - previous.time < DOUBLE_PRESS_MS &&
-      Math.abs(event.clientX - previous.x) < DOUBLE_PRESS_PX
-    ) {
-      // A second press near the first (a double-click) resets the split.
-      lastPress.current = null;
-      moveTo(null);
-      onRatioChange(clamp(RESET_RATIO));
-      return;
-    }
     event.currentTarget.setPointerCapture(event.pointerId);
     moveTo(ratioAt(event.clientX));
   };
@@ -110,6 +93,10 @@ export function SplitPane(props: SplitPaneProps) {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onDoubleClick={(event) => {
+          if ((event.target as Element).closest('button') !== null) return;
+          onRatioChange(clamp(RESET_RATIO));
+        }}
       >
         <div
           className="split-handle"

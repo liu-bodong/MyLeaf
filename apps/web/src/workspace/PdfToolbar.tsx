@@ -88,7 +88,7 @@ export function PdfToolbar(props: PdfToolbarProps) {
         type="button"
         className="icon-button"
         aria-label="Previous page"
-        title="Previous page (Page Up)"
+        title="Previous page (Page Up in the PDF)"
         disabled={!navigation || view.page <= 1}
         onClick={() => onGoToPage(view.page - 1)}
       >
@@ -98,7 +98,7 @@ export function PdfToolbar(props: PdfToolbarProps) {
         type="button"
         className="icon-button"
         aria-label="Next page"
-        title="Next page (Page Down)"
+        title="Next page (Page Down in the PDF)"
         disabled={!navigation || view.page >= view.pages}
         onClick={() => onGoToPage(view.page + 1)}
       >
@@ -110,7 +110,7 @@ export function PdfToolbar(props: PdfToolbarProps) {
         type="button"
         className="icon-button"
         aria-label="Zoom out"
-        title={`Zoom out (${shortcut('-')})`}
+        title={`Zoom out (${shortcut('-')} in the PDF)`}
         disabled={!navigation || view.zoom === null}
         onClick={() => view.zoom !== null && onZoom(stepZoom(view.zoom, -1))}
       >
@@ -120,7 +120,7 @@ export function PdfToolbar(props: PdfToolbarProps) {
         type="button"
         className="icon-button"
         aria-label="Zoom in"
-        title={`Zoom in (${shortcut('+')})`}
+        title={`Zoom in (${shortcut('+')} in the PDF)`}
         disabled={!navigation || view.zoom === null}
         onClick={() => view.zoom !== null && onZoom(stepZoom(view.zoom, 1))}
       >
