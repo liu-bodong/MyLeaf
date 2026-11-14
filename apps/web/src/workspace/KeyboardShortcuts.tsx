@@ -5,8 +5,14 @@ const SHORTCUTS: readonly { readonly action: string; readonly keys: string }[] =
   { action: 'Undo', keys: shortcut('Z') },
   { action: 'Redo', keys: shortcut('Z', { shift: true }) },
   { action: 'Find and replace', keys: shortcut('F') },
-  { action: 'Zoom in / out (PDF)', keys: `${shortcut('+')} / ${shortcut('-')}` },
-  { action: 'Previous / next page (PDF)', keys: 'Page Up / Page Down' },
+  {
+    action: 'Zoom in / out (while the PDF has focus)',
+    keys: `${shortcut('+')} / ${shortcut('-')}`,
+  },
+  {
+    action: 'Previous / next page (while the PDF has focus)',
+    keys: 'Page Up / Page Down',
+  },
 ];
 
 /** The keyboard shortcuts the workspace currently implements. */

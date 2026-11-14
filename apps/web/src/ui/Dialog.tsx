@@ -29,10 +29,14 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       event.preventDefault();
       onCloseRef.current();
     };
+    // Cover a close that does not go through `cancel`, e.g. a dialog form.
+    const onCloseEvent = () => onCloseRef.current();
     dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onCloseEvent);
     dialog.showModal();
     return () => {
       dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onCloseEvent);
       dialog.close();
       previous?.focus();
     };
@@ -44,8 +48,16 @@ export function Dialog({ title, onClose, children }: DialogProps) {
       className="dialog"
       aria-labelledby={titleId}
       onClick={(event) => {
-        // A press on the backdrop targets the dialog element itself.
-        if (event.target === event.currentTarget) onCloseRef.current();
+        // Close only on a press on the backdrop, i.e. outside the dialog's box;
+        // a press on its border stays inside it.
+        if (event.target !== event.currentTarget) return;
+        const box = event.currentTarget.getBoundingClientRect();
+        const outside =
+          event.clientX < box.left ||
+          event.clientX > box.right ||
+          event.clientY < box.top ||
+          event.clientY > box.bottom;
+        if (outside) onCloseRef.current();
       }}
     >
       <header className="dialog-header">
