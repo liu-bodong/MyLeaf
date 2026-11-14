@@ -34,7 +34,7 @@ test('edit a multi-file project, compile, and navigate between source and PDF', 
   await replaceEditorText(page, 'Text from the chapter.\n\nA \\badmacro here.\n');
 
   // Compile: the PDF renders and the error points at the included file.
-  await page.getByRole('button', { name: 'Compile' }).click();
+  await page.getByRole('button', { name: 'Compile', exact: true }).click();
   await expect(page.locator('.pdf-page canvas')).toHaveCount(1);
   await expect(page.getByTestId('save-state')).toHaveText('saved');
   const error = page.locator('.diagnostic.error');

@@ -4,7 +4,12 @@
  */
 import type { CompileResult, PdfPoint, PdfRect, SourceLocation, TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
-import type { ProjectFileEntry, ProjectPath, ProjectSummary } from '@myleaf/project';
+import type {
+  ProjectFileEntry,
+  ProjectPath,
+  ProjectSettings,
+  ProjectSummary,
+} from '@myleaf/project';
 
 export type ProjectDto = ProjectSummary;
 export type FileEntryDto = ProjectFileEntry;
@@ -16,6 +21,8 @@ export interface CreateProjectRequest {
 export interface UpdateProjectRequest {
   readonly name?: string;
   readonly rootFile?: string;
+  /** Merged into the current settings. */
+  readonly settings?: Partial<ProjectSettings>;
 }
 
 export interface MoveFileRequest {

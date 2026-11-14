@@ -37,11 +37,17 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
   let backend: TexLiveCompileBackend;
   let nextId = 0;
 
-  const request = (files: CompileRequest['files'], projectId = ProjectId(`p${nextId++}`)) => ({
+  const request = (
+    files: CompileRequest['files'],
+    projectId = ProjectId(`p${nextId++}`),
+    overrides: Partial<CompileRequest> = {},
+  ): CompileRequest => ({
     projectId,
     rootFile: parseProjectPath('main.tex'),
-    engine: 'pdflatex' as const,
+    engine: 'pdflatex',
     files,
+    options: { precompilePreamble: false },
+    ...overrides,
   });
 
   beforeAll(async () => {
@@ -140,6 +146,91 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
       ]),
     );
     expect(result.status).toBe('timeout');
+  });
+
+  describe('precompiled preamble', () => {
+    const cached = { options: { precompilePreamble: true } };
+    const PREAMBLE = '\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{mymacros}\n';
+    const body = (text: string) => `${PREAMBLE}\\begin{document}\n${text}\n\\end{document}\n`;
+    const macros = (value: string) =>
+      file('mymacros.sty', `\\ProvidesPackage{mymacros}\n\\newcommand{\\val}{${value}}\n`);
+
+    it('is built after the first compile and reused by later ones', async () => {
+      const projectId = ProjectId('preamble-reuse');
+      const first = await backend.compile(
+        request([file('main.tex', body('First \\val.')), macros('one')], projectId, cached),
+      );
+      expect(first).toMatchObject({ status: 'success', preamble: 'building' });
+
+      // The error is on line 6 and must be reported there although the preamble is skipped.
+      const second = await backend.compile(
+        request(
+          [file('main.tex', body('Second.\n\\undefinedmacro')), macros('one')],
+          projectId,
+          cached,
+        ),
+      );
+      expect(second.preamble).toBe('reused');
+      expect(second.diagnostics).toContainEqual({
+        severity: 'error',
+        message: 'Undefined control sequence.',
+        file: 'main.tex',
+        line: 6,
+      });
+
+      const third = await backend.compile(
+        request([file('main.tex', body('Third \\val.')), macros('one')], projectId, cached),
+      );
+      expect(third).toMatchObject({ status: 'success', preamble: 'reused', hasPdf: true });
+      const rects = await backend.forwardSearch(projectId, {
+        file: parseProjectPath('main.tex'),
+        line: 5,
+        column: null,
+      });
+      expect(rects.length).toBeGreaterThan(0);
+      const location = await backend.inverseSearch(projectId, {
+        page: rects[0]!.page,
+        x: rects[0]!.x + 5,
+        y: rects[0]!.y + rects[0]!.height / 2,
+      });
+      expect(location).toMatchObject({ file: 'main.tex', line: 5 });
+    });
+
+    it('is rebuilt when the preamble or a project package it loads changes', async () => {
+      const projectId = ProjectId('preamble-invalidation');
+      const compile = (main: string, value: string) =>
+        backend.compile(request([file('main.tex', main), macros(value)], projectId, cached));
+
+      expect((await compile(body('A'), 'one')).preamble).toBe('building');
+      expect((await compile(body('B'), 'one')).preamble).toBe('reused');
+      expect((await compile(body('B'), 'two')).preamble).toBe('building');
+      expect((await compile(body('C'), 'two')).preamble).toBe('reused');
+      expect((await compile(`% comment\n${body('C')}`, 'two')).preamble).toBe('building');
+      expect((await compile(`% comment\n${body('D')}`, 'two')).preamble).toBe('reused');
+    });
+
+    it('is not used when disabled, for other engines, or without \\begin{document}', async () => {
+      const files = [file('main.tex', body('x')), macros('one')];
+      expect((await backend.compile(request(files))).preamble).toBe('disabled');
+      expect(
+        (await backend.compile(request(files, undefined, { ...cached, engine: 'lualatex' })))
+          .preamble,
+      ).toBe('unavailable');
+      expect(
+        (await backend.compile(request([file('main.tex', '\\relax')], undefined, cached))).preamble,
+      ).toBe('unavailable');
+    });
+
+    it('falls back to normal compiles when the preamble cannot be precompiled', async () => {
+      // TeX cannot save a format inside an open group, but compiles the document.
+      const projectId = ProjectId('preamble-unbuildable');
+      const main =
+        '\\documentclass{article}\\begingroup\n\\begin{document}\nText.\n\\end{document}\n';
+      const first = await backend.compile(request([file('main.tex', main)], projectId, cached));
+      expect(first).toMatchObject({ hasPdf: true, preamble: 'building' });
+      const second = await backend.compile(request([file('main.tex', main)], projectId, cached));
+      expect(second).toMatchObject({ hasPdf: true, preamble: 'unavailable' });
+    });
   });
 
   it('has no output before the first compile and after discard', async () => {

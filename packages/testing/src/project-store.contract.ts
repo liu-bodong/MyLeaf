@@ -59,6 +59,22 @@ export function describeProjectStoreContract(
         ]);
       });
 
+      it('applies default settings and merges updates', async () => {
+        const store = await create();
+        const project = await store.createProject({
+          name: 'P',
+          rootFile: path('main.tex'),
+          files: [],
+          settings: { autoCompile: true },
+        });
+        expect(project.settings).toEqual({ autoCompile: true, precompilePreamble: true });
+        const updated = await store.updateProject(project.id, {
+          settings: { precompilePreamble: false },
+        });
+        expect(updated.settings).toEqual({ autoCompile: true, precompilePreamble: false });
+        expect((await store.getProject(project.id))?.settings).toEqual(updated.settings);
+      });
+
       it('rejects blank names', async () => {
         const store = await create();
         await expect(

@@ -48,6 +48,7 @@ export function registerCompileRoutes(
         rootFile: project.rootFile,
         engine: request.body?.engine ?? 'pdflatex',
         files,
+        options: { precompilePreamble: project.settings.precompilePreamble },
       });
     },
   );

@@ -21,10 +21,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Install TeX Live (minimal) for compile tests
+      - name: Install TeX Live for compile tests
+        # latex-extra provides mylatexformat, used to precompile preambles (ADR 0011).
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends texlive-latex-base latexmk
+          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-extra latexmk
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint

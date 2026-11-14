@@ -1,5 +1,6 @@
 import { ProjectId } from '@myleaf/doc-model';
 import {
+  DEFAULT_PROJECT_SETTINGS,
   FileAlreadyExistsError,
   FileNotFoundError,
   PathConflictError,
@@ -40,6 +41,7 @@ export class InMemoryProjectStore implements ProjectStore {
         name: parseProjectName(input.name),
         rootFile: input.rootFile,
         createdAt: Date.now(),
+        settings: { ...DEFAULT_PROJECT_SETTINGS, ...input.settings },
       };
       const files = new Map<ProjectPath, Uint8Array>();
       for (const file of input.files) {
@@ -57,6 +59,7 @@ export class InMemoryProjectStore implements ProjectStore {
         ...project.summary,
         ...(input.name === undefined ? {} : { name: parseProjectName(input.name) }),
         ...(input.rootFile === undefined ? {} : { rootFile: input.rootFile }),
+        settings: { ...project.summary.settings, ...input.settings },
       };
       return project.summary;
     });

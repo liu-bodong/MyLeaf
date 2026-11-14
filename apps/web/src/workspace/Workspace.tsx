@@ -1,4 +1,5 @@
 import type { FileEntryDto, ProjectDto } from '@myleaf/api';
+import type { ProjectSettings } from '@myleaf/project';
 import type { CompileResult, Diagnostic, PdfPoint, PdfRect } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
@@ -13,6 +14,8 @@ import { FileTree } from './FileTree.js';
 
 /** Delay between the last keystroke and saving. */
 const SAVE_DELAY_MS = 800;
+/** Pause in editing after which auto-compile starts. */
+const AUTO_COMPILE_DELAY_MS = 1000;
 
 type OpenDocument =
   | { readonly kind: 'text'; readonly path: ProjectPath; readonly text: string }
@@ -44,6 +47,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [document, setDocument] = useState<OpenDocument | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [compiling, setCompiling] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [result, setResult] = useState<CompileResult | null>(null);
   const [pdfVersion, setPdfVersion] = useState(0);
   const [highlights, setHighlights] = useState<readonly PdfRect[]>([]);
@@ -52,6 +56,10 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const pendingSave = useRef<PendingSave | null>(null);
   /** Line to move to once a newly opened document is in the editor. */
   const pendingLine = useRef<number | null>(null);
+  const compilingRef = useRef(false);
+  /** A compile was requested while one was running: run once more afterwards. */
+  const compileQueued = useRef(false);
+  const autoCompileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const report = useCallback((reason: unknown) => setError(errorMessage(reason)), []);
 
@@ -123,6 +131,38 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     };
   }, [projectId, report]);
 
+  /** Compiles; a request during a running compile triggers one more compile afterwards. */
+  const compile = useCallback(async () => {
+    if (compilingRef.current) {
+      compileQueued.current = true;
+      return;
+    }
+    compilingRef.current = true;
+    setCompiling(true);
+    try {
+      do {
+        compileQueued.current = false;
+        await flushSave();
+        const compiled = await api.compile(projectId);
+        setResult(compiled);
+        setHighlights([]);
+        if (compiled.hasPdf) setPdfVersion((version) => version + 1);
+      } while (compileQueued.current);
+    } catch (reason) {
+      report(reason);
+    } finally {
+      compilingRef.current = false;
+      setCompiling(false);
+    }
+  }, [flushSave, projectId, report]);
+
+  useEffect(
+    () => () => {
+      if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
+    },
+    [],
+  );
+
   const handleChange = useCallback(
     (text: string) => {
       if (document?.kind !== 'text') return;
@@ -134,25 +174,27 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         timer: setTimeout(() => void flushSave().catch(report), SAVE_DELAY_MS),
       };
       setSaveState('unsaved');
+      if (project?.settings.autoCompile) {
+        if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
+        autoCompileTimer.current = setTimeout(() => void compile(), AUTO_COMPILE_DELAY_MS);
+      }
     },
-    [document, flushSave, report],
+    [compile, document, flushSave, project?.settings.autoCompile, report],
   );
 
-  const compile = useCallback(async () => {
-    if (compiling) return;
-    setCompiling(true);
+  /** Applies a settings change immediately and reverts it if saving fails. */
+  const updateSettings = async (settings: Partial<ProjectSettings>) => {
+    const previous = project;
+    setProject(
+      (current) => current && { ...current, settings: { ...current.settings, ...settings } },
+    );
     try {
-      await flushSave();
-      const compiled = await api.compile(projectId);
-      setResult(compiled);
-      setHighlights([]);
-      if (compiled.hasPdf) setPdfVersion((version) => version + 1);
+      setProject(await api.updateProject(projectId, { settings }));
     } catch (reason) {
-      report(reason);
-    } finally {
-      setCompiling(false);
+      setProject(previous);
+      throw reason;
     }
-  }, [compiling, flushSave, projectId, report]);
+  };
 
   const showInPdf = useCallback(async () => {
     if (document?.kind !== 'text') return;
@@ -259,13 +301,53 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         >
           Show in PDF
         </button>
-        <button
-          className="primary"
-          onClick={() => void compile().catch(report)}
-          disabled={compiling}
-        >
-          {compiling ? 'Compiling…' : 'Compile'}
-        </button>
+        <div className="compile-group">
+          <button
+            className="primary"
+            onClick={() => void compile().catch(report)}
+            disabled={compiling}
+          >
+            {compiling ? 'Compiling…' : 'Compile'}
+          </button>
+          <button
+            className="primary menu-toggle"
+            aria-label="Compile settings"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            ▾
+          </button>
+          {menuOpen && (
+            <div className="compile-menu" role="group" aria-label="Compile settings">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={project.settings.autoCompile}
+                  onChange={(event) =>
+                    void updateSettings({ autoCompile: event.target.checked }).catch(report)
+                  }
+                />
+                <span>
+                  Auto-compile
+                  <small>After a 1 s pause in typing</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={project.settings.precompilePreamble}
+                  onChange={(event) =>
+                    void updateSettings({ precompilePreamble: event.target.checked }).catch(report)
+                  }
+                />
+                <span>
+                  Precompile preamble
+                  <small>Faster pdfLaTeX compiles; turn off if a package misbehaves</small>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
       </header>
       {error !== null && (
         <div className="error-bar" role="alert">

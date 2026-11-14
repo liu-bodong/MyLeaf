@@ -8,6 +8,13 @@ interface DiagnosticsProps {
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 } as const;
 
+const PREAMBLE_LABELS: Record<CompileResult['preamble'], string | null> = {
+  reused: 'preamble cached',
+  building: 'caching preamble for next compile',
+  unavailable: 'preamble not cached',
+  disabled: null,
+};
+
 export function Diagnostics({ result, onSelect }: DiagnosticsProps) {
   const [showLog, setShowLog] = useState(false);
   const sorted = [...result.diagnostics].sort(
@@ -23,6 +30,9 @@ export function Diagnostics({ result, onSelect }: DiagnosticsProps) {
         <span>
           {count('error')} errors · {count('warning')} warnings · {count('info')} boxes ·{' '}
           {result.durationMs} ms
+          {PREAMBLE_LABELS[result.preamble] !== null && (
+            <span data-testid="preamble-status"> · {PREAMBLE_LABELS[result.preamble]}</span>
+          )}
         </span>
         <button onClick={() => setShowLog((value) => !value)}>
           {showLog ? 'Hide log' : 'Raw log'}

@@ -68,16 +68,28 @@ export function registerProjectRoutes(
       schema: {
         body: {
           type: 'object',
-          properties: { name: { type: 'string' }, rootFile: { type: 'string' } },
+          properties: {
+            name: { type: 'string' },
+            rootFile: { type: 'string' },
+            settings: {
+              type: 'object',
+              properties: {
+                autoCompile: { type: 'boolean' },
+                precompilePreamble: { type: 'boolean' },
+              },
+              additionalProperties: false,
+            },
+          },
           additionalProperties: false,
         },
       },
     },
     async (request): Promise<ProjectDto> => {
-      const { name, rootFile } = request.body;
+      const { name, rootFile, settings } = request.body;
       return store.updateProject(ProjectId(request.params.id), {
         ...(name === undefined ? {} : { name }),
         ...(rootFile === undefined ? {} : { rootFile: parseProjectPath(rootFile) }),
+        ...(settings === undefined ? {} : { settings }),
       });
     },
   );

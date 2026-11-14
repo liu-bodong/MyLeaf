@@ -1,12 +1,26 @@
 import type { EpochMillis, ProjectId } from '@myleaf/doc-model';
 import type { ProjectPath } from './project-path.js';
 
+/** Per-project behaviour switches. */
+export interface ProjectSettings {
+  /** Compile automatically after a pause in editing. */
+  readonly autoCompile: boolean;
+  /** Reuse a precompiled preamble between compiles when the engine supports it. */
+  readonly precompilePreamble: boolean;
+}
+
+export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
+  autoCompile: false,
+  precompilePreamble: true,
+};
+
 export interface ProjectSummary {
   readonly id: ProjectId;
   readonly name: string;
   /** The file passed to the TeX engine. */
   readonly rootFile: ProjectPath;
   readonly createdAt: EpochMillis;
+  readonly settings: ProjectSettings;
 }
 
 export interface ProjectFileEntry {

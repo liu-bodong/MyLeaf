@@ -4,6 +4,24 @@ import type { Diagnostic } from './diagnostics.js';
 
 export type TexEngine = 'pdflatex' | 'xelatex' | 'lualatex';
 
+export interface CompileOptions {
+  /**
+   * Reuse a precompiled preamble (the part of the root file before
+   * `\begin{document}`) between compiles, where the backend supports it.
+   */
+  readonly precompilePreamble: boolean;
+}
+
+/**
+ * What happened with the precompiled preamble during a compile.
+ * - `reused`: the compile started from a precompiled preamble.
+ * - `building`: compiled without one; one is being prepared for later compiles.
+ * - `unavailable`: cannot be precompiled (unsupported engine, no
+ *   `\begin{document}`, or precompiling this preamble failed).
+ * - `disabled`: turned off by the request.
+ */
+export type PreambleStatus = 'reused' | 'building' | 'unavailable' | 'disabled';
+
 export interface CompileRequest {
   readonly projectId: ProjectId;
   readonly rootFile: ProjectPath;
@@ -14,6 +32,7 @@ export interface CompileRequest {
    * applied (ADR 0005).
    */
   readonly files: readonly ProjectFile[];
+  readonly options: CompileOptions;
 }
 
 /** `failure`: the engine reported errors (a PDF may still exist). `timeout`: the run was killed. */
@@ -26,6 +45,7 @@ export interface CompileResult {
   /** The engine's log file for the root document (empty if none was written). */
   readonly log: string;
   readonly diagnostics: readonly Diagnostic[];
+  readonly preamble: PreambleStatus;
 }
 
 /** A position in a source file. `line` is 1-based; `column` is 1-based or null if unknown. */

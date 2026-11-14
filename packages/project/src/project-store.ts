@@ -1,16 +1,20 @@
 import type { ProjectId } from '@myleaf/doc-model';
-import type { ProjectFile, ProjectFileEntry, ProjectSummary } from './project.js';
+import type { ProjectFile, ProjectFileEntry, ProjectSettings, ProjectSummary } from './project.js';
 import type { ProjectPath } from './project-path.js';
 
 export interface CreateProjectInput {
   readonly name: string;
   readonly rootFile: ProjectPath;
   readonly files: readonly ProjectFile[];
+  /** Missing settings take their defaults. */
+  readonly settings?: Partial<ProjectSettings>;
 }
 
 export interface UpdateProjectInput {
   readonly name?: string;
   readonly rootFile?: ProjectPath;
+  /** Merged into the current settings. */
+  readonly settings?: Partial<ProjectSettings>;
 }
 
 /**

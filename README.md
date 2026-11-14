@@ -19,6 +19,7 @@ pnpm install
 pnpm dev          # server on 127.0.0.1:3000, web app on http://localhost:5173
 pnpm check        # format, lint, typecheck, test, build (as CI)
 pnpm e2e          # end-to-end browser test (after `pnpm build`)
+pnpm bench        # compile-time benchmark (ADR 0011)
 ```
 
 Server configuration (environment variables):

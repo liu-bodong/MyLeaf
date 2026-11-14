@@ -28,6 +28,7 @@ class FakeCompileBackend implements CompileBackend {
       durationMs: 1,
       log: '',
       diagnostics: [],
+      preamble: request.options.precompilePreamble ? 'reused' : 'disabled',
     });
   }
   readPdf(): Promise<Uint8Array | null> {
@@ -127,6 +128,27 @@ describe('server API', () => {
       expect(invalid.statusCode).toBe(400);
     });
 
+    it('updates settings partially and validates them', async () => {
+      expect(project.settings).toEqual({ autoCompile: false, precompilePreamble: true });
+      const response = await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${project.id}`,
+        payload: { settings: { autoCompile: true } },
+      });
+      expect(response.json<ProjectDto>().settings).toEqual({
+        autoCompile: true,
+        precompilePreamble: true,
+      });
+      for (const settings of [{ autoCompile: 'yes' }, { unknown: true }]) {
+        const invalid = await app.inject({
+          method: 'PATCH',
+          url: `/api/projects/${project.id}`,
+          payload: { settings },
+        });
+        expect(invalid.statusCode).toBe(400);
+      }
+    });
+
     it('deletes a project and its build output', async () => {
       const response = await app.inject({ method: 'DELETE', url: `/api/projects/${project.id}` });
       expect(response.statusCode).toBe(204);
@@ -209,6 +231,21 @@ describe('server API', () => {
         engine: 'xelatex',
       });
       expect(request?.files.map((f) => f.path)).toEqual(['chapters/one.tex', 'main.tex']);
+    });
+
+    it("passes the project's precompile setting to the compiler", async () => {
+      await app.inject({ method: 'POST', url: `/api/projects/${project.id}/compile` });
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${project.id}`,
+        payload: { settings: { precompilePreamble: false } },
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/projects/${project.id}/compile`,
+      });
+      expect(compiler.requests.map((r) => r.options.precompilePreamble)).toEqual([true, false]);
+      expect(second.json()).toMatchObject({ preamble: 'disabled' });
     });
 
     it('defaults to pdflatex and rejects unknown engines', async () => {

@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'no
 import { join, relative, resolve, sep } from 'node:path';
 import { ProjectId } from '@myleaf/doc-model';
 import {
+  DEFAULT_PROJECT_SETTINGS,
   FileAlreadyExistsError,
   FileNotFoundError,
   PathConflictError,
@@ -62,7 +63,9 @@ export class FileSystemProjectStore implements ProjectStore {
     }
     try {
       const json = await readFile(join(this.#root, id, METADATA_FILE), 'utf8');
-      return JSON.parse(json) as ProjectSummary;
+      const stored = JSON.parse(json) as ProjectSummary;
+      // Metadata written before a setting existed takes its default.
+      return { ...stored, settings: { ...DEFAULT_PROJECT_SETTINGS, ...stored.settings } };
     } catch (error) {
       if (isErrnoException(error, 'ENOENT')) {
         return null;
@@ -77,6 +80,7 @@ export class FileSystemProjectStore implements ProjectStore {
       name: parseProjectName(input.name),
       rootFile: input.rootFile,
       createdAt: Date.now(),
+      settings: { ...DEFAULT_PROJECT_SETTINGS, ...input.settings },
     };
     const dir = join(this.#root, summary.id);
     await mkdir(join(dir, FILES_DIR), { recursive: true });
@@ -100,6 +104,7 @@ export class FileSystemProjectStore implements ProjectStore {
       ...current,
       ...(input.name === undefined ? {} : { name: parseProjectName(input.name) }),
       ...(input.rootFile === undefined ? {} : { rootFile: input.rootFile }),
+      settings: { ...current.settings, ...input.settings },
     };
     await this.#writeMetadata(updated);
     return updated;

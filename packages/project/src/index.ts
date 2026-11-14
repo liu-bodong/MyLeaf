@@ -4,8 +4,13 @@ export {
   PathConflictError,
   ProjectNotFoundError,
 } from './errors.js';
-export { InvalidProjectNameError, MAX_PROJECT_NAME_LENGTH, parseProjectName } from './project.js';
-export type { ProjectFile, ProjectFileEntry, ProjectSummary } from './project.js';
+export {
+  DEFAULT_PROJECT_SETTINGS,
+  InvalidProjectNameError,
+  MAX_PROJECT_NAME_LENGTH,
+  parseProjectName,
+} from './project.js';
+export type { ProjectFile, ProjectFileEntry, ProjectSettings, ProjectSummary } from './project.js';
 export {
   InvalidPathError,
   MAX_PROJECT_PATH_LENGTH,

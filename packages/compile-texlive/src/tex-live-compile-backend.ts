@@ -7,13 +7,16 @@ import type {
   CompileResult,
   PdfPoint,
   PdfRect,
+  PreambleStatus,
   SourceLocation,
   TexEngine,
 } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile, ProjectPath } from '@myleaf/project';
+import { FORMAT_NAME, PreambleFormatStore, extractPreamble, formatKey } from './preamble-format.js';
 import { runProcess } from './run-process.js';
+import type { ProcessResult } from './run-process.js';
 import { parseSynctexRecords } from './synctex-output.js';
 
 export interface TexLiveCompileBackendOptions {
@@ -22,6 +25,7 @@ export interface TexLiveCompileBackendOptions {
   /** Maximum duration of one compile. Default: 60 s. */
   readonly timeoutMs?: number;
   readonly latexmkCommand?: string;
+  readonly pdflatexCommand?: string;
   readonly synctexCommand?: string;
 }
 
@@ -39,6 +43,15 @@ interface BuildState {
   readonly jobName: string;
 }
 
+/** How a compile will use the precompiled preamble. */
+interface PreamblePlan {
+  readonly status: PreambleStatus;
+  /** Set when a valid precompiled preamble exists. */
+  readonly useFormat: boolean;
+  /** Identifies the preamble; set when it can be precompiled. */
+  readonly key: string | null;
+}
+
 /**
  * CompileBackend running TeX Live's latexmk, with SyncTeX via the `synctex`
  * command-line tool. Workspace per project:
@@ -46,6 +59,13 @@ interface BuildState {
  *   <workRoot>/<project-id>/src/   copy of the source; unchanged files keep
  *                                  their timestamps so latexmk can skip work
  *   <workRoot>/<project-id>/out/   aux files, log, PDF, SyncTeX data
+ *   <workRoot>/<project-id>/out/fmt/  precompiled preamble (pdfLaTeX only)
+ *
+ * Precompiled preamble (ADR 0011): the part of the root file before
+ * `\begin{document}` is dumped into a TeX format with `mylatexformat`, in the
+ * background after the compile that first sees it. Later compiles load the
+ * format instead of the packages. It is rebuilt when the preamble, a project
+ * file it reads (e.g. a local .sty), or the TeX version changes.
  *
  * Hardening (not a sandbox; see ADR 0010): latexmk ignores rc files (they are
  * Perl code), shell escape is disabled, and TeX may only read and write files
@@ -55,7 +75,9 @@ export class TexLiveCompileBackend implements CompileBackend {
   readonly #workRoot: string;
   readonly #timeoutMs: number;
   readonly #latexmk: string;
+  readonly #pdflatex: string;
   readonly #synctex: string;
+  #texVersion: Promise<string> | null = null;
   /** Tail of each project's compile queue. */
   readonly #queues = new Map<ProjectId, Promise<unknown>>();
 
@@ -63,11 +85,17 @@ export class TexLiveCompileBackend implements CompileBackend {
     this.#workRoot = resolve(options.workRoot);
     this.#timeoutMs = options.timeoutMs ?? 60_000;
     this.#latexmk = options.latexmkCommand ?? 'latexmk';
+    this.#pdflatex = options.pdflatexCommand ?? 'pdflatex';
     this.#synctex = options.synctexCommand ?? 'synctex';
   }
 
-  compile(request: CompileRequest): Promise<CompileResult> {
-    return this.#serialize(request.projectId, () => this.#compile(request));
+  async compile(request: CompileRequest): Promise<CompileResult> {
+    const { result, key } = await this.#serialize(request.projectId, () => this.#compile(request));
+    if (result.preamble === 'building' && key !== null) {
+      // Queued behind this compile and ahead of the next one; not awaited.
+      void this.#serialize(request.projectId, () => this.#buildFormat(request, key));
+    }
+    return result;
   }
 
   async readPdf(projectId: ProjectId): Promise<Uint8Array | null> {
@@ -134,43 +162,162 @@ export class TexLiveCompileBackend implements CompileBackend {
     );
   }
 
-  async #compile(request: CompileRequest): Promise<CompileResult> {
+  async #compile(request: CompileRequest): Promise<{ result: CompileResult; key: string | null }> {
     const started = performance.now();
     const { projectId, rootFile } = request;
-    const srcDir = this.#srcDir(projectId);
     const outDir = this.#outDir(projectId);
     await mkdir(outDir, { recursive: true });
-    await syncDirectory(srcDir, request.files);
+    await syncDirectory(this.#srcDir(projectId), request.files);
 
     const jobName = rootFile.slice(rootFile.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '');
     const state: BuildState = { jobName };
     await writeFile(join(this.#projectDir(projectId), STATE_FILE), JSON.stringify(state));
 
-    const run = await runProcess(
+    const plan = await this.#planPreamble(request);
+    let preamble = plan.status;
+    let run = await this.#runLatexmk(request, plan.useFormat);
+    let output = await this.#readOutput(projectId, jobName);
+
+    // A failure without a PDF and without errors in project files may be
+    // caused by the format: retry without it, and stop using it if that helps.
+    if (plan.useFormat && plan.key !== null && output.pdf === null && run.exitCode !== 0) {
+      if (!output.diagnostics.some((d) => d.severity === 'error' && d.file !== null)) {
+        run = await this.#runLatexmk(request, false);
+        output = await this.#readOutput(projectId, jobName);
+        if (output.pdf !== null) {
+          await this.#formats(projectId).markFailed(plan.key);
+          preamble = 'unavailable';
+        }
+      }
+    }
+
+    return {
+      key: plan.key,
+      result: {
+        status: run.timedOut ? 'timeout' : run.exitCode === 0 ? 'success' : 'failure',
+        hasPdf: output.pdf !== null,
+        durationMs: Math.round(performance.now() - started),
+        log: output.log,
+        diagnostics: output.diagnostics,
+        preamble,
+      },
+    };
+  }
+
+  async #planPreamble(request: CompileRequest): Promise<PreamblePlan> {
+    if (!request.options.precompilePreamble) {
+      return { status: 'disabled', useFormat: false, key: null };
+    }
+    const root = request.files.find((file) => file.path === request.rootFile);
+    const preamble =
+      request.engine === 'pdflatex' && root !== undefined
+        ? extractPreamble(new TextDecoder().decode(root.content))
+        : null;
+    if (preamble === null) {
+      return { status: 'unavailable', useFormat: false, key: null };
+    }
+    const key = formatKey(await this.#getTexVersion(), request.rootFile, preamble);
+    switch (await this.#formats(request.projectId).state(key, request.files)) {
+      case 'ready':
+        return { status: 'reused', useFormat: true, key };
+      case 'failed':
+        return { status: 'unavailable', useFormat: false, key };
+      case 'missing':
+        return { status: 'building', useFormat: false, key };
+    }
+  }
+
+  async #runLatexmk(request: CompileRequest, useFormat: boolean): Promise<ProcessResult> {
+    const outDir = this.#outDir(request.projectId);
+    const formats = this.#formats(request.projectId);
+    return runProcess(
       this.#latexmk,
       [
         '-norc',
         ENGINE_FLAGS[request.engine],
+        // The format is found through TEXFORMATS: an absolute -fmt path breaks
+        // pdfTeX's -recorder file name when -output-directory is set.
+        ...(useFormat ? [`-pdflatex=${this.#pdflatex} -fmt=${FORMAT_NAME} %O %S`] : []),
         '-synctex=1',
         '-interaction=nonstopmode',
         '-file-line-error',
         '-no-shell-escape',
         `-outdir=${outDir}`,
-        rootFile,
+        request.rootFile,
       ],
-      { cwd: srcDir, env: this.#texEnv(outDir), timeoutMs: this.#timeoutMs },
+      {
+        cwd: this.#srcDir(request.projectId),
+        env: {
+          ...this.#texEnv(outDir),
+          ...(useFormat ? { TEXFORMATS: `${formats.dir}:` } : {}),
+        },
+        timeoutMs: this.#timeoutMs,
+      },
     );
+  }
 
-    const log = (await readOptional(join(outDir, `${jobName}.log`))) ?? new Uint8Array();
-    const logText = new TextDecoder().decode(log);
-    const pdf = await readOptional(join(outDir, `${jobName}.pdf`));
+  async #readOutput(projectId: ProjectId, jobName: string) {
+    const outDir = this.#outDir(projectId);
+    const log = new TextDecoder().decode(
+      (await readOptional(join(outDir, `${jobName}.log`))) ?? new Uint8Array(),
+    );
     return {
-      status: run.timedOut ? 'timeout' : run.exitCode === 0 ? 'success' : 'failure',
-      hasPdf: pdf !== null,
-      durationMs: Math.round(performance.now() - started),
-      log: logText,
-      diagnostics: parseTexLog(logText, (raw) => this.#toProjectPath(projectId, raw)),
+      log,
+      pdf: await readOptional(join(outDir, `${jobName}.pdf`)),
+      diagnostics: parseTexLog(log, (raw) => this.#toProjectPath(projectId, raw)),
     };
+  }
+
+  /** Dumps the preamble of `request.rootFile` into a format with mylatexformat. */
+  async #buildFormat(request: CompileRequest, key: string): Promise<void> {
+    const { projectId, rootFile } = request;
+    const formats = this.#formats(projectId);
+    if ((await formats.state(key, request.files)) !== 'missing') {
+      return;
+    }
+    const buildDir = join(this.#outDir(projectId), 'fmt-build');
+    await rm(buildDir, { recursive: true, force: true });
+    await mkdir(buildDir, { recursive: true });
+    try {
+      const run = await runProcess(
+        this.#pdflatex,
+        [
+          '-ini',
+          '-interaction=nonstopmode',
+          '-halt-on-error',
+          '-no-shell-escape',
+          '-recorder',
+          `-output-directory=${buildDir}`,
+          `-jobname=${FORMAT_NAME}`,
+          '&pdflatex',
+          'mylatexformat.ltx',
+          rootFile,
+        ],
+        { cwd: this.#srcDir(projectId), env: this.#texEnv(buildDir), timeoutMs: this.#timeoutMs },
+      );
+      const built =
+        run.exitCode === 0 && (await readOptional(join(buildDir, `${FORMAT_NAME}.fmt`))) !== null;
+      if (built) {
+        await formats.commit(key, buildDir, this.#srcDir(projectId), rootFile, request.files);
+      } else {
+        await formats.markFailed(key);
+      }
+    } finally {
+      await rm(buildDir, { recursive: true, force: true });
+    }
+  }
+
+  #getTexVersion(): Promise<string> {
+    this.#texVersion ??= runProcess(this.#pdflatex, ['--version'], {
+      cwd: this.#workRoot,
+      env: process.env,
+      timeoutMs: 10_000,
+    }).then((result) => result.stdout.split('\n')[0] ?? '');
+    return this.#texVersion;
+  }
+
+  #formats(projectId: ProjectId): PreambleFormatStore {
+    return new PreambleFormatStore(join(this.#outDir(projectId), 'fmt'));
   }
 
   #texEnv(outDir: string): NodeJS.ProcessEnv {

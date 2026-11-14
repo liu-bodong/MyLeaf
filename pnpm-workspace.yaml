@@ -11,7 +11,7 @@ catalog:
   '@codemirror/state': ^6.7.6
   '@codemirror/view': ^6.43.15
   '@eslint/js': ^10.0.1
-  '@playwright/test': ^1.65.1
+  '@playwright/test': 1.65.0
   '@types/node': ^22.19.0
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
@@ -30,8 +30,3 @@ catalog:
   vite: ^8.3.8
   vitest: ^5.1.0
   yjs: ^13.6.33
-
-minimumReleaseAgeExclude:
-  - '@playwright/test@1.65.1'
-  - playwright-core@1.65.1
-  - playwright@1.65.1
