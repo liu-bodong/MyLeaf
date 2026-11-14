@@ -68,18 +68,17 @@ trigger. Covered by `e2e/ui-frame.spec.ts`.
 
 ### 2. Placeholders
 
-Disabled with the tooltip "Not available yet": Insert menu (Figure, Table,
-Citation, Cross-reference), Format menu (Bold, Italic, lists), Help menu
-(Keyboard shortcuts, Documentation), File/project menu "Download source
-(.zip)", History, Share, and Visual in the editor toolbar.
+Help → Keyboard shortcuts now opens a dialog listing the existing shortcuts.
+The rest are still disabled with the tooltip "Not available yet": Insert menu
+(Figure, Table, Citation, Cross-reference), Format menu (Bold, Italic, lists),
+Help → Documentation, File/project menu "Download source (.zip)", History,
+Share, and Visual in the editor toolbar.
 
 - Files: menu definitions in `Workspace.tsx` (`menus`, `projectItems`);
-  `TopBar.tsx`; `EditorToolbar.tsx`.
+  `TopBar.tsx`; `EditorToolbar.tsx`; `ui/Dialog.tsx`.
 - Done: each placeholder is either wired to a feature or confirmed with the
   project owner as staying. Some need features first (server zip export,
   history, sharing); those are separate tasks, not styling.
-- A cheap one: Help → Keyboard shortcuts as a dialog listing the existing
-  shortcuts (Mod-S / Mod-Enter compile, Mod-Z, Mod-Shift-Z, Mod-F).
 
 ### 3. Keyboard shortcuts for the PDF — done
 

@@ -16,6 +16,7 @@ import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
 import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
+import { Dialog } from '../ui/Dialog.js';
 import { Icon } from '../ui/icons.js';
 import type { MenuDefinition, MenuItem } from '../ui/Menu.js';
 import { SplitPane } from '../ui/SplitPane.js';
@@ -23,6 +24,7 @@ import { CompileSettings } from './CompileSettings.js';
 import { Diagnostics } from './Diagnostics.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { FileTree } from './FileTree.js';
+import { KeyboardShortcuts } from './KeyboardShortcuts.js';
 import { Sidebar } from './Sidebar.js';
 import {
   SIDEBAR_MAX,
@@ -76,6 +78,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [editHistory, setEditHistory] = useState<EditHistory | null>(null);
   const [pdfView, setPdfView] = useState<PdfViewState>({ page: 0, pages: 0, zoom: null });
   const [logsOpen, setLogsOpen] = useState(true);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [liveAvailable, setLiveAvailable] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
   /** Output shown while live preview is on; the PDF stays reachable. */
@@ -492,7 +495,10 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     },
     {
       label: 'Help',
-      items: [{ label: 'Keyboard shortcuts' }, { label: 'Documentation' }],
+      items: [
+        { label: 'Keyboard shortcuts', onSelect: () => setShortcutsOpen(true) },
+        { label: 'Documentation' },
+      ],
     },
   ];
 
@@ -706,6 +712,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
           }
         />
       </div>
+      {shortcutsOpen && (
+        <Dialog title="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)}>
+          <KeyboardShortcuts />
+        </Dialog>
+      )}
     </div>
   );
 }
