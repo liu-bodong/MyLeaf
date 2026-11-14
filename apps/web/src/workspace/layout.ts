@@ -12,6 +12,8 @@ export interface Layout {
   /** Width of the file-tree sidebar in CSS pixels. */
   readonly sidebar: number;
   readonly zoom: PdfZoom;
+  /** Whether the compile messages under the PDF are expanded. */
+  readonly logs: boolean;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -24,6 +26,7 @@ export const DEFAULT_LAYOUT: Layout = {
   split: 0.5,
   sidebar: SIDEBAR_DEFAULT,
   zoom: 'fit-width',
+  logs: false,
 };
 
 const STORAGE_KEY = 'myleaf.layout';
@@ -70,6 +73,7 @@ export function parseLayout(raw: string | null): Layout {
         ? clampSidebar(saved.sidebar)
         : DEFAULT_LAYOUT.sidebar,
     zoom: parseZoom(saved.zoom) ?? DEFAULT_LAYOUT.zoom,
+    logs: typeof saved.logs === 'boolean' ? saved.logs : DEFAULT_LAYOUT.logs,
   };
 }
 

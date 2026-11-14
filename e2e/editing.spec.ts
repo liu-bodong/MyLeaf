@@ -42,7 +42,8 @@ test('edit a multi-file project, compile, and navigate between source and PDF', 
   await expect(error).toContainText('chapters/intro.tex:3');
   await expect(error).toContainText('Undefined control sequence.');
 
-  // Clicking the error moves the cursor to that line.
+  // Clicking the error moves the cursor to that line. Compile messages start collapsed.
+  await page.getByRole('button', { name: /errors ·/ }).click();
   await error.getByRole('button').click();
   await expect(page.locator('.cm-activeLine')).toHaveText('A \\badmacro here.');
 

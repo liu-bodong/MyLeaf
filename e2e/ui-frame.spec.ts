@@ -65,14 +65,23 @@ test('top bar, editor toolbar, PDF toolbar and layout', async ({ page }) => {
   await page.getByRole('menuitem', { name: '100%' }).click();
   await expect(zoomLevel).toHaveText('100%');
 
-  // Error badge toggles the logs.
+  // Compile messages start collapsed to their summary line; the Logs button
+  // and the summary line both expand and collapse them.
   await replaceEditorText(page, THREE_PAGES.replace('Second page.', String.raw`\badmacro`));
   await page.getByRole('button', { name: 'Recompile', exact: true }).click();
   const logs = page.getByRole('button', { name: 'Logs: 1 error' });
   await expect(logs).toBeVisible();
-  await expect(page.locator('.diagnostic.error')).toHaveCount(1);
+  const summary = page.getByRole('button', { name: /1 errors ·/ });
+  await expect(summary).toHaveAttribute('aria-expanded', 'false');
+  const error = page.locator('.diagnostic.error');
+  await expect(error).toHaveCount(1);
+  await expect(error).toBeHidden();
   await logs.click();
-  await expect(page.locator('.diagnostics')).toHaveCount(0);
+  await expect(error).toBeVisible();
+  await expect(logs).toHaveAttribute('aria-pressed', 'true');
+  await summary.click();
+  await expect(error).toBeHidden();
+  await expect(logs).toHaveAttribute('aria-pressed', 'false');
 
   // Resizing with the keyboard.
   const handle = page.getByRole('separator', { name: 'Resize editor and PDF' });

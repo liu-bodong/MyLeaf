@@ -3,12 +3,15 @@ import { DEFAULT_LAYOUT, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, parseLayout } from
 
 describe('parseLayout', () => {
   it('reads a saved layout', () => {
-    expect(parseLayout('{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25}')).toEqual({
-      view: 'pdf',
-      split: 0.4,
-      sidebar: 300,
-      zoom: 1.25,
-    });
+    expect(parseLayout('{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true}')).toEqual(
+      {
+        view: 'pdf',
+        split: 0.4,
+        sidebar: 300,
+        zoom: 1.25,
+        logs: true,
+      },
+    );
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');
   });
 
@@ -16,7 +19,9 @@ describe('parseLayout', () => {
     expect(parseLayout(null)).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout('not json')).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout('[]')).toEqual({ ...DEFAULT_LAYOUT });
-    expect(parseLayout('{"view":"sideways","split":"wide","zoom":99}')).toEqual(DEFAULT_LAYOUT);
+    expect(parseLayout('{"view":"sideways","split":"wide","zoom":99,"logs":"yes"}')).toEqual(
+      DEFAULT_LAYOUT,
+    );
   });
 
   it('clamps the split and the sidebar width', () => {

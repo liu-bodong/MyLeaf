@@ -77,7 +77,6 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const [editHistory, setEditHistory] = useState<EditHistory | null>(null);
   const [pdfView, setPdfView] = useState<PdfViewState>({ page: 0, pages: 0, zoom: null });
-  const [logsOpen, setLogsOpen] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [liveAvailable, setLiveAvailable] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
@@ -655,8 +654,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   />
                 }
                 errorCount={errorCount}
-                logsOpen={logsOpen}
-                onToggleLogs={() => setLogsOpen((open) => !open)}
+                logsOpen={layout.logs}
+                onToggleLogs={() => updateLayout({ logs: !layout.logs })}
                 downloadUrl={pdfUrl}
                 downloadName={`${project.name}.pdf`}
                 outputTabs={
@@ -705,8 +704,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   onZoom={(zoom) => updateLayout({ zoom })}
                 />
               </div>
-              {result !== null && logsOpen && (
-                <Diagnostics result={result} onSelect={selectDiagnostic} />
+              {result !== null && (
+                <Diagnostics
+                  result={result}
+                  onSelect={selectDiagnostic}
+                  open={layout.logs}
+                  onToggle={() => updateLayout({ logs: !layout.logs })}
+                />
               )}
             </section>
           }
