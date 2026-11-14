@@ -4,10 +4,19 @@
 incremental LaTeX rendering. MyLeaf builds it from a pinned upstream commit
 with the patches in this directory applied (see ADR 0012).
 
-| File                    | Purpose                                                               |
-| ----------------------- | --------------------------------------------------------------------- |
-| `build.sh`              | Clones the pinned commit, applies `*.patch`, builds into `build/bin/` |
-| `headless-export.patch` | Writes each displayed page as SVG (or PNG) and announces it on stdout |
+| File                           | Purpose                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `build.sh`                     | Clones the pinned commit, applies `*.patch`, builds into `build/bin/`        |
+| `headless-export.patch`        | Writes each displayed page as SVG (or PNG) and announces it on stdout        |
+| `input-extension-lookup.patch` | Resolves `\input{name}` through the driver, so edits to included files apply |
+
+## Included files
+
+XeTeX first asks for `\input{sections/intro}` under the bare name. Upstream,
+when the driver does not know that name, the engine adds the extension and
+reads the file from disk itself, bypassing the contents sent with `open` or
+`open-base64`. `input-extension-lookup.patch` asks the driver for each
+`name + extension` before that disk fallback.
 
 ## Headless export
 

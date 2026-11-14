@@ -1,0 +1,21 @@
+diff --git a/src/engine/main/main.c b/src/engine/main/main.c
+index 333408e..30d5842 100644
+--- a/src/engine/main/main.c
++++ b/src/engine/main/main.c
+@@ -230,6 +230,16 @@ ttbc_input_handle_t *ttstub_input_open(const char *path,
+     char *ipath =
+       txp_open(texpresso, id, path, kind_of_ttbc_format(format), TXP_READ);
+ 
++    // Ask the driver for the name with each default extension before the
++    // disk fallback below, which would bypass the driver's edited contents.
++    for (const char **exts = format_extensions(format); !ipath && *exts; exts++)
++    {
++      char ext_path[PATH_MAX + 1];
++      if (snprintf(ext_path, sizeof(ext_path), "%s%s", path, *exts) >= (int)sizeof(ext_path))
++        continue;
++      ipath = txp_open(texpresso, id, ext_path, kind_of_ttbc_format(format), TXP_READ);
++    }
++
+     if (ipath)
+     {
+       strcpy(last_open, ipath);

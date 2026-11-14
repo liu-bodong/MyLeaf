@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { ProjectId } from '@myleaf/doc-model';
 import type { LivePreviewEvent, LivePreviewSession } from '@myleaf/live-preview';
 import { parseProjectPath } from '@myleaf/project';
+import type { ProjectFile } from '@myleaf/project';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { sanitizeSvg } from './sanitize-svg.js';
 import { TexpressoLivePreview } from './texpresso-live-preview.js';
@@ -105,13 +106,13 @@ describe.skipIf(!available)(
       await rm(workRoot, { recursive: true, force: true });
     });
 
-    const open = async (firstPage = 'First page.') => {
+    const open = async (firstPage = 'First page.', extraFiles: ProjectFile[] = []) => {
       const backend = new TexpressoLivePreview({ command, workRoot });
       session = await backend.open(
         {
           projectId: ProjectId('live-test'),
           rootFile: parseProjectPath('main.tex'),
-          files: [{ path: parseProjectPath('main.tex'), content: main(firstPage) }],
+          files: [{ path: parseProjectPath('main.tex'), content: main(firstPage) }, ...extraFiles],
         },
         (event) => events.push(event),
       );
@@ -138,6 +139,21 @@ describe.skipIf(!available)(
       expect(after).not.toEqual(before);
     });
 
+    // \input without an extension: TeXpresso must serve the edited contents,
+    // not the file on disk (vendor/texpresso/input-extension-lookup.patch).
+    it('re-renders the page after an edit to an \\input file', async () => {
+      const part = (text: string) => ({
+        path: parseProjectPath('sections/part.tex'),
+        content: encoder.encode(`${text}\n`),
+      });
+      const live = await open('First page. \\input{sections/part}', [part('Included text.')]);
+      const before = await waitFor(isPage(1));
+      const from = events.length;
+      live.updateFile(part('Included text, now with \\textbf{considerably more text}.'));
+      const after = await waitFor(isPage(1), from);
+      expect(after).not.toEqual(before);
+    });
+
     it('shows other pages on request', async () => {
       const live = await open();
       await waitFor(isPage(1));
@@ -145,14 +161,18 @@ describe.skipIf(!available)(
       await waitFor(isPage(2));
     });
 
-    it('stops every process and removes its workspace on close', async () => {
-      const live = await open();
-      await waitFor(isPage(1));
-      expect(processesInWorkRoot().length).toBeGreaterThan(0);
-      await live.close();
-      session = null;
-      expect(processesInWorkRoot()).toEqual([]);
-      expect(readdirSync(join(workRoot, 'live-test'))).toEqual([]);
-    });
+    // Finds processes through /proc, which only Linux has.
+    it.skipIf(process.platform !== 'linux')(
+      'stops every process and removes its workspace on close',
+      async () => {
+        const live = await open();
+        await waitFor(isPage(1));
+        expect(processesInWorkRoot().length).toBeGreaterThan(0);
+        await live.close();
+        session = null;
+        expect(processesInWorkRoot()).toEqual([]);
+        expect(readdirSync(join(workRoot, 'live-test'))).toEqual([]);
+      },
+    );
   },
 );
