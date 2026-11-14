@@ -25,7 +25,9 @@ for patch in "$here"/*.patch; do
 done
 
 # `all` generates Makefile.config before building, in the right order.
-make -C "$src" -j"$(nproc)" all >/dev/null
+# getconf works on Linux and macOS (nproc is Linux-only).
+jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+make -C "$src" -j"$jobs" all >/dev/null
 mkdir -p "$out/bin"
 # Copy then rename, so binaries in use by running sessions can be replaced.
 for binary in texpresso texpresso-xetex; do

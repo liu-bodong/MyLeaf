@@ -9,6 +9,10 @@ interface LivePreviewPaneProps {
   readonly channel: LiveChannel;
   /** Called once the session runs, so the latest unsaved text can be sent. */
   readonly onReady: () => void;
+  /** Offered when the session ended: switch the output pane to the PDF. */
+  readonly onShowPdf: () => void;
+  /** Offered when the session ended: start a new session. */
+  readonly onRetry: () => void;
 }
 
 type Connection =
@@ -25,7 +29,13 @@ interface RenderedPage {
  * Live-rendered pages over the project's live-preview WebSocket (ADR 0012).
  * Mounted only while live preview is on, so each mount is one session.
  */
-export function LivePreviewPane({ projectId, channel, onReady }: LivePreviewPaneProps) {
+export function LivePreviewPane({
+  projectId,
+  channel,
+  onReady,
+  onShowPdf,
+  onRetry,
+}: LivePreviewPaneProps) {
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [page, setPage] = useState(1);
@@ -101,6 +111,12 @@ export function LivePreviewPane({ projectId, channel, onReady }: LivePreviewPane
           {connection.state === 'connecting' && 'Starting…'}
           {connection.state === 'ended' && connection.message}
         </span>
+        {connection.state === 'ended' && (
+          <>
+            <button onClick={onRetry}>Retry</button>
+            <button onClick={onShowPdf}>Show PDF</button>
+          </>
+        )}
       </header>
       <div className="live-page">
         {rendered !== null ? (

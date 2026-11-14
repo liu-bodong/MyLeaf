@@ -30,6 +30,21 @@ characters, which are invalid XML; consumers must strip them.
 sudo apt-get install build-essential pkg-config libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev libpng-dev zlib1g-dev texlive-xetex
 ```
 
+## Build dependencies (macOS)
+
+From TeXpresso's INSTALL.md (`mupdf-tools`, `SDL2`) and its Makefiles: the
+frontend links mupdf, SDL2, harfbuzz, freetype, libjpeg and zlib from
+`brew --prefix`; the engine uses `pkg-config` for freetype2, harfbuzz,
+graphite2, fontconfig and libpng, and links `icu4c`. A TeX distribution with
+XeTeX must be on `PATH` (e.g. MacTeX).
+
+```bash
+brew install pkg-config mupdf-tools sdl2 icu4c freetype harfbuzz graphite2 fontconfig libpng jpeg-turbo
+```
+
+Then run `vendor/texpresso/build.sh`. This list is not tested by MyLeaf's
+CI, which runs on Linux.
+
 ## Updating
 
 Change `COMMIT` in `build.sh`, rebuild, and regenerate the patch if it no

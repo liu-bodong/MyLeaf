@@ -31,6 +31,32 @@ describe('sanitizeSvg', () => {
   });
 });
 
+describe('TexpressoLivePreview with a missing binary', () => {
+  it('reports the failure and still closes', async () => {
+    const workRoot = await mkdtemp(join(tmpdir(), 'myleaf-live-'));
+    const events: LivePreviewEvent[] = [];
+    const backend = new TexpressoLivePreview({
+      command: join(workRoot, 'no-such-texpresso'),
+      workRoot,
+      stopWithServer: false,
+    });
+    const session = await backend.open(
+      {
+        projectId: ProjectId('missing'),
+        rootFile: parseProjectPath('main.tex'),
+        files: [{ path: parseProjectPath('main.tex'), content: main('x') }],
+      },
+      (event) => events.push(event),
+    );
+    await expect
+      .poll(() => events)
+      .toEqual([{ type: 'stopped', reason: expect.stringContaining('ENOENT') as string }]);
+    await session.close();
+    expect(readdirSync(join(workRoot, 'missing'))).toEqual([]);
+    await rm(workRoot, { recursive: true, force: true });
+  });
+});
+
 // A cold start (font caches) can take several seconds on CI runners.
 describe.skipIf(!available)(
   'TexpressoLivePreview (requires patched TeXpresso)',

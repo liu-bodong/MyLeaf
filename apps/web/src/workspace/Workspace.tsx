@@ -56,6 +56,10 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [liveAvailable, setLiveAvailable] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
+  /** Output shown while live preview is on; the PDF stays reachable. */
+  const [outputView, setOutputView] = useState<'live' | 'pdf'>('live');
+  /** Changing it remounts the live pane, which starts a new session. */
+  const [liveAttempt, setLiveAttempt] = useState(0);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -401,9 +405,10 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   type="checkbox"
                   disabled={!liveAvailable}
                   checked={showLive}
-                  onChange={(event) =>
-                    void updateSettings({ livePreview: event.target.checked }).catch(report)
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) setOutputView('live');
+                    void updateSettings({ livePreview: event.target.checked }).catch(report);
+                  }}
                 />
                 <span>
                   Live preview (XeLaTeX)
@@ -488,19 +493,40 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         {document === null && <p className="placeholder">Select a file.</p>}
       </main>
       <section className="output">
-        {showLive ? (
-          <LivePreviewPane
-            projectId={projectId}
-            channel={liveChannel}
-            onReady={sendOpenDocumentToLive}
-          />
-        ) : (
+        {showLive && (
+          <div className="output-tabs" role="tablist" aria-label="Output">
+            {(['live', 'pdf'] as const).map((view) => (
+              <button
+                key={view}
+                role="tab"
+                aria-selected={outputView === view}
+                onClick={() => setOutputView(view)}
+              >
+                {view === 'live' ? 'Live' : 'PDF'}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* The live pane stays mounted while the PDF is shown, keeping its session. */}
+        {showLive && (
+          <div className="output-view" hidden={outputView !== 'live'}>
+            <LivePreviewPane
+              key={liveAttempt}
+              projectId={projectId}
+              channel={liveChannel}
+              onReady={sendOpenDocumentToLive}
+              onShowPdf={() => setOutputView('pdf')}
+              onRetry={() => setLiveAttempt((attempt) => attempt + 1)}
+            />
+          </div>
+        )}
+        <div className="output-view" hidden={showLive && outputView !== 'pdf'}>
           <PdfViewer
             url={pdfVersion === 0 ? null : api.pdfUrl(projectId, pdfVersion)}
             highlights={highlights}
             onInverseSearch={(point) => void inverseSearch(point).catch(report)}
           />
-        )}
+        </div>
         {result !== null && <Diagnostics result={result} onSelect={selectDiagnostic} />}
       </section>
     </div>

@@ -1,3 +1,5 @@
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { TexLiveCompileBackend } from '@myleaf/compile-texlive';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
@@ -14,15 +16,24 @@ const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds') }
 
 // Live preview (ADR 0012) is enabled by pointing MYLEAF_TEXPRESSO at the patched binary.
 const texpresso = process.env.MYLEAF_TEXPRESSO;
-const livePreview = texpresso
-  ? new LiveSessionPool(
-      new TexpressoLivePreview({ command: texpresso, workRoot: join(dataDir, 'live') }),
-      {
-        maxSessions: Number(process.env.MYLEAF_LIVE_MAX_SESSIONS ?? 4),
-        idleMs: Number(process.env.MYLEAF_LIVE_IDLE_MINUTES ?? 10) * 60_000,
-      },
-    )
-  : null;
+let texpressoProblem: string | null = null;
+if (texpresso) {
+  try {
+    await access(texpresso, constants.X_OK);
+  } catch {
+    texpressoProblem = `MYLEAF_TEXPRESSO (${texpresso}) is not an executable file; build it with vendor/texpresso/build.sh`;
+  }
+}
+const livePreview =
+  texpresso && texpressoProblem === null
+    ? new LiveSessionPool(
+        new TexpressoLivePreview({ command: texpresso, workRoot: join(dataDir, 'live') }),
+        {
+          maxSessions: Number(process.env.MYLEAF_LIVE_MAX_SESSIONS ?? 4),
+          idleMs: Number(process.env.MYLEAF_LIVE_IDLE_MINUTES ?? 10) * 60_000,
+        },
+      )
+    : null;
 
 const app = buildApp({ store, compiler, livePreview }, { logger: true });
 
@@ -34,4 +45,5 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 await app.listen({ host, port });
 app.log.info(`Data directory: ${dataDir}`);
-app.log.info(`Live preview: ${livePreview ? `enabled (${texpresso})` : 'disabled'}`);
+if (texpressoProblem !== null) app.log.warn(`Live preview disabled: ${texpressoProblem}`);
+else app.log.info(`Live preview: ${livePreview ? `enabled (${texpresso})` : 'disabled'}`);

@@ -101,9 +101,11 @@ class TexpressoSession implements LivePreviewSession {
           void rm(dir, { recursive: true, force: true });
         }
       });
-    });
-    child.on('error', (error) => {
-      if (!this.#closing) onEvent({ type: 'stopped', reason: error.message });
+      child.on('error', (error) => {
+        // A process that failed to start emits no 'exit'.
+        if (child.pid === undefined) resolveExit();
+        if (!this.#closing) onEvent({ type: 'stopped', reason: error.message });
+      });
     });
 
     let buffer = '';

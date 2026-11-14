@@ -26,6 +26,13 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await expect(image).not.toHaveAttribute('src', before ?? '', { timeout: 30_000 });
   await expect(page.getByTestId('live-page')).toHaveText('Page 1');
 
+  // The PDF stays reachable while live preview is on.
+  await page.getByRole('tab', { name: 'PDF' }).click();
+  await expect(page.getByTestId('live-preview')).toBeHidden();
+  await expect(page.getByText('Compile to see the PDF.')).toBeVisible();
+  await page.getByRole('tab', { name: 'Live' }).click();
+  await expect(image).toBeVisible();
+
   // The setting persists; turning it off brings the PDF view back.
   await page.reload();
   await expect(page.getByTestId('live-preview')).toBeVisible();

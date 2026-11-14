@@ -75,8 +75,11 @@ the nearest snapshot is further back.
   is enabled by `MYLEAF_TEXPRESSO`. These are environment variables for now;
   engine choice, compile settings and resource limits are to become
   configurable in the UI later.
-- The web app shows live pages in place of the PDF when the project setting
-  `livePreview` is on (Compile menu, off by default).
+- The web app shows live pages when the project setting `livePreview` is on
+  (Compile menu, off by default). A PDF/Live switch keeps the PDF reachable;
+  when a session ends, the pane offers Retry and Show PDF.
+- The server checks at startup that `MYLEAF_TEXPRESSO` is executable and
+  otherwise reports live preview as unavailable.
 - Process cleanup: the server closes all sessions on SIGINT/SIGTERM. On
   Linux the adapter starts TeXpresso through `setpriv --pdeathsig TERM`, so
   sessions also stop if the server dies abruptly; TeXpresso itself keeps

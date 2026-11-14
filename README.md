@@ -33,8 +33,9 @@ Server configuration (environment variables):
 | `MYLEAF_LIVE_MAX_SESSIONS` | `4`         | Live previews open at once (~250 MB each)                  |
 | `MYLEAF_LIVE_IDLE_MINUTES` | `10`        | Inactivity before a live preview is closed                 |
 
-Live preview (optional, Linux/macOS, ADR 0012) needs the patched TeXpresso:
-install the packages listed in `vendor/texpresso/README.md`, then
+Live preview (optional, ADR 0012) needs the patched TeXpresso: install the
+packages listed in `vendor/texpresso/README.md` (Ubuntu and macOS; only
+Linux is tested in CI), then
 
 ```bash
 vendor/texpresso/build.sh
@@ -43,6 +44,9 @@ vendor/texpresso/build.sh
 ```bash
 MYLEAF_TEXPRESSO=$PWD/vendor/texpresso/build/bin/texpresso pnpm dev
 ```
+
+If that file is missing or not executable, the server logs a warning at
+startup and runs with live preview disabled.
 
 There is no authentication yet, and compilation is hardened but not
 sandboxed (see [ADR 0010](docs/adr/0010-projects-storage-and-compile-service.md)).
