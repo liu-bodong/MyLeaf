@@ -158,8 +158,8 @@ test('menus open and navigate with the keyboard', async ({ page }) => {
   await expect(format).toHaveAttribute('aria-expanded', 'true');
   await page.keyboard.press('End');
   const help = page.getByRole('menuitem', { name: 'Help', exact: true });
-  await expect(help).toBeFocused();
   await expect(help).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('menuitem', { name: 'Keyboard shortcuts' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toHaveCount(0);
   await expect(help).toBeFocused();
@@ -192,4 +192,22 @@ test('PDF keyboard shortcuts change pages and zoom', async ({ page }) => {
   await expect(zoomLevel).toHaveText('110%');
   await page.keyboard.press('ControlOrMeta+-');
   await expect(zoomLevel).toHaveText('100%');
+});
+
+test('Help shows the keyboard shortcuts', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Shortcuts');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+
+  await page.getByRole('menuitem', { name: 'Help', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Keyboard shortcuts' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Compile');
+  await expect(dialog).toContainText('Undo');
+
+  // Escape closes the dialog.
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
 });
