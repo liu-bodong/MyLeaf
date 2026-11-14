@@ -16,7 +16,8 @@ Requirements:
 ```bash
 corepack enable
 pnpm install
-pnpm dev          # server on 127.0.0.1:3000, web app on http://localhost:5173
+pnpm dev          # server on 127.0.0.1:3000, web app on http://localhost:5173,
+                  # with the sample project "ICML 2027 example" (samples/icml2027)
 pnpm check        # format, lint, typecheck, test, build (as CI)
 pnpm e2e          # end-to-end browser test (after `pnpm build`)
 pnpm bench        # compile-time benchmark (ADR 0011)
@@ -32,6 +33,7 @@ Server configuration (environment variables):
 | `MYLEAF_TEXPRESSO`         | (unset)     | Patched TeXpresso binary for live preview; `off` disables it (see below) |
 | `MYLEAF_LIVE_MAX_SESSIONS` | `4`         | Live previews open at once (~250 MB each)                                |
 | `MYLEAF_LIVE_IDLE_MINUTES` | `10`        | Inactivity before a live preview is closed                               |
+| `MYLEAF_SAMPLE_PROJECT`    | (unset)     | Folder to create the sample project from if missing (`pnpm dev` sets it) |
 
 Live preview (optional, ADR 0012) needs the patched TeXpresso: install the
 packages listed in `vendor/texpresso/README.md` (Ubuntu and macOS; only
@@ -69,6 +71,7 @@ Only expose the server to people you trust.
 | `packages/testing`         | Testing | Port contract suites and in-memory test doubles           |
 | `apps/server`              | App     | Fastify HTTP server                                       |
 | `apps/web`                 | App     | React web client (CodeMirror, PDF.js)                     |
+| `samples/icml2027`         | Sample  | Third-party paper loaded by `pnpm dev` for manual testing |
 
 Layering rules: [ADR 0009](docs/adr/0009-module-boundaries.md).
 

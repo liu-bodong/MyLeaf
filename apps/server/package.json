@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/main.js",
-    "dev": "node dist/main.js"
+    "dev": "MYLEAF_SAMPLE_PROJECT=../../samples/icml2027 node dist/main.js"
   },
   "dependencies": {
     "@fastify/websocket": "catalog:",

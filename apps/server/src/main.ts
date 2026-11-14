@@ -6,6 +6,7 @@ import { FileSystemProjectStore } from '@myleaf/storage-fs';
 import { buildApp } from './app.js';
 import { LiveSessionPool } from './live/live-session-pool.js';
 import { chooseTexpresso } from './live/texpresso-command.js';
+import { seedSampleProject } from './sample-project.js';
 
 function positiveInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -24,6 +25,16 @@ const port = positiveInt('PORT', 3000);
 const dataDir = resolve(process.env.MYLEAF_DATA_DIR ?? 'data');
 
 const store = await FileSystemProjectStore.open(join(dataDir, 'projects'));
+
+// Sample project for testing by hand; `pnpm dev` points this at samples/icml2027.
+const sampleDir = process.env.MYLEAF_SAMPLE_PROJECT;
+const sampleCreated =
+  sampleDir !== undefined &&
+  (await seedSampleProject(store, {
+    dir: resolve(sampleDir),
+    name: 'ICML 2027 example',
+    rootFile: 'example_paper.tex',
+  }));
 const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds') });
 
 // Live preview (ADR 0012) runs on the patched TeXpresso: MYLEAF_TEXPRESSO,
@@ -56,5 +67,6 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 await app.listen({ host, port });
 app.log.info(`Data directory: ${dataDir}`);
+if (sampleCreated) app.log.info(`Sample project created from ${resolve(sampleDir)}`);
 if (texpresso.kind === 'enabled') app.log.info(`Live preview: enabled (${texpresso.command})`);
 else app.log[texpresso.level](`Live preview disabled: ${texpresso.reason}`);
