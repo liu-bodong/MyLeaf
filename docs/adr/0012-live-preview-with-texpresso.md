@@ -80,11 +80,14 @@ the nearest snapshot is further back.
   when a session ends, the pane offers Retry and Show PDF.
 - The server checks at startup that `MYLEAF_TEXPRESSO` is executable and
   otherwise reports live preview as unavailable.
-- Process cleanup: the server closes all sessions on SIGINT/SIGTERM. On
-  Linux the adapter starts TeXpresso through `setpriv --pdeathsig TERM`, so
-  sessions also stop if the server dies abruptly; TeXpresso itself keeps
-  running when its stdin closes while idle. Other platforms rely on the
-  graceful shutdown only.
+- Process cleanup: the server closes all sessions on SIGINT/SIGTERM. If it
+  dies without closing them (crash, SIGKILL), each session's process group
+  stops itself: TeXpresso runs under a small POSIX `sh` supervisor whose
+  watcher polls the server's PID once a second and then sends SIGTERM, and
+  SIGKILL 2 s later, to the group. This works on Linux and macOS alike.
+  (TeXpresso itself keeps running when its stdin closes while idle, and
+  `setpriv --pdeathsig`, used before, exists only on Linux.) Session
+  workspaces left behind are removed when the server starts.
 - CI builds TeXpresso; adapter and end-to-end tests cover it.
 
 Measured in Chromium against the dev server (benchmark paper, page 1):

@@ -18,15 +18,41 @@ export interface TexpressoLivePreviewOptions {
   /** Directory holding per-session workspaces. */
   readonly workRoot: string;
   /**
-   * Start TeXpresso through `setpriv --pdeathsig TERM` (util-linux), so it is
-   * stopped if the server dies without closing its sessions. Default: on
-   * Linux. Other platforms rely on the server closing sessions on shutdown.
+   * Process whose exit stops every session, also when it dies without closing
+   * them (crash, SIGKILL). Default: this process.
    */
-  readonly stopWithServer?: boolean;
+  readonly ownerPid?: number;
 }
+
+/** Exit statuses of sh for a command that is not executable (126) or missing (127). */
+const NOT_RUNNABLE: ReadonlySet<number | null> = new Set([126, 127]);
 
 /** Time allowed for a graceful shutdown before the process group is killed. */
 const STOP_GRACE_MS = 2_000;
+
+/**
+ * Runs `$@` (TeXpresso) and, beside it, a watcher that stops the whole
+ * process group once the owner process `$1` is gone, polling once a second.
+ * POSIX sh, so it works on Linux and macOS. The watcher ignores SIGTERM, so
+ * it can follow up with SIGKILL; the shell's own exit status is TeXpresso's.
+ * Stdin goes through fd 3: a background command's stdin is /dev/null.
+ */
+const SUPERVISOR = `
+owner=$1; shift
+exec 3<&0
+"$@" <&3 3<&- &
+exec 3<&-
+child=$!
+(
+  trap '' TERM
+  while kill -0 "$owner" 2>/dev/null; do sleep 1; done
+  kill -TERM 0; sleep ${STOP_GRACE_MS / 1000}; kill -KILL 0
+) </dev/null >/dev/null 2>&1 &
+watcher=$!
+wait "$child"; status=$?
+kill "$watcher" 2>/dev/null
+exit "$status"
+`;
 
 /**
  * LivePreviewBackend running one patched TeXpresso process per session
@@ -41,12 +67,12 @@ const STOP_GRACE_MS = 2_000;
 export class TexpressoLivePreview implements LivePreviewBackend {
   readonly #command: string;
   readonly #workRoot: string;
-  readonly #stopWithServer: boolean;
+  readonly #ownerPid: number;
 
   constructor(options: TexpressoLivePreviewOptions) {
     this.#command = options.command;
     this.#workRoot = resolve(options.workRoot);
-    this.#stopWithServer = options.stopWithServer ?? process.platform === 'linux';
+    this.#ownerPid = options.ownerPid ?? process.pid;
   }
 
   async open(
@@ -63,17 +89,26 @@ export class TexpressoLivePreview implements LivePreviewBackend {
       await writeFile(path, file.content);
     }
 
-    const args = ['-json', '-texlive', request.rootFile];
-    const [command, commandArgs] = this.#stopWithServer
-      ? ['setpriv', ['--pdeathsig', 'TERM', '--', this.#command, ...args]]
-      : [this.#command, args];
-    const child = spawn(command, commandArgs, {
-      cwd: srcDir,
-      env: { ...process.env, SDL_VIDEODRIVER: 'dummy', TEXPRESSO_EXPORT_DIR: pagesDir },
-      stdio: ['pipe', 'pipe', 'ignore'],
-      // Own process group, so the engine processes it forks can be stopped together.
-      detached: true,
-    });
+    const child = spawn(
+      '/bin/sh',
+      [
+        '-c',
+        SUPERVISOR,
+        'texpresso-supervisor',
+        String(this.#ownerPid),
+        this.#command,
+        '-json',
+        '-texlive',
+        request.rootFile,
+      ],
+      {
+        cwd: srcDir,
+        env: { ...process.env, SDL_VIDEODRIVER: 'dummy', TEXPRESSO_EXPORT_DIR: pagesDir },
+        stdio: ['pipe', 'pipe', 'ignore'],
+        // Own process group, so the engine processes it forks can be stopped together.
+        detached: true,
+      },
+    );
     return new TexpressoSession(child, dir, onEvent);
   }
 }
@@ -97,7 +132,12 @@ class TexpressoSession implements LivePreviewSession {
       child.on('exit', (code, signal) => {
         resolveExit();
         if (!this.#closing) {
-          onEvent({ type: 'stopped', reason: `TeXpresso exited (${signal ?? `code ${code}`})` });
+          onEvent({
+            type: 'stopped',
+            reason: NOT_RUNNABLE.has(code)
+              ? 'TeXpresso could not be started (not found or not executable)'
+              : `TeXpresso exited (${signal ?? `code ${code}`})`,
+          });
           void rm(dir, { recursive: true, force: true });
         }
       });

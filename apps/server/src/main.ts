@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { TexLiveCompileBackend } from '@myleaf/compile-texlive';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
@@ -36,15 +36,15 @@ if (texpresso) {
     texpressoProblem = `MYLEAF_TEXPRESSO (${texpresso}) is not an executable file; build it with vendor/texpresso/build.sh`;
   }
 }
+// Live sessions do not survive a restart: remove workspaces a crash left behind.
+const liveRoot = join(dataDir, 'live');
+await rm(liveRoot, { recursive: true, force: true });
 const livePreview =
   texpresso && texpressoProblem === null
-    ? new LiveSessionPool(
-        new TexpressoLivePreview({ command: texpresso, workRoot: join(dataDir, 'live') }),
-        {
-          maxSessions: positiveInt('MYLEAF_LIVE_MAX_SESSIONS', 4),
-          idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
-        },
-      )
+    ? new LiveSessionPool(new TexpressoLivePreview({ command: texpresso, workRoot: liveRoot }), {
+        maxSessions: positiveInt('MYLEAF_LIVE_MAX_SESSIONS', 4),
+        idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
+      })
     : null;
 
 const app = buildApp({ store, compiler, livePreview }, { logger: true });

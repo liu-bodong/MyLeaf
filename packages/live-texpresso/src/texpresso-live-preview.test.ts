@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readlinkSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -39,7 +40,6 @@ describe('TexpressoLivePreview with a missing binary', () => {
     const backend = new TexpressoLivePreview({
       command: join(workRoot, 'no-such-texpresso'),
       workRoot,
-      stopWithServer: false,
     });
     const session = await backend.open(
       {
@@ -51,7 +51,9 @@ describe('TexpressoLivePreview with a missing binary', () => {
     );
     await expect
       .poll(() => events)
-      .toEqual([{ type: 'stopped', reason: expect.stringContaining('ENOENT') as string }]);
+      .toEqual([
+        { type: 'stopped', reason: expect.stringContaining('could not be started') as string },
+      ]);
     await session.close();
     expect(readdirSync(join(workRoot, 'missing'))).toEqual([]);
     await rm(workRoot, { recursive: true, force: true });
@@ -160,6 +162,29 @@ describe.skipIf(!available)(
       live.showPage(2);
       await waitFor(isPage(2));
     });
+
+    // Finds processes through /proc, which only Linux has.
+    it.skipIf(process.platform !== 'linux')(
+      'stops every process when its owner dies without closing the session',
+      async () => {
+        const owner = spawn('sleep', ['600']);
+        if (owner.pid === undefined) throw new Error('could not start the owner process');
+        const backend = new TexpressoLivePreview({ command, workRoot, ownerPid: owner.pid });
+        session = await backend.open(
+          {
+            projectId: ProjectId('live-test'),
+            rootFile: parseProjectPath('main.tex'),
+            files: [{ path: parseProjectPath('main.tex'), content: main('First page.') }],
+          },
+          (event) => events.push(event),
+        );
+        await waitFor(isPage(1));
+        expect(processesInWorkRoot().length).toBeGreaterThan(0);
+        owner.kill('SIGKILL');
+        await waitFor((e) => e.type === 'stopped');
+        await expect.poll(processesInWorkRoot, { timeout: 10_000 }).toEqual([]);
+      },
+    );
 
     // Finds processes through /proc, which only Linux has.
     it.skipIf(process.platform !== 'linux')(
