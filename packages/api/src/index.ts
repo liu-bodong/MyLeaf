@@ -32,6 +32,8 @@ export interface MoveFileRequest {
 
 export interface CompileRequestBody {
   readonly engine?: TexEngine;
+  /** One engine pass for compiles while editing (`CompileOptions.singlePass`). */
+  readonly singlePass?: boolean;
 }
 
 export type CompileResponse = CompileResult;

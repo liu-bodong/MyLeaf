@@ -181,22 +181,32 @@ export class TexLiveCompileBackend implements CompileBackend {
     const { projectId, rootFile } = request;
     const outDir = this.#outDir(projectId);
     await mkdir(outDir, { recursive: true });
-    await syncDirectory(this.#srcDir(projectId), request.files);
+    const changed = await syncDirectory(this.#srcDir(projectId), request.files);
 
     const jobName = rootFile.slice(rootFile.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '');
+    // A single pass needs the previous compile's .aux of the same root file.
+    // Without changes, latexmk is faster: it finds nothing to do.
+    const singlePass =
+      request.options.singlePass === true &&
+      changed &&
+      request.engine === 'pdflatex' &&
+      (await this.#readState(projectId))?.jobName === jobName &&
+      (await readOptional(join(outDir, `${jobName}.aux`))) !== null;
     const state: BuildState = { jobName };
     await writeFile(join(this.#projectDir(projectId), STATE_FILE), JSON.stringify(state));
 
     const plan = await this.#planPreamble(request);
     let preamble = plan.status;
-    let run = await this.#runLatexmk(request, plan.useFormat);
+    const runEngine = (useFormat: boolean) =>
+      singlePass ? this.#runPdflatexOnce(request, useFormat) : this.#runLatexmk(request, useFormat);
+    let run = await runEngine(plan.useFormat);
     let output = await this.#readOutput(projectId, jobName);
 
     // A failure without a PDF and without errors in project files may be
     // caused by the format: retry without it, and stop using it if that helps.
     if (plan.useFormat && plan.key !== null && output.pdf === null && run.exitCode !== 0) {
       if (!output.diagnostics.some((d) => d.severity === 'error' && d.file !== null)) {
-        run = await this.#runLatexmk(request, false);
+        run = await runEngine(false);
         output = await this.#readOutput(projectId, jobName);
         if (output.pdf !== null) {
           await this.#formats(projectId).markFailed(plan.key);
@@ -257,6 +267,34 @@ export class TexLiveCompileBackend implements CompileBackend {
         '-file-line-error',
         '-no-shell-escape',
         `-outdir=${outDir}`,
+        request.rootFile,
+      ],
+      {
+        cwd: this.#srcDir(request.projectId),
+        env: {
+          ...this.#texEnv(outDir),
+          ...(useFormat ? { TEXFORMATS: `${formats.dir}:` } : {}),
+        },
+        timeoutMs: this.#timeoutMs,
+      },
+    );
+  }
+
+  /** One pdfLaTeX run with latexmk's flags, without latexmk's rerun logic (~100 ms less). */
+  async #runPdflatexOnce(request: CompileRequest, useFormat: boolean): Promise<ProcessResult> {
+    const outDir = this.#outDir(request.projectId);
+    const formats = this.#formats(request.projectId);
+    return runProcess(
+      this.#pdflatex,
+      [
+        ...(useFormat ? [`-fmt=${FORMAT_NAME}`] : []),
+        '-synctex=1',
+        '-interaction=nonstopmode',
+        '-file-line-error',
+        '-no-shell-escape',
+        // Keeps latexmk's dependency list current for the next full compile.
+        '-recorder',
+        `-output-directory=${outDir}`,
         request.rootFile,
       ],
       {
@@ -427,7 +465,9 @@ export class TexLiveCompileBackend implements CompileBackend {
  * Makes `dir` contain exactly `files`. Files whose content is unchanged are
  * not rewritten, so their modification times stay the same.
  */
-async function syncDirectory(dir: string, files: readonly ProjectFile[]): Promise<void> {
+/** Makes `dir` hold exactly `files`; returns whether anything changed. */
+async function syncDirectory(dir: string, files: readonly ProjectFile[]): Promise<boolean> {
+  let changed = false;
   await mkdir(dir, { recursive: true });
   const wanted = new Map(files.map((file) => [join(dir, ...file.path.split('/')), file.content]));
 
@@ -436,6 +476,7 @@ async function syncDirectory(dir: string, files: readonly ProjectFile[]): Promis
     const path = join(entry.parentPath, entry.name);
     if (!wanted.has(path)) {
       await rm(path);
+      changed = true;
     }
   }
   // Deepest first, so parents empty out before they are visited.
@@ -456,8 +497,10 @@ async function syncDirectory(dir: string, files: readonly ProjectFile[]): Promis
     if (current === null || !Buffer.from(current).equals(content)) {
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, content);
+      changed = true;
     }
   }
+  return changed;
 }
 
 async function readOptional(path: string): Promise<Uint8Array | null> {

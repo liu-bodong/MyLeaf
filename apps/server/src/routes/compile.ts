@@ -30,7 +30,10 @@ export function registerCompileRoutes(
       schema: {
         body: {
           type: ['object', 'null'],
-          properties: { engine: { type: 'string', enum: [...TEX_ENGINES] } },
+          properties: {
+            engine: { type: 'string', enum: [...TEX_ENGINES] },
+            singlePass: { type: 'boolean' },
+          },
           additionalProperties: false,
         },
       },
@@ -50,7 +53,10 @@ export function registerCompileRoutes(
         rootFile: project.rootFile,
         engine: request.body?.engine ?? 'pdflatex',
         files,
-        options: { precompilePreamble: project.settings.precompilePreamble },
+        options: {
+          precompilePreamble: project.settings.precompilePreamble,
+          singlePass: request.body?.singlePass ?? false,
+        },
       });
       // Live previews do not run BibTeX: give them the new bibliography.
       const sessions = livePreview?.forProject(id) ?? [];

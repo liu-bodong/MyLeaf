@@ -52,6 +52,14 @@ the browser to render all pages before showing any.
    running and one queued) and `precompilePreamble` (default on).
 5. A benchmark (`pnpm bench`, `packages/compile-texlive/bench/`) tracks
    compile times.
+6. **Single pass while editing** (added later): auto-compile asks for
+   `CompileOptions.singlePass`. The TeX Live adapter then runs pdfLaTeX once
+   (precompiled preamble, `-recorder`), without latexmk (about 100 ms of its
+   own) and without reruns: references, citations and the table of contents
+   come from the previous compile's `.aux`, as in live preview. Recompile
+   (button, Ctrl-S) stays a full latexmk compile. The adapter compiles fully
+   anyway when there is no previous compile of the same root file, when no
+   file changed (latexmk then does nothing), and for XeLaTeX and LuaLaTeX.
 
 Rejected: a pre-started pdfTeX process (no gain: pdfTeX loads the format only
 after reading the file name); `\includeonly` for the edited chapter (changes
@@ -68,6 +76,11 @@ Server compile, median of 5 (`pnpm bench`, TeX Live 2023):
 
 Click on Compile to updated page on screen, text edit, measured in Chromium
 against the dev server: about 1.5–1.9 s before, about 0.6 s after.
+
+Single pass while editing (same benchmark, later run): text edit 404 →
+about 280–330 ms, heading edit 697 → about 290–310 ms. Its `No change` row
+is not comparable: after single-pass edits, the next full compile catches up
+on the reruns they skipped.
 
 ## Consequences
 

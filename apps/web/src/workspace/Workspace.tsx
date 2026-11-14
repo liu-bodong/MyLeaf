@@ -41,6 +41,9 @@ import { TopBar } from './TopBar.js';
 
 /** Delay between the last keystroke and saving. */
 const SAVE_DELAY_MS = 800;
+/** Full compiles (until references settle) or one engine pass while editing. */
+type CompileKind = 'full' | 'single';
+
 /** Pause in editing after which auto-compile starts. */
 const AUTO_COMPILE_DELAY_MS = 1000;
 
@@ -99,8 +102,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Line to move to once a newly opened document is in the editor. */
   const pendingLine = useRef<number | null>(null);
   const compilingRef = useRef(false);
-  /** A compile was requested while one was running: run once more afterwards. */
-  const compileQueued = useRef(false);
+  /** A compile requested while one was running, to run afterwards; `full` wins over `single`. */
+  const compileQueued = useRef<CompileKind | null>(null);
   const autoCompileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const report = useCallback((reason: unknown) => setError(errorMessage(reason)), []);
@@ -182,30 +185,38 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     };
   }, [projectId, report]);
 
-  /** Compiles; a request during a running compile triggers one more compile afterwards. */
-  const compile = useCallback(async () => {
-    if (compilingRef.current) {
-      compileQueued.current = true;
-      return;
-    }
-    compilingRef.current = true;
-    setCompiling(true);
-    try {
-      do {
-        compileQueued.current = false;
-        await flushSave();
-        const compiled = await api.compile(projectId);
-        setResult(compiled);
-        setHighlights([]);
-        if (compiled.hasPdf) setPdfVersion((version) => version + 1);
-      } while (compileQueued.current);
-    } catch (reason) {
-      report(reason);
-    } finally {
-      compilingRef.current = false;
-      setCompiling(false);
-    }
-  }, [flushSave, projectId, report]);
+  /**
+   * Compiles; a request during a running compile triggers one more compile
+   * afterwards. `single`: one engine pass, for auto-compile while editing.
+   */
+  const compile = useCallback(
+    async (kind: CompileKind = 'full') => {
+      if (compilingRef.current) {
+        if (compileQueued.current !== 'full') compileQueued.current = kind;
+        return;
+      }
+      compilingRef.current = true;
+      setCompiling(true);
+      try {
+        let next: CompileKind | null = kind;
+        while (next !== null) {
+          compileQueued.current = null;
+          await flushSave();
+          const compiled = await api.compile(projectId, { singlePass: next === 'single' });
+          setResult(compiled);
+          setHighlights([]);
+          if (compiled.hasPdf) setPdfVersion((version) => version + 1);
+          next = compileQueued.current;
+        }
+      } catch (reason) {
+        report(reason);
+      } finally {
+        compilingRef.current = false;
+        setCompiling(false);
+      }
+    },
+    [flushSave, projectId, report],
+  );
 
   useEffect(
     () => () => {
@@ -228,7 +239,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       liveChannel.publish({ path: document.path, text });
       if (project?.settings.autoCompile) {
         if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
-        autoCompileTimer.current = setTimeout(() => void compile(), AUTO_COMPILE_DELAY_MS);
+        autoCompileTimer.current = setTimeout(() => void compile('single'), AUTO_COMPILE_DELAY_MS);
       }
     },
     [compile, document, flushSave, liveChannel, project?.settings.autoCompile, report],

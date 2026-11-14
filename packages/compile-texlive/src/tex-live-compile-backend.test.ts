@@ -240,6 +240,44 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
     });
   });
 
+  describe('single pass', () => {
+    const doc = (body: string) => String.raw`\documentclass{article}
+\begin{document}
+${body}
+\section{One}\label{one}
+\end{document}
+`;
+    const undefinedRefs = (result: { diagnostics: readonly { message: string }[] }) =>
+      result.diagnostics.filter((d) => /undefined/.test(d.message)).length;
+
+    it('compiles fully when there is no previous compile', async () => {
+      const req = request([file('main.tex', doc('See \\ref{one}.'))], undefined, {
+        options: { precompilePreamble: false, singlePass: true },
+      });
+      const result = await backend.compile(req);
+      expect(result).toMatchObject({ status: 'success', hasPdf: true });
+      // latexmk reran until the forward reference resolved.
+      expect(undefinedRefs(result)).toBe(0);
+    });
+
+    it('runs once, with references from the previous compile', async () => {
+      const id = ProjectId(`p${nextId++}`);
+      const full = await backend.compile(request([file('main.tex', doc('See \\ref{one}.'))], id));
+      expect(undefinedRefs(full)).toBe(0);
+      // A new label is not known to the single pass yet...
+      const edited = doc('See \\ref{one} and \\ref{two}.\n\\section{Two}\\label{two}');
+      const single = await backend.compile(
+        request([file('main.tex', edited)], id, {
+          options: { precompilePreamble: false, singlePass: true },
+        }),
+      );
+      expect(single).toMatchObject({ status: 'success', hasPdf: true });
+      expect(undefinedRefs(single)).toBeGreaterThan(0);
+      // ...and is after the next full compile.
+      expect(undefinedRefs(await backend.compile(request([file('main.tex', edited)], id)))).toBe(0);
+    });
+  });
+
   it('provides the bibliography of the latest compile', async () => {
     const main = String.raw`\documentclass{article}
 \begin{document}

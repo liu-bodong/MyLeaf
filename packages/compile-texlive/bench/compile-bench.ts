@@ -24,16 +24,19 @@ const EDITS = {
 const median = (values: number[]) =>
   [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
 
-async function scenario(workRoot: string, precompilePreamble: boolean) {
+async function scenario(workRoot: string, precompilePreamble: boolean, singlePass = false) {
   const backend = new TexLiveCompileBackend({ workRoot });
-  const projectId = ProjectId(`bench-${precompilePreamble ? 'cached' : 'plain'}`);
+  const projectId = ProjectId(
+    `bench-${precompilePreamble ? 'cached' : 'plain'}${singlePass ? '-single' : ''}`,
+  );
   const compile = async (source: string): Promise<CompileResult> => {
     const result = await backend.compile({
       projectId,
       rootFile: parseProjectPath('main.tex'),
       engine: 'pdflatex',
       files: [{ path: parseProjectPath('main.tex'), content: new TextEncoder().encode(source) }],
-      options: { precompilePreamble },
+      // The first compile is always full: there is no previous .aux yet.
+      options: { precompilePreamble, singlePass },
     });
     if (!result.hasPdf) throw new Error(`Benchmark compile failed:\n${result.log.slice(-2000)}`);
     return result;
@@ -60,14 +63,15 @@ const workRoot = await mkdtemp(join(tmpdir(), 'myleaf-bench-'));
 try {
   const plain = await scenario(workRoot, false);
   const cached = await scenario(workRoot, true);
+  const single = await scenario(workRoot, true, true);
   const version = execFileSync('pdflatex', ['--version'], { encoding: 'utf8' }).split('\n')[0];
   console.log(
     `${version}\nMedian of ${RUNS} runs (ms), compile only (excludes network and PDF display).\n`,
   );
-  console.log('| Scenario | Plain | Precompiled preamble |');
-  console.log('| --- | ---: | ---: |');
+  console.log('| Scenario | Plain | Precompiled preamble | + single pass (while editing) |');
+  console.log('| --- | ---: | ---: | ---: |');
   for (const label of Object.keys(plain)) {
-    console.log(`| ${label} | ${plain[label]} | ${cached[label]} |`);
+    console.log(`| ${label} | ${plain[label]} | ${cached[label]} | ${single[label]} |`);
   }
 } finally {
   await rm(workRoot, { recursive: true, force: true });

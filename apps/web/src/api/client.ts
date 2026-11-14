@@ -1,5 +1,6 @@
 import { apiRoutes } from '@myleaf/api';
 import type {
+  CompileRequestBody,
   CompileResponse,
   ErrorResponse,
   FileEntryDto,
@@ -9,7 +10,7 @@ import type {
   ProjectDto,
   UpdateProjectRequest,
 } from '@myleaf/api';
-import type { PdfPoint, SourceLocation, TexEngine } from '@myleaf/compile';
+import type { PdfPoint, SourceLocation } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type { ProjectPath } from '@myleaf/project';
 
@@ -72,8 +73,8 @@ export class ApiClient {
     return this.#json('POST', apiRoutes.moveFile(id), { from, to });
   }
 
-  compile(id: ProjectId, engine?: TexEngine): Promise<CompileResponse> {
-    return this.#json('POST', apiRoutes.compile(id), engine === undefined ? {} : { engine });
+  compile(id: ProjectId, options: CompileRequestBody = {}): Promise<CompileResponse> {
+    return this.#json('POST', apiRoutes.compile(id), options);
   }
 
   /** URL of the latest PDF; `version` defeats caching between compiles. */

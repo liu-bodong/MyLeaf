@@ -10,6 +10,14 @@ export interface CompileOptions {
    * `\begin{document}`) between compiles, where the backend supports it.
    */
   readonly precompilePreamble: boolean;
+  /**
+   * Run the engine once, reusing the auxiliary files of the previous compile
+   * (references, citations and the table of contents as of that compile),
+   * instead of running until they are stable. For compiles while editing.
+   * Backends may compile fully instead, e.g. when there is no previous
+   * compile. Default: false.
+   */
+  readonly singlePass?: boolean;
 }
 
 /**

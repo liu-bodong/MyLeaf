@@ -207,6 +207,15 @@ describe('server API', () => {
       expect(second.json()).toMatchObject({ preamble: 'disabled' });
     });
 
+    it('passes single-pass requests to the compiler (default: full)', async () => {
+      const url = `/api/projects/${project.id}/compile`;
+      await app.inject({ method: 'POST', url });
+      await app.inject({ method: 'POST', url, payload: { singlePass: true } });
+      const invalid = await app.inject({ method: 'POST', url, payload: { singlePass: 'yes' } });
+      expect(invalid.statusCode).toBe(400);
+      expect(compiler.requests.map((r) => r.options.singlePass)).toEqual([false, true]);
+    });
+
     it('defaults to pdflatex and rejects unknown engines', async () => {
       await app.inject({ method: 'POST', url: `/api/projects/${project.id}/compile` });
       expect(compiler.requests[0]?.engine).toBe('pdflatex');
