@@ -8,22 +8,44 @@ Licensed under [AGPL-3.0](LICENSE). Design decisions: [docs/adr](docs/adr/README
 
 ## Development
 
-Requirements: Node.js 22 (see `.nvmrc`) and corepack (bundled with Node.js).
+Requirements:
+
+- Node.js 22 (see `.nvmrc`) and corepack (bundled with Node.js).
+- TeX Live with `latexmk` and `synctex` on `PATH`, for compiling.
 
 ```bash
 corepack enable
 pnpm install
-pnpm check        # format, lint, typecheck, test, build (same as CI)
+pnpm dev          # server on 127.0.0.1:3000, web app on http://localhost:5173
+pnpm check        # format, lint, typecheck, test, build (as CI)
+pnpm e2e          # end-to-end browser test (after `pnpm build`)
 ```
 
-| Path                   | Layer   | Purpose                                                   |
-| ---------------------- | ------- | --------------------------------------------------------- |
-| `packages/doc-model`   | Domain  | Ids, actors, `TextDocument` port (text, marks, anchors)   |
-| `packages/annotations` | Domain  | Comment threads, suggestions (track changes), projections |
-| `packages/sync-yjs`    | Adapter | `TextDocument` on Yjs                                     |
-| `packages/testing`     | Testing | Port contract suites and in-memory test doubles           |
-| `apps/server`          | App     | Fastify server                                            |
-| `apps/web`             | App     | React web client                                          |
+Server configuration (environment variables):
+
+| Variable          | Default     | Purpose                                            |
+| ----------------- | ----------- | -------------------------------------------------- |
+| `HOST`            | `127.0.0.1` | Address to listen on                               |
+| `PORT`            | `3000`      | Port to listen on                                  |
+| `MYLEAF_DATA_DIR` | `./data`    | Project files (`projects/`) and builds (`builds/`) |
+
+There is no authentication yet, and compilation is hardened but not
+sandboxed (see [ADR 0010](docs/adr/0010-projects-storage-and-compile-service.md)).
+Only expose the server to people you trust.
+
+| Path                       | Layer   | Purpose                                                   |
+| -------------------------- | ------- | --------------------------------------------------------- |
+| `packages/doc-model`       | Domain  | Ids, actors, `TextDocument` port (text, marks, anchors)   |
+| `packages/annotations`     | Domain  | Comment threads, suggestions (track changes), projections |
+| `packages/project`         | Domain  | Project paths and files, `ProjectStore` port              |
+| `packages/compile`         | Domain  | `CompileBackend` port, SyncTeX types, log diagnostics     |
+| `packages/api`             | Domain  | HTTP routes and DTO types shared by server and web        |
+| `packages/sync-yjs`        | Adapter | `TextDocument` on Yjs                                     |
+| `packages/storage-fs`      | Adapter | `ProjectStore` on the filesystem                          |
+| `packages/compile-texlive` | Adapter | `CompileBackend` on latexmk + synctex                     |
+| `packages/testing`         | Testing | Port contract suites and in-memory test doubles           |
+| `apps/server`              | App     | Fastify HTTP server                                       |
+| `apps/web`                 | App     | React web client (CodeMirror, PDF.js)                     |
 
 Layering rules: [ADR 0009](docs/adr/0009-module-boundaries.md).
 

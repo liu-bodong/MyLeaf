@@ -1,0 +1,421 @@
+:root {
+  --bg: #ffffff;
+  --bg-muted: #f4f5f7;
+  --bg-hover: #e9ebef;
+  --fg: #1d2129;
+  --fg-muted: #5f6673;
+  --border: #d9dce1;
+  --accent: #2f6f4f;
+  --accent-fg: #ffffff;
+  --error: #b42318;
+  --warning: #9a6700;
+  --highlight: rgba(255, 196, 0, 0.35);
+  --pdf-bg: #e7e9ec;
+  color-scheme: light;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191d;
+    --bg-muted: #1f2227;
+    --bg-hover: #2a2e35;
+    --fg: #e4e6ea;
+    --fg-muted: #9aa1ad;
+    --border: #343941;
+    --accent: #5fae86;
+    --accent-fg: #0d1a13;
+    --error: #ff8a80;
+    --warning: #e3b341;
+    --pdf-bg: #0f1114;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button,
+.upload {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled),
+.upload:hover {
+  background: var(--bg-hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+a {
+  color: var(--accent);
+}
+
+.error {
+  color: var(--error);
+}
+
+.placeholder,
+.loading {
+  color: var(--fg-muted);
+  padding: 16px;
+}
+
+/* Project list */
+
+.project-list {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.project-list form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.project-list form input {
+  flex: 1;
+}
+
+.project-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.project-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.project-list li a {
+  flex: 1;
+}
+
+.project-list .meta {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* Workspace layout */
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'toolbar toolbar toolbar'
+    'error error error'
+    'sidebar source output';
+  height: 100vh;
+}
+
+.toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar h1 {
+  font-size: 15px;
+  margin: 0 auto 0 8px;
+}
+
+.toolbar .back {
+  text-decoration: none;
+}
+
+.save-state {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.save-state.error {
+  color: var(--error);
+}
+
+.error-bar {
+  grid-area: error;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  color: var(--error);
+  background: var(--bg-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg-muted);
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+}
+
+.upload input {
+  display: none;
+}
+
+.file-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding-right: 4px;
+}
+
+.file-row.directory {
+  color: var(--fg-muted);
+}
+
+.file-row.active {
+  background: var(--bg-hover);
+}
+
+.file-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-actions {
+  display: none;
+  gap: 2px;
+}
+
+.file-row:hover .file-actions,
+.file-row:focus-within .file-actions {
+  display: flex;
+}
+
+.file-actions button {
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+.badge {
+  margin-left: 6px;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.source {
+  grid-area: source;
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+.editor,
+.editor .cm-editor {
+  height: 100%;
+}
+
+.editor .cm-editor {
+  font-size: 14px;
+}
+
+.editor .cm-scroller {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.output {
+  grid-area: output;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* PDF */
+
+.pdf-viewer {
+  flex: 1;
+  overflow: auto;
+  background: var(--pdf-bg);
+  padding: 12px;
+}
+
+.pdf-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--fg-muted);
+  background: var(--pdf-bg);
+}
+
+.pdf-error {
+  color: var(--error);
+  padding: 8px;
+}
+
+.pdf-page {
+  position: relative;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.pdf-highlight {
+  position: absolute;
+  background: var(--highlight);
+  pointer-events: none;
+}
+
+/* Diagnostics */
+
+.diagnostics {
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.diagnostics header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.diagnostics header button {
+  margin-left: auto;
+}
+
+.status {
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-success {
+  color: var(--accent);
+}
+
+.status-failure,
+.status-timeout {
+  color: var(--error);
+}
+
+.diagnostics ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.diagnostic button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  padding: 4px 10px;
+}
+
+.diagnostic.error {
+  border-left: 3px solid var(--error);
+}
+
+.diagnostic.warning {
+  border-left: 3px solid var(--warning);
+}
+
+.diagnostic.info {
+  border-left: 3px solid var(--border);
+}
+
+.location {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  margin-right: 8px;
+  color: var(--fg-muted);
+}
+
+.raw-log {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 800px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto 50vh 60vh;
+    grid-template-areas: 'toolbar' 'error' 'sidebar' 'source' 'output';
+    height: auto;
+  }
+
+  .sidebar {
+    max-height: 30vh;
+  }
+}

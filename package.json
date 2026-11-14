@@ -9,18 +9,22 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
+    "dev": "pnpm --filter \"@myleaf/server...\" run build && pnpm --parallel --filter @myleaf/server --filter @myleaf/web run dev",
     "typecheck": "tsc -p tsconfig.json && pnpm -r run typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
+    "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "eslint": "catalog:",
     "eslint-config-prettier": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
     "globals": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:",

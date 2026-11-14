@@ -4,15 +4,24 @@ packages:
 
 # Single source of truth for dependency versions shared across packages.
 catalog:
+  '@codemirror/commands': ^6.11.1
+  '@codemirror/language': ^6.13.1
+  '@codemirror/legacy-modes': ^6.5.5
+  '@codemirror/search': ^6.7.2
+  '@codemirror/state': ^6.7.6
+  '@codemirror/view': ^6.43.15
   '@eslint/js': ^10.0.1
+  '@playwright/test': ^1.65.1
   '@types/node': ^22.19.0
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0
   '@vitejs/plugin-react': ^6.3.0
-  eslint: ^10.15.0
+  eslint: ~10.14.0
   eslint-config-prettier: ^10.1.8
+  eslint-plugin-react-hooks: ^7.1.1
   fastify: ^5.12.8
   globals: ^17.14.0
+  pdfjs-dist: ^6.5.438
   prettier: ^3.10.1
   react: ^19.3.1
   react-dom: ^19.3.1
@@ -23,5 +32,6 @@ catalog:
   yjs: ^13.6.33
 
 minimumReleaseAgeExclude:
-  - '@eslint/config-array@0.23.6'
-  - eslint@10.15.0
+  - '@playwright/test@1.65.1'
+  - playwright-core@1.65.1
+  - playwright@1.65.1
