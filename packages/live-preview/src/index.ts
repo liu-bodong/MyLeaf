@@ -9,8 +9,16 @@ export interface LivePreviewRequest {
 }
 
 export type LivePreviewEvent =
-  /** A page was (re)rendered. `svg` is a standalone, valid SVG document. */
+  /**
+   * A page of the requested range was (re)rendered with new content. `svg`
+   * is a standalone, valid SVG document.
+   */
   | { readonly type: 'page'; readonly page: number; readonly svg: string }
+  /**
+   * Pages typeset so far; `final` once the whole document is. While the
+   * document is being re-typeset after an edit, `count` can drop and grow.
+   */
+  | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
   /** The session ended without `close()` being called. */
   | { readonly type: 'stopped'; readonly reason: string };
 
@@ -18,15 +26,18 @@ export type LivePreviewEvent =
 export interface LivePreviewSession {
   /** Replaces a file's content; the preview re-renders from the first changed byte. */
   updateFile(file: ProjectFile): void;
-  /** Shows a 1-based page; it is rendered (and typeset, if needed) and then emitted. */
-  showPage(page: number): void;
+  /**
+   * Sets the 1-based, inclusive range of pages to render. Pages of the range
+   * are emitted once typeset, and again whenever their content changes.
+   */
+  showPages(first: number, last: number): void;
   /** Stops the session and releases its resources. */
   close(): Promise<void>;
 }
 
 /**
- * Port: incremental rendering of the page being viewed while the source is
- * edited (ADR 0012). Unlike CompileBackend, output is approximate (it may use
+ * Port: incremental rendering of the pages being viewed while the source is
+ * edited (ADR 0012, 0014). Unlike CompileBackend, output is approximate (it may use
  * a different engine) and is delivered page by page as events.
  */
 export interface LivePreviewBackend {

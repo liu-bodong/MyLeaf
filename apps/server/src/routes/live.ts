@@ -1,3 +1,4 @@
+import { LIVE_MAX_PAGE_RANGE } from '@myleaf/api';
 import type { LiveClientMessage, LivePreviewInfo, LiveServerMessage } from '@myleaf/api';
 import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
@@ -22,11 +23,15 @@ function parseClientMessage(raw: string): LiveClientMessage | null {
       return { type: 'update', path: message.path, content: message.content };
     }
     if (
-      message.type === 'page' &&
-      Number.isInteger(message.page) &&
-      (message.page as number) >= 1
+      message.type === 'pages' &&
+      Number.isInteger(message.first) &&
+      Number.isInteger(message.last)
     ) {
-      return { type: 'page', page: message.page as number };
+      const first = message.first as number;
+      const last = message.last as number;
+      if (first >= 1 && last >= first && last - first < LIVE_MAX_PAGE_RANGE) {
+        return { type: 'pages', first, last };
+      }
     }
   } catch {
     // Not JSON.
@@ -83,7 +88,7 @@ export function registerLiveRoutes(
             content: new TextEncoder().encode(message.content),
           });
         } else {
-          handle.session.showPage(message.page);
+          handle.session.showPages(message.first, message.last);
         }
       };
       socket.on('message', (data: Buffer) => {
@@ -119,6 +124,8 @@ export function registerLiveRoutes(
         (event) => {
           if (event.type === 'page') {
             send(socket, { type: 'page', page: event.page, svg: event.svg });
+          } else if (event.type === 'page-count') {
+            send(socket, { type: 'page-count', count: event.count, final: event.final });
           } else {
             send(socket, { type: 'status', state: 'stopped', message: event.reason });
             socket.close();

@@ -1,8 +1,10 @@
+import { LIVE_MAX_PAGE_RANGE } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
 import type { ProjectId } from '@myleaf/doc-model';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import type { LiveChannel } from './live-channel.js';
+import './live-preview.css';
 
 interface LivePreviewPaneProps {
   readonly projectId: ProjectId;
@@ -20,14 +22,28 @@ type Connection =
   | { readonly state: 'live' }
   | { readonly state: 'ended'; readonly message: string };
 
-interface RenderedPage {
-  readonly page: number;
+interface LivePage {
   readonly url: string;
+  /** Page size from the SVG, in its units (pt); sets the slot's aspect ratio. */
+  readonly width: number;
+  readonly height: number;
+}
+
+/** US Letter, until the first page arrives. */
+const DEFAULT_SIZE = { width: 612, height: 792 };
+/** Pages rendered beyond the visible ones in each direction. */
+const PREFETCH = 1;
+
+function svgSize(svg: string): { width: number; height: number } | null {
+  const match = /<svg[^>]*\swidth="([\d.]+)[a-z]*"[^>]*\sheight="([\d.]+)[a-z]*"/.exec(svg);
+  return match === null ? null : { width: Number(match[1]), height: Number(match[2]) };
 }
 
 /**
- * Live-rendered pages over the project's live-preview WebSocket (ADR 0012).
- * Mounted only while live preview is on, so each mount is one session.
+ * Live-rendered pages over the project's live-preview WebSocket (ADR 0012,
+ * 0014), in one continuous scroll. The visible pages (plus PREFETCH) are
+ * requested from the server; other pages keep their latest rendering or a
+ * placeholder of the same size. Each mount is one session.
  */
 export function LivePreviewPane({
   projectId,
@@ -37,9 +53,12 @@ export function LivePreviewPane({
   onRetry,
 }: LivePreviewPaneProps) {
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
-  const [rendered, setRendered] = useState<RenderedPage | null>(null);
-  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState<ReadonlyMap<number, LivePage>>(new Map());
+  /** Pages to lay out: the final count, or the most seen while re-typesetting. */
+  const [count, setCount] = useState(1);
+  const [current, setCurrent] = useState(1);
   const socketRef = useRef<WebSocket | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   useEffect(() => {
     onReadyRef.current = onReady;
@@ -49,7 +68,7 @@ export function LivePreviewPane({
     const socket = new WebSocket(api.livePreviewUrl(projectId));
     socketRef.current = socket;
     let ended = false;
-    let url: string | null = null;
+    const live = new Map<number, LivePage>();
     const end = (message: string) => {
       ended = true;
       setConnection({ state: 'ended', message });
@@ -58,10 +77,15 @@ export function LivePreviewPane({
     socket.addEventListener('message', (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as LiveServerMessage;
       if (message.type === 'page') {
-        const next = URL.createObjectURL(new Blob([message.svg], { type: 'image/svg+xml' }));
-        if (url !== null) URL.revokeObjectURL(url);
-        url = next;
-        setRendered({ page: message.page, url: next });
+        const previous = live.get(message.page);
+        if (previous !== undefined) URL.revokeObjectURL(previous.url);
+        const url = URL.createObjectURL(new Blob([message.svg], { type: 'image/svg+xml' }));
+        live.set(message.page, { url, ...(svgSize(message.svg) ?? DEFAULT_SIZE) });
+        setPages(new Map(live));
+      } else if (message.type === 'page-count') {
+        setCount((shown) =>
+          message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
+        );
       } else if (message.state === 'starting') {
         setConnection({ state: 'live' });
         onReadyRef.current();
@@ -85,28 +109,57 @@ export function LivePreviewPane({
       unsubscribe();
       socket.close();
       socketRef.current = null;
-      if (url !== null) URL.revokeObjectURL(url);
+      for (const page of live.values()) URL.revokeObjectURL(page.url);
     };
   }, [projectId, channel]);
 
-  const goTo = (target: number) => {
-    const next = Math.max(1, target);
-    setPage(next);
-    const message: LiveClientMessage = { type: 'page', page: next };
-    socketRef.current?.send(JSON.stringify(message));
-  };
+  // Requests the visible pages whenever they change (scrolling, resizing,
+  // pages appearing or disappearing).
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (scroller === null) return;
+    const visible = new Set<number>();
+    let requested = '';
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const page = Number((entry.target as HTMLElement).dataset.page);
+          if (entry.isIntersecting) visible.add(page);
+          else visible.delete(page);
+        }
+        if (visible.size === 0) return;
+        const shown = [...visible].sort((a, b) => a - b);
+        const firstVisible = shown[0] ?? 1;
+        setCurrent(firstVisible);
+        const first = Math.max(1, firstVisible - PREFETCH);
+        const last = Math.min(
+          (shown.at(-1) ?? firstVisible) + PREFETCH,
+          first + LIVE_MAX_PAGE_RANGE - 1,
+        );
+        const key = `${first}-${last}`;
+        const socket = socketRef.current;
+        if (key !== requested && socket?.readyState === WebSocket.OPEN) {
+          requested = key;
+          const message: LiveClientMessage = { type: 'pages', first, last };
+          socket.send(JSON.stringify(message));
+        }
+      },
+      { root: scroller },
+    );
+    for (const slot of scroller.querySelectorAll('[data-page]')) observer.observe(slot);
+    return () => observer.disconnect();
+  }, [count, connection.state]);
+
+  const fallbackSize = pages.get(current) ?? pages.values().next().value ?? DEFAULT_SIZE;
+  const slots = Array.from({ length: count }, (_, index) => index + 1);
 
   return (
     <div className="live-pane" data-testid="live-preview">
       <header>
         <span className="live-badge">Live · XeLaTeX</span>
-        <button onClick={() => goTo(page - 1)} disabled={page <= 1} aria-label="Previous page">
-          ◀
-        </button>
-        <span data-testid="live-page">Page {rendered?.page ?? page}</span>
-        <button onClick={() => goTo(page + 1)} aria-label="Next page">
-          ▶
-        </button>
+        <span data-testid="live-page">
+          Page {Math.min(current, count)} of {count}
+        </span>
         <span className="live-status" role="status">
           {connection.state === 'connecting' && 'Starting…'}
           {connection.state === 'ended' && connection.message}
@@ -118,12 +171,25 @@ export function LivePreviewPane({
           </>
         )}
       </header>
-      <div className="live-page">
-        {rendered !== null ? (
-          <img src={rendered.url} alt={`Live preview of page ${rendered.page}`} />
-        ) : (
-          connection.state !== 'ended' && <p className="placeholder">Rendering…</p>
-        )}
+      <div className="live-pages" ref={scrollerRef}>
+        {slots.map((page) => {
+          const rendered = pages.get(page);
+          const size = rendered ?? fallbackSize;
+          return (
+            <div
+              key={page}
+              className="live-slot"
+              data-page={page}
+              style={{ aspectRatio: `${size.width} / ${size.height}` }}
+            >
+              {rendered !== undefined ? (
+                <img src={rendered.url} alt={`Live preview of page ${page}`} />
+              ) : (
+                connection.state !== 'ended' && <p className="placeholder">Rendering…</p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

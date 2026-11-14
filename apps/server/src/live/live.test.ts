@@ -17,7 +17,7 @@ class FakeLiveSession implements LivePreviewSession {
   readonly request: LivePreviewRequest;
   readonly emit: (event: LivePreviewEvent) => void;
   readonly updates: ProjectFile[] = [];
-  readonly pages: number[] = [];
+  readonly ranges: [number, number][] = [];
   closed = false;
 
   constructor(request: LivePreviewRequest, emit: (event: LivePreviewEvent) => void) {
@@ -27,8 +27,8 @@ class FakeLiveSession implements LivePreviewSession {
   updateFile(file: ProjectFile): void {
     this.updates.push(file);
   }
-  showPage(page: number): void {
-    this.pages.push(page);
+  showPages(first: number, last: number): void {
+    this.ranges.push([first, last]);
   }
   close(): Promise<void> {
     this.closed = true;
@@ -190,14 +190,18 @@ describe('live preview routes', () => {
     expect(session.request.files.map((f) => f.path)).toEqual(['main.tex']);
 
     socket.send(JSON.stringify({ type: 'update', path: 'main.tex', content: 'edited' }));
-    socket.send(JSON.stringify({ type: 'page', page: 3 }));
-    await until(() => (session.pages.length > 0 ? true : undefined), 'page request');
+    socket.send(JSON.stringify({ type: 'pages', first: 3, last: 5 }));
+    await until(() => (session.ranges.length > 0 ? true : undefined), 'page request');
     expect(text(session.updates[0])).toBe('edited');
-    expect(session.pages).toEqual([3]);
+    expect(session.ranges).toEqual([[3, 5]]);
 
     session.emit({ type: 'page', page: 3, svg: '<svg/>' });
-    await until(() => messages.find((m) => m.type === 'page'), 'page');
-    expect(messages.at(-1)).toEqual({ type: 'page', page: 3, svg: '<svg/>' });
+    session.emit({ type: 'page-count', count: 7, final: true });
+    await until(() => messages.find((m) => m.type === 'page-count'), 'page count');
+    expect(messages.slice(-2)).toEqual([
+      { type: 'page', page: 3, svg: '<svg/>' },
+      { type: 'page-count', count: 7, final: true },
+    ]);
   });
 
   it('closes the session when the browser disconnects', async () => {
@@ -275,6 +279,10 @@ describe('live preview routes', () => {
     await until(() => bad.messages.find((m) => m.type === 'status'), 'starting');
     bad.socket.send('{"type":"update","path":"../etc/passwd","content":"x"}');
     expect(await until(() => bad.closed() ?? undefined, 'close')).toBe(1008);
+    const range = await connect();
+    await until(() => range.messages.find((m) => m.type === 'status'), 'starting');
+    range.socket.send(JSON.stringify({ type: 'pages', first: 1, last: 21 }));
+    expect(await until(() => range.closed() ?? undefined, 'close')).toBe(1003);
     const garbage = await connect();
     await until(() => garbage.messages.find((m) => m.type === 'status'), 'starting');
     garbage.socket.send('not json');

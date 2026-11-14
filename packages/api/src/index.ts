@@ -57,12 +57,17 @@ export interface LivePreviewInfo {
 export type LiveClientMessage =
   /** Full text of a project file that changed (not necessarily saved yet). */
   | { readonly type: 'update'; readonly path: string; readonly content: string }
-  /** The 1-based page the browser shows. */
-  | { readonly type: 'page'; readonly page: number };
+  /** The 1-based, inclusive range of pages the browser shows (at most 20 pages). */
+  | { readonly type: 'pages'; readonly first: number; readonly last: number };
+
+/** Largest page range a browser may request in one `pages` message. */
+export const LIVE_MAX_PAGE_RANGE = 20;
 
 /** Messages the server sends on a project's live-preview WebSocket. */
 export type LiveServerMessage =
   | { readonly type: 'page'; readonly page: number; readonly svg: string }
+  /** Pages typeset so far; `final` once the whole document is. */
+  | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
   | {
       readonly type: 'status';
       /**

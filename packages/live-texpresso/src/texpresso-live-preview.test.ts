@@ -167,11 +167,20 @@ describe.skipIf(!available)(
       await waitFor((e) => e.type === 'page' && e.page === 1 && e.svg === expected.svg);
     });
 
-    it('shows other pages on request', async () => {
+    it('renders the requested page range and reports the page count', async () => {
       const live = await open();
       await waitFor(isPage(1));
-      live.showPage(2);
+      await waitFor((e) => e.type === 'page-count' && e.final);
+      expect(events.filter((e) => e.type === 'page-count').at(-1)).toEqual({
+        type: 'page-count',
+        count: 2,
+        final: true,
+      });
+      expect(events.some(isPage(2))).toBe(false);
+      live.showPages(1, 2);
       await waitFor(isPage(2));
+      // Page 1 was already sent and has not changed.
+      expect(events.filter(isPage(1))).toHaveLength(1);
     });
 
     // Finds processes through /proc, which only Linux has.

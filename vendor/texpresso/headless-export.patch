@@ -1,15 +1,151 @@
+diff --git a/src/frontend/editor.c b/src/frontend/editor.c
+index 6face98..ecc6319 100644
+--- a/src/frontend/editor.c
++++ b/src/frontend/editor.c
+@@ -320,6 +320,20 @@ bool editor_parse(fz_context *ctx,
+       goto arity;
+     *out = (struct editor_command){.tag = EDIT_RERUN_ONCE, .rerun_once = {}};
+   }
++  else if (strcmp(verb, "export-pages") == 0)
++  {
++    // MyLeaf patch: 1-based, inclusive page range to export (headless mode).
++    if (len != 3)
++      goto arity;
++    val first = val_array_get(ctx, stack, command, 1);
++    val last = val_array_get(ctx, stack, command, 2);
++    if (!val_is_number(first) || !val_is_number(last))
++      goto arguments;
++    *out = (struct editor_command){
++        .tag = EDIT_EXPORT_PAGES,
++        .export_pages = {.first = (int)val_number(ctx, first),
++                         .last = (int)val_number(ctx, last)}};
++  }
+   else
+   {
+     fprintf(stderr, "[command] unknown verb: %s\n", verb);
+diff --git a/src/frontend/editor.h b/src/frontend/editor.h
+index 05fdd1c..923dbeb 100644
+--- a/src/frontend/editor.h
++++ b/src/frontend/editor.h
+@@ -37,6 +37,7 @@ enum EDITOR_COMMAND
+   EDIT_RESUME,
+   EDIT_RERUN,
+   EDIT_RERUN_ONCE,
++  EDIT_EXPORT_PAGES,
+ };
+ 
+ struct editor_change
+@@ -136,6 +137,10 @@ struct editor_command
+ 
+     struct {
+     } rerun_once;
++
++    struct {
++      int first, last;
++    } export_pages;
+   };
+ };
+ 
+diff --git a/src/frontend/incdvi.c b/src/frontend/incdvi.c
+index 1f96d92..f76fe70 100644
+--- a/src/frontend/incdvi.c
++++ b/src/frontend/incdvi.c
+@@ -22,6 +22,7 @@
+  * IN THE SOFTWARE.
+  */
+ 
++#include <limits.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include "incdvi.h"
+@@ -76,11 +77,27 @@ void incdvi_free(fz_context *ctx, incdvi_t *d)
+   fz_free(ctx, d);
+ }
+ 
++static int low_page_count = INT_MAX;
++
++int incdvi_take_low_page_count(void)
++{
++  int low = low_page_count;
++  low_page_count = INT_MAX;
++  return low;
++}
++
++static void note_page_count(incdvi_t *d)
++{
++  if (d->page_len / 2 < low_page_count)
++    low_page_count = d->page_len / 2;
++}
++
+ void incdvi_reset(incdvi_t *d)
+ {
+   d->offset = 0;
+   d->fontdef_offset = 0;
+   d->page_len = 0;
++  note_page_count(d);
+ }
+ 
+ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
+@@ -104,6 +121,7 @@ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf)
+       d->page_len -= 1;
+       d->offset = d->pages[d->page_len];
+     }
++    note_page_count(d);
+   }
+ 
+   if (d->offset == 0)
+diff --git a/src/frontend/incdvi.h b/src/frontend/incdvi.h
+index 852f744..a37f371 100644
+--- a/src/frontend/incdvi.h
++++ b/src/frontend/incdvi.h
+@@ -37,6 +37,11 @@ void incdvi_reset(incdvi_t *d);
+ void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf);
+ bool incdvi_output_started(incdvi_t *d);
+ int incdvi_page_count(incdvi_t *d);
++
++// Headless page export (MyLeaf patch): lowest page count any incdvi was cut
++// back to (rollback or reset) since the last call; INT_MAX if none. Pages
++// from that index on may have changed.
++int incdvi_take_low_page_count(void);
+ void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page, float *width, float *height, bool *landscape);
+ void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, fz_device *dev);
+ void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page);
 diff --git a/src/frontend/main.c b/src/frontend/main.c
-index c202294..08e29e6 100644
+index c202294..ca0e35c 100644
 --- a/src/frontend/main.c
 +++ b/src/frontend/main.c
-@@ -917,9 +917,74 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
+@@ -35,6 +35,7 @@
+ #include "engine.h"
+ #include "driver.h"
+ #include "synctex.h"
++#include "incdvi.h"
+ #include "vstack.h"
+ #include "prot_parser.h"
+ #include "editor.h"
+@@ -156,6 +157,12 @@ static bool need_advance(fz_context *ctx, ui_state *ui)
+   if (send(get_status, ui->eng) != DOC_RUNNING)
+     return false;
+ 
++  // Headless page export (MyLeaf patch): typeset the whole document, so
++  // every requested page and the page count are available. Steps stay
++  // time-sliced, so editor commands are still handled promptly.
++  if (getenv("TEXPRESSO_EXPORT_DIR"))
++    return true;
++
+   if (send(is_finishing, ui->eng))
+     return true;
+ 
+@@ -917,6 +924,118 @@ static uint32_t convert_color(fz_context *ctx, vstack *stack, float frgb[3])
    return (rgb[0] << 16) | (rgb[1] << 8) | (rgb[2]);
  }
  
-+// Headless page export (MyLeaf patch). When TEXPRESSO_EXPORT_DIR is set,
-+// every displayed page is written atomically to <dir>/page-<n>.svg (or .png
-+// with TEXPRESSO_EXPORT_FORMAT=png) and announced on stdout as
-+// ["page-exported", n, "path", milliseconds].
++// Headless page export (MyLeaf patch). When TEXPRESSO_EXPORT_DIR is set, the
++// whole document is typeset, and each page of the range set by the editor
++// command ["export-pages", first, last] (1-based, default 1-1) is written
++// atomically to <dir>/page-<n>.svg (or .png with TEXPRESSO_EXPORT_FORMAT=png)
++// whenever it is (re)typeset, announced on stdout as
++// ["page-exported", n, "path", milliseconds]. Page count changes are
++// announced as ["page-count", n, finished].
 +static void export_page(fz_context *ctx, fz_display_list *dl, int page)
 +{
 +  const char *dir = getenv("TEXPRESSO_EXPORT_DIR");
@@ -70,10 +206,82 @@ index c202294..08e29e6 100644
 +  fflush(stdout);
 +}
 +
++// Pages (0-based, inclusive) the editor asked for with "export-pages".
++static int export_first = 0, export_last = 0;
++// Pages below this index are typeset and were exported if in the range.
++static int export_valid = 0;
++static int reported_count = -1, reported_done = -1;
++
++static void export_range(struct persistent_state *ps, ui_state *ui, int from, int to)
++{
++  if (from < export_first)
++    from = export_first;
++  if (to > export_last + 1)
++    to = export_last + 1;
++  for (int page = from; page < to; page++)
++  {
++    fz_display_list *dl = send(render_page, ui->eng, ps->ctx, page);
++    export_page(ps->ctx, dl, page);
++    fz_drop_display_list(ps->ctx, dl);
++  }
++}
++
++// Exports pages of the range that were (re)typeset since the last call and
++// announces page count changes as ["page-count", n, finished].
++static void export_sync(struct persistent_state *ps, ui_state *ui)
++{
++  if (!getenv("TEXPRESSO_EXPORT_DIR"))
++    return;
++  int low = incdvi_take_low_page_count();
++  if (low < export_valid)
++    export_valid = low;
++  int count = send(page_count, ui->eng);
++  if (count < export_valid)
++    export_valid = count;
++  export_range(ps, ui, export_valid, count);
++  export_valid = count;
++
++  int done = send(get_status, ui->eng) == DOC_TERMINATED;
++  if (count != reported_count || done != reported_done)
++  {
++    reported_count = count;
++    reported_done = done;
++    printf("[\"page-count\", %d, %s]\n", count, done ? "true" : "false");
++    fflush(stdout);
++  }
++}
++
  static void display_page(struct persistent_state *ps, ui_state *ui)
  {
    fz_display_list *dl = send(render_page, ui->eng, ps->ctx, ui->page);
-+  export_page(ps->ctx, dl, ui->page);
-   txp_renderer_set_contents(ps->ctx, ui->doc_renderer, dl);
-   fz_drop_display_list(ps->ctx, dl);
-   schedule_event(RENDER_EVENT);
+@@ -1129,6 +1248,22 @@ static void interpret_command(struct persistent_state *ps,
+               ps->rerun_enabled ? "enabled" : "disabled");
+       break;
+ 
++    case EDIT_EXPORT_PAGES:
++    {
++      int old_first = export_first, old_last = export_last;
++      export_first = cmd.export_pages.first - 1;
++      export_last = cmd.export_pages.last - 1;
++      if (export_first < 0)
++        export_first = 0;
++      if (export_last < export_first)
++        export_last = export_first;
++      // Pages new to the range that are already typeset.
++      for (int page = export_first; page <= export_last && page < export_valid; page++)
++        if (page < old_first || page > old_last)
++          export_range(ps, ui, page, page + 1);
++      break;
++    }
++
+     case EDIT_RERUN_ONCE:
+       ps->rerun_once_pending = true;
+       fprintf(stderr, "[command] rerun-once: pending immediate pass\n");
+@@ -1348,6 +1483,7 @@ bool texpresso_main(struct persistent_state *ps)
+       int before_page_count = send(page_count, ui->eng);
+       bool advance = !ps->paused && advance_engine(ps->ctx, ui);
+       send(finish_convergence, ui->eng, ps->ctx);
++      export_sync(ps, ui);
+       int after_page_count = send(page_count, ui->eng);
+       fflush(stdout);
+ 

@@ -64,8 +64,8 @@ the nearest snapshot is further back.
 - Port `LivePreviewBackend` (`@myleaf/live-preview`); adapter
   `TexpressoLivePreview` (`@myleaf/live-texpresso`) runs one TeXpresso process
   group per session, sends file changes with `open-base64` (full content) and
-  page changes with `next-page` / `previous-page`, and emits sanitized SVG
-  pages. Closing a session waits for the whole process group to exit.
+  the visible page range with `export-pages` (ADR 0014; at first, single
+  pages with `next-page` / `previous-page`), and emits sanitized SVG pages. Closing a session waits for the whole process group to exit.
 - The server (`/api/projects/:id/live`, WebSocket) opens a session per
   connection from the stored files. The browser sends the open document's
   text on every change, independent of the debounced save; saved files and

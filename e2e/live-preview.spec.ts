@@ -15,7 +15,7 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await page.getByRole('checkbox', { name: /Live preview/ }).check();
   await page.getByRole('button', { name: 'Compile settings' }).click();
 
-  const image = page.getByTestId('live-preview').locator('img');
+  const image = page.getByTestId('live-preview').locator('img').first();
   await expect(image).toBeVisible({ timeout: 30_000 });
   const before = await image.getAttribute('src');
 
@@ -24,7 +24,12 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await page.keyboard.press('End');
   await page.keyboard.insertText(' Typed live.');
   await expect(image).not.toHaveAttribute('src', before ?? '', { timeout: 30_000 });
-  await expect(page.getByTestId('live-page')).toHaveText('Page 1');
+  await expect(page.getByTestId('live-page')).toHaveText('Page 1 of 1');
+
+  // A new page appears below the first one (continuous scroll).
+  await page.keyboard.insertText(' \\newpage Second page.');
+  await expect(page.getByTestId('live-page')).toHaveText('Page 1 of 2', { timeout: 30_000 });
+  await expect(page.getByAltText('Live preview of page 2')).toBeAttached({ timeout: 30_000 });
 
   // The PDF stays reachable while live preview is on.
   await page.getByRole('tab', { name: 'PDF' }).click();

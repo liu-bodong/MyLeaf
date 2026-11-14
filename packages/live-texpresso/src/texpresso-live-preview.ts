@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type {
@@ -123,8 +123,8 @@ class TexpressoSession implements LivePreviewSession {
   readonly #onEvent: (event: LivePreviewEvent) => void;
   readonly #exited: Promise<void>;
   #closing = false;
-  /** Page TeXpresso displays (1-based): updated on request and on every export. */
-  #page = 1;
+  /** Hash of the SVG last emitted per page, to skip re-exports with unchanged content. */
+  readonly #emitted = new Map<number, string>();
   /** Serializes page reads so events are emitted in export order. */
   #reads: Promise<void> = Promise.resolve();
 
@@ -171,13 +171,9 @@ class TexpressoSession implements LivePreviewSession {
     this.#send(['open-base64', file.path, Buffer.from(file.content).toString('base64')]);
   }
 
-  showPage(page: number): void {
-    const target = Math.max(1, Math.floor(page));
-    const command = target > this.#page ? 'next-page' : 'previous-page';
-    for (let i = 0; i < Math.abs(target - this.#page); i++) {
-      this.#send([command]);
-    }
-    this.#page = target;
+  showPages(first: number, last: number): void {
+    const from = Math.max(1, Math.floor(first));
+    this.#send(['export-pages', from, Math.max(from, Math.floor(last))]);
   }
 
   async close(): Promise<void> {
@@ -210,14 +206,25 @@ class TexpressoSession implements LivePreviewSession {
     } catch {
       return;
     }
-    if (!Array.isArray(message) || message[0] !== 'page-exported') return;
+    if (!Array.isArray(message)) return;
+    if (message[0] === 'page-count') {
+      const [, count, final] = message as [string, number, boolean];
+      // Queued behind page reads, so events keep TeXpresso's order.
+      this.#reads = this.#reads.then(() => {
+        if (!this.#closing) this.#onEvent({ type: 'page-count', count, final });
+      });
+      return;
+    }
+    if (message[0] !== 'page-exported') return;
     const [, page, path] = message as [string, number, string];
-    this.#page = page;
     this.#reads = this.#reads.then(async () => {
-      const svg = await readFile(path, 'utf8').catch(() => null);
-      if (svg !== null && !this.#closing) {
-        this.#onEvent({ type: 'page', page, svg: sanitizeSvg(svg) });
-      }
+      const raw = await readFile(path, 'utf8').catch(() => null);
+      if (raw === null || this.#closing) return;
+      const svg = sanitizeSvg(raw);
+      const hash = createHash('sha1').update(svg).digest('base64');
+      if (this.#emitted.get(page) === hash) return;
+      this.#emitted.set(page, hash);
+      this.#onEvent({ type: 'page', page, svg });
     });
   }
 
