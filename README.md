@@ -2,6 +2,8 @@
 
 An open-source, self-hostable collaborative LaTeX editor.
 
+"MyLeaf" (and the `@myleaf/*` package scope) is a working name.
+
 Licensed under [AGPL-3.0](LICENSE). Design decisions: [docs/adr](docs/adr/README.md).
 
 ## Development

@@ -18,6 +18,7 @@ const alice = ActorId('alice');
 const bob = ActorId('bob');
 const s1 = SuggestionId('s1');
 const s2 = SuggestionId('s2');
+const s3 = SuggestionId('s3');
 
 const pending = (id = s1) =>
   createSuggestion({ id, fileId: FileId('main.tex'), authorId: alice, reviewerIds: [bob], at: 1 });
@@ -106,11 +107,27 @@ describe('suggested deletion', () => {
     ]);
   });
 
-  it('refuses to overlap text inserted by another suggestion', () => {
+  it('refuses to overlap text inserted by other suggestions, changing nothing', () => {
+    const doc = new InMemoryTextDocument('abc');
+    suggestInsertion(doc, s1, 1, 'X');
+    suggestInsertion(doc, s3, 3, 'Y');
+    expect(() => suggestDeletion(doc, s2, 0, 5)).toThrow(
+      expect.objectContaining({ suggestionId: s2, conflictingIds: [s1, s3] }),
+    );
+    expect(() => suggestDeletion(doc, s2, 0, 5)).toThrow(SuggestionConflictError);
+    expect(doc.getText()).toBe('aXbYc');
+    expect(getSuggestionRanges(doc).map((r) => r.mark.kind)).toEqual(['insertion', 'insertion']);
+  });
+
+  it('removes text inserted by other suggestions when overriding conflicts', () => {
     const doc = new InMemoryTextDocument('ab');
     suggestInsertion(doc, s1, 1, 'XY');
-    expect(() => suggestDeletion(doc, s2, 0, 2)).toThrow(SuggestionConflictError);
-    expect(doc.getText()).toBe('aXYb');
+    suggestDeletion(doc, s2, 0, 2, { overrideConflicts: true });
+    expect(views(doc)).toEqual({ text: 'aYb', accepted: 'ab', proposed: 'Yb' });
+    expect(getSuggestionRanges(doc)).toEqual([
+      { offset: 0, length: 1, mark: { id: s2, kind: 'deletion' } },
+      { offset: 1, length: 1, mark: { id: s1, kind: 'insertion' } },
+    ]);
   });
 });
 

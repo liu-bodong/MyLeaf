@@ -29,6 +29,7 @@ export {
   suggestReplacement,
 } from './suggestions.js';
 export type {
+  DeletionOptions,
   ProjectionView,
   Suggestion,
   SuggestionKind,

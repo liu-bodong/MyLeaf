@@ -33,7 +33,15 @@ Collaboration is the top-priority feature set:
 5. **Editor presentation** is Word style: insertions highlighted, deletions
    struck through, per author color, with a side panel listing threads and
    suggestions.
-6. **Compile views.** The source sent to the compiler is a projection of the
+6. **Deleting text that another suggestion inserted.** A character carries at
+   most one suggestion mark. Deleting text inserted by the _same_ suggestion
+   removes it outright. Deleting text inserted by _other_ pending suggestions
+   is refused the first time (`SuggestionConflictError`, which lists the
+   affected suggestions) and nothing changes. The editor shows a blocking
+   warning; if the user confirms, the edit is retried with
+   `overrideConflicts: true` and the overlapping text is removed from those
+   suggestions.
+7. **Compile views.** The source sent to the compiler is a projection of the
    document: "accepted only" (suggested insertions excluded, suggested
    deletions kept) or "all suggestions applied".
 
@@ -44,11 +52,6 @@ Collaboration is the top-priority feature set:
   wrapping arbitrary changed spans in markup macros can break compilation
   inside math or across environment boundaries.
 - Notification delivery mechanism.
-- **Deleting text that another suggestion inserted.** A character carries at
-  most one suggestion mark. Deleting text inserted by the _same_ suggestion
-  removes it outright; deleting text inserted by a _different_ pending
-  suggestion is currently refused (`SuggestionConflictError`). Final behaviour
-  to be decided.
 - **Editor binding.** `Y.Text#insert` copies neighbouring formatting when no
   attributes are given; the editor binding must insert typed text through the
   `TextDocument` port (which always passes explicit marks), or typing next to a

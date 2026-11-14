@@ -44,17 +44,31 @@ export interface Suggestion {
  */
 export type ProjectionView = 'accepted' | 'proposed';
 
-/** Thrown when a suggested deletion overlaps text inserted by a different suggestion. */
+/**
+ * Thrown when a suggested deletion overlaps text inserted by other pending
+ * suggestions. The caller is expected to warn the user and, if they confirm,
+ * retry with `overrideConflicts: true`.
+ */
 export class SuggestionConflictError extends AnnotationError {
   readonly suggestionId: SuggestionId;
-  readonly conflictingId: SuggestionId;
+  readonly conflictingIds: readonly SuggestionId[];
 
-  constructor(suggestionId: SuggestionId, conflictingId: SuggestionId) {
-    super(`Suggestion ${suggestionId} overlaps text inserted by suggestion ${conflictingId}`);
+  constructor(suggestionId: SuggestionId, conflictingIds: readonly SuggestionId[]) {
+    super(
+      `Suggestion ${suggestionId} overlaps text inserted by suggestion(s) ${conflictingIds.join(', ')}`,
+    );
     this.name = 'SuggestionConflictError';
     this.suggestionId = suggestionId;
-    this.conflictingId = conflictingId;
+    this.conflictingIds = conflictingIds;
   }
+}
+
+export interface DeletionOptions {
+  /**
+   * Remove text inserted by other pending suggestions instead of refusing.
+   * That text is taken out of those suggestions. Default: `false`.
+   */
+  readonly overrideConflicts?: boolean;
 }
 
 export function createSuggestion(input: {
@@ -97,28 +111,34 @@ export function suggestInsertion(
  * same suggestion inserted is removed outright (like backspacing over your
  * own typing); text already suggested for deletion keeps its existing mark.
  *
- * @throws SuggestionConflictError if the range contains text inserted by a
- *   different pending suggestion.
+ * @throws SuggestionConflictError if the range contains text inserted by
+ *   other pending suggestions and `overrideConflicts` is not set. Nothing is
+ *   changed in that case.
  */
 export function suggestDeletion(
   doc: TextDocument,
   id: SuggestionId,
   offset: number,
   length: number,
+  options: DeletionOptions = {},
 ): void {
-  markDeletion(doc, id, offset, length);
+  markDeletion(doc, id, offset, length, options);
 }
 
-/** A deletion of `[offset, offset + length)` followed by the inserted `text`, as one suggestion. */
+/**
+ * A deletion of `[offset, offset + length)` followed by the inserted `text`,
+ * as one suggestion. Conflicts are handled as in {@link suggestDeletion}.
+ */
 export function suggestReplacement(
   doc: TextDocument,
   id: SuggestionId,
   offset: number,
   length: number,
   text: string,
+  options: DeletionOptions = {},
 ): void {
   doc.transact(() => {
-    const remaining = markDeletion(doc, id, offset, length);
+    const remaining = markDeletion(doc, id, offset, length, options);
     suggestInsertion(doc, id, offset + remaining, text);
   });
 }
@@ -164,7 +184,13 @@ export function projectText(doc: TextDocument, view: ProjectionView): string {
 }
 
 /** @returns the length of the range that remains in the document. */
-function markDeletion(doc: TextDocument, id: SuggestionId, offset: number, length: number): number {
+function markDeletion(
+  doc: TextDocument,
+  id: SuggestionId,
+  offset: number,
+  length: number,
+  { overrideConflicts = false }: DeletionOptions,
+): number {
   const end = offset + length;
   const overlapping = getSuggestionRanges(doc)
     .map((range) => ({
@@ -174,9 +200,15 @@ function markDeletion(doc: TextDocument, id: SuggestionId, offset: number, lengt
     }))
     .filter((range) => range.offset < range.end);
 
-  const conflict = overlapping.find(({ mark }) => mark.kind === 'insertion' && mark.id !== id);
-  if (conflict) {
-    throw new SuggestionConflictError(id, conflict.mark.id);
+  const conflictingIds = [
+    ...new Set(
+      overlapping
+        .filter(({ mark }) => mark.kind === 'insertion' && mark.id !== id)
+        .map(({ mark }) => mark.id),
+    ),
+  ];
+  if (conflictingIds.length > 0 && !overrideConflicts) {
+    throw new SuggestionConflictError(id, conflictingIds);
   }
 
   // Segments of the range, in document order, with their existing mark (if any).
