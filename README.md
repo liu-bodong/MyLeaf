@@ -92,15 +92,18 @@ Layering rules: [ADR 0009](docs/adr/0009-module-boundaries.md).
 
 ## Roadmap
 
-| Phase | Scope                                                                                                  |
-| ----- | ------------------------------------------------------------------------------------------------------ |
-| 0     | Repository skeleton, tooling, CI, data model for documents, anchors and annotations                    |
-| 1     | Single user: files, editor, compile (L1), PDF viewer, SyncTeX navigation                               |
-| 2     | Multi-user: auth, real-time sync, presence                                                             |
-| 3     | Comments, threads, suggestions                                                                         |
-| 4     | AI actors and MCP server                                                                               |
-| 5     | Visual modes, instant in-editor rendering (L2)                                                         |
-| 6     | Tables, navigation, configuration                                                                      |
-| —     | Configurable from the UI: engine choice, compile settings, resource limits (now environment variables) |
-| —     | Live preview (L3) with TeXpresso: first version done (ADR 0012)                                        |
-| —     | Desktop app                                                                                            |
+| Phase | Scope                                                                                                                                                                                                                                                            |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Repository skeleton, tooling, CI, data model for documents, anchors and annotations                                                                                                                                                                              |
+| 1     | Single user: files, editor, compile (L1), PDF viewer, SyncTeX navigation                                                                                                                                                                                         |
+| 2     | Multi-user: auth, real-time sync, presence                                                                                                                                                                                                                       |
+| 3     | Comments, threads, suggestions                                                                                                                                                                                                                                   |
+| 4     | AI actors and MCP server                                                                                                                                                                                                                                         |
+| 5     | Visual modes, instant in-editor rendering (L2)                                                                                                                                                                                                                   |
+| 6     | Tables, navigation, configuration                                                                                                                                                                                                                                |
+| —     | Configurable from the UI: engine choice, compile settings, resource limits (now environment variables)                                                                                                                                                           |
+| —     | Live preview (L3) with TeXpresso: done, with continuous scroll, references and citations (ADR 0012, 0014)                                                                                                                                                        |
+| —     | Live tab in the PDF toolbar, always clickable when live preview is available (not on by default)                                                                                                                                                                 |
+| —     | Live preview with pdfLaTeX: TeXpresso's technique on pdfTeX. First a 1–2 day spike (driver with another engine, I/O and snapshot hooks in pdfTeX, page rendering); then a pdfTeX kept warm after the preamble; then full snapshots. Weeks to months; not started |
+| —     | Faster pdfLaTeX compiles: pdfTeX without latexmk while editing, stop after the visible page, re-render only changed pages (~380 → ~200–250 ms server time on the benchmark paper)                                                                                |
+| —     | Desktop app                                                                                                                                                                                                                                                      |
