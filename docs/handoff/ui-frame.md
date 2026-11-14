@@ -143,7 +143,7 @@ diagnostics strip under the PDF (open by default).
   close on success, remember the choice, show the warning count too.
 - Done: behaviour agreed and covered by `e2e/ui-frame.spec.ts`.
 
-### 8. Split and sidebar — done (except collapsing)
+### 8. Split and sidebar — done except touch-drag and collapsing
 
 - Split ratio is limited to 20–80 % and saved per browser. Double-click on
   the divider resets it to 50 % (covered by `e2e/ui-frame.spec.ts`). Still

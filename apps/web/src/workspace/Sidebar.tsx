@@ -48,7 +48,8 @@ export function Sidebar({ width, min, max, onWidthChange, children }: SidebarPro
     start.current = null;
     if (final === null) return;
     moveTo(null);
-    onWidthChange(Math.round(final));
+    // A press without movement changes nothing; do not save the layout again.
+    if (Math.round(final) !== width) onWidthChange(Math.round(final));
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -82,7 +83,9 @@ export function Sidebar({ width, min, max, onWidthChange, children }: SidebarPro
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        onDoubleClick={() => onWidthChange(SIDEBAR_DEFAULT)}
+        onDoubleClick={() => {
+          if (width !== SIDEBAR_DEFAULT) onWidthChange(SIDEBAR_DEFAULT);
+        }}
         onKeyDown={onKeyDown}
       />
     </>
