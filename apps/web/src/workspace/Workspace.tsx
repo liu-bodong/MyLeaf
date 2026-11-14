@@ -683,6 +683,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   onInverseSearch={(point) => void inverseSearch(point).catch(report)}
                   zoom={layout.zoom}
                   onViewChange={setPdfView}
+                  onZoom={(zoom) => updateLayout({ zoom })}
                 />
               </div>
               {result !== null && logsOpen && (

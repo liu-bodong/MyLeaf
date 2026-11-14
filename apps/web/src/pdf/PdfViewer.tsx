@@ -8,8 +8,15 @@ import {
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { Ref } from 'react';
-import { displayScale, mostVisiblePage, pageIndexAt, pageTops, zoomFactor } from './zoom.js';
+import type { KeyboardEvent, Ref } from 'react';
+import {
+  displayScale,
+  mostVisiblePage,
+  pageIndexAt,
+  pageTops,
+  stepZoom,
+  zoomFactor,
+} from './zoom.js';
 import type { PdfZoom, Size } from './zoom.js';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -54,6 +61,8 @@ interface PdfViewerProps {
   readonly onInverseSearch: (point: PdfPoint) => void;
   /** Defaults to fitting the page width. */
   readonly zoom?: PdfZoom;
+  /** Called when a keyboard shortcut changes the zoom (Mod-+ / Mod--). */
+  readonly onZoom?: (zoom: PdfZoom) => void;
   readonly onViewChange?: (state: PdfViewState) => void;
   readonly ref?: Ref<PdfViewerHandle>;
 }
@@ -91,6 +100,7 @@ export function PdfViewer({
   highlights,
   onInverseSearch,
   zoom = 'fit-width',
+  onZoom,
   onViewChange,
   ref,
 }: PdfViewerProps) {
@@ -230,6 +240,33 @@ export function PdfViewer({
     [document, layout, scroller],
   );
 
+  const movePage = (delta: number) => {
+    if (scroller === null || layout === null) return;
+    const target = Math.min(Math.max(shownPage + delta, 1), layout.tops.length);
+    scroller.scrollTo({ top: layout.tops[target - 1]! - PAGE_GAP });
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && (event.key === '=' || event.key === '+')) {
+      if (factor === null) return;
+      event.preventDefault();
+      onZoom?.(stepZoom(factor, 1));
+    } else if (mod && event.key === '-') {
+      if (factor === null) return;
+      event.preventDefault();
+      onZoom?.(stepZoom(factor, -1));
+    } else if (event.key === 'PageDown') {
+      if (layout === null) return;
+      event.preventDefault();
+      movePage(1);
+    } else if (event.key === 'PageUp') {
+      if (layout === null) return;
+      event.preventDefault();
+      movePage(-1);
+    }
+  };
+
   if (url === null) {
     return <div className="pdf-empty">Compile to see the PDF.</div>;
   }
@@ -239,6 +276,10 @@ export function PdfViewer({
       className="pdf-viewer"
       ref={setScroller}
       data-testid="pdf-viewer"
+      role="region"
+      aria-label="PDF pages"
+      tabIndex={0}
+      onKeyDown={onKeyDown}
       onScroll={updatePosition}
     >
       {error !== null && <div className="pdf-error">Could not display the PDF: {error}</div>}

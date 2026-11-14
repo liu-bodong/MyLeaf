@@ -100,3 +100,80 @@ test('top bar, editor toolbar, PDF toolbar and layout', async ({ page }) => {
   await page.getByRole('menuitem', { name: 'Rename…' }).click();
   await expect(page.getByRole('heading', { name: 'Renamed frame' })).toBeAttached();
 });
+
+test('double-clicking the divider resets the split', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Reset');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+
+  const handle = page.getByRole('separator', { name: 'Resize editor and PDF' });
+  await expect(handle).toHaveAttribute('aria-valuenow', '50');
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(handle).toHaveAttribute('aria-valuenow', '48');
+  await handle.dblclick();
+  await expect(handle).toHaveAttribute('aria-valuenow', '50');
+});
+
+test('menus open and navigate with the keyboard', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Menus');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+
+  const view = page.getByRole('menuitem', { name: 'View', exact: true });
+  await view.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menuitemradio', { name: 'Editor & PDF' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitemradio', { name: 'PDF only' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(page.locator('.cm-content')).toBeHidden();
+  await expect(view).toBeFocused();
+
+  // Escape closes and returns focus to the trigger.
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('menuitemradio', { name: 'Editor & PDF' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(view).toBeFocused();
+
+  // Left/Right move between the top-level menus.
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('menuitem', { name: 'Format', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(view).toBeFocused();
+});
+
+test('PDF keyboard shortcuts change pages and zoom', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('PDF keys');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await replaceEditorText(page, THREE_PAGES);
+  await page.getByRole('button', { name: 'Recompile', exact: true }).click();
+  await expect(page.locator('.pdf-page')).toHaveCount(3);
+
+  const pageBox = page.getByRole('textbox', { name: 'Page' });
+  await expect(pageBox).toHaveValue('1');
+
+  const viewer = page.getByTestId('pdf-viewer');
+  await viewer.focus();
+  await page.keyboard.press('PageDown');
+  await expect(pageBox).toHaveValue('2');
+  await page.keyboard.press('PageUp');
+  await expect(pageBox).toHaveValue('1');
+
+  const zoomLevel = page.getByTestId('zoom-level');
+  await page.getByRole('button', { name: /^Zoom level/ }).click();
+  await page.getByRole('menuitem', { name: '100%' }).click();
+  await expect(zoomLevel).toHaveText('100%');
+  await viewer.focus();
+  await page.keyboard.press('ControlOrMeta+=');
+  await expect(zoomLevel).toHaveText('110%');
+  await page.keyboard.press('ControlOrMeta+-');
+  await expect(zoomLevel).toHaveText('100%');
+});

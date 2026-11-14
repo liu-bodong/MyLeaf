@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useDismiss } from './useDismiss.js';
 
@@ -27,12 +27,17 @@ export interface MenuDefinition {
 
 const ENABLED_ITEMS = '[role^="menuitem"]:not([aria-disabled="true"])';
 
-/** Moves focus between enabled items with the arrow keys. */
+/** Moves focus between enabled items with the arrow keys, Home and End. */
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-  event.preventDefault();
   const items = [...event.currentTarget.querySelectorAll<HTMLElement>(ENABLED_ITEMS)];
   if (items.length === 0) return;
+  if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault();
+    (event.key === 'Home' ? items[0] : items[items.length - 1])?.focus();
+    return;
+  }
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault();
   const index = items.findIndex((item) => item === window.document.activeElement);
   const next =
     event.key === 'ArrowDown'
@@ -46,12 +51,32 @@ interface MenuListProps {
   readonly items: readonly MenuItem[];
   readonly onClose: () => void;
   readonly align?: 'start' | 'end' | undefined;
+  /** Which end of the list receives focus when it opens. */
+  readonly initialFocus?: 'first' | 'last' | undefined;
 }
 
 /** A popup list of menu items. Disabled items stay focusable so their hint is readable. */
-export function MenuList({ label, items, onClose, align = 'start' }: MenuListProps) {
+export function MenuList({
+  label,
+  items,
+  onClose,
+  align = 'start',
+  initialFocus = 'first',
+}: MenuListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const focusable = [...(listRef.current?.querySelectorAll<HTMLElement>(ENABLED_ITEMS) ?? [])];
+    const target = initialFocus === 'last' ? focusable[focusable.length - 1] : focusable[0];
+    target?.focus();
+  }, [initialFocus]);
   return (
-    <div role="menu" aria-label={label} className={`menu align-${align}`} onKeyDown={moveFocus}>
+    <div
+      ref={listRef}
+      role="menu"
+      aria-label={label}
+      className={`menu align-${align}`}
+      onKeyDown={moveFocus}
+    >
       {items.map((item, index) => {
         if (item.kind === 'separator') {
           return <div key={index} role="separator" className="menu-separator" />;
@@ -101,11 +126,17 @@ export function Dropdown(props: DropdownProps) {
   const { label, trigger, items, align, className, buttonClassName, disabled, title } = props;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => setOpen(false), []);
-  useDismiss(ref, open, close);
+  const closeAndFocus = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+  useDismiss(ref, open, close, closeAndFocus);
   return (
     <div className={`dropdown ${className ?? ''}`} ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         className={buttonClassName}
         aria-label={label}
@@ -117,7 +148,7 @@ export function Dropdown(props: DropdownProps) {
       >
         {trigger}
       </button>
-      {open && <MenuList label={label} items={items} onClose={close} align={align} />}
+      {open && <MenuList label={label} items={items} onClose={closeAndFocus} align={align} />}
     </div>
   );
 }
@@ -125,11 +156,43 @@ export function Dropdown(props: DropdownProps) {
 /** Application menu bar; once a menu is open, hovering another menu opens it instead. */
 export function MenuBar({ menus }: { readonly menus: readonly MenuDefinition[] }) {
   const [open, setOpen] = useState<number | null>(null);
+  const [initialFocus, setInitialFocus] = useState<'first' | 'last'>('first');
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(null), []);
-  useDismiss(ref, open !== null, close);
+  const triggers = useCallback(
+    () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])],
+    [],
+  );
+  const closeAndFocus = useCallback(() => {
+    const index = open;
+    setOpen(null);
+    if (index !== null) triggers()[index]?.focus();
+  }, [open, triggers]);
+  useDismiss(ref, open !== null, close, closeAndFocus);
+
+  const openMenu = (index: number, focus: 'first' | 'last' = 'first') => {
+    setInitialFocus(focus);
+    setOpen(index);
+  };
+
   return (
-    <div className="menubar" role="menubar" aria-label="Main menu" ref={ref}>
+    <div
+      className="menubar"
+      role="menubar"
+      aria-label="Main menu"
+      ref={ref}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        const current =
+          open ?? triggers().findIndex((button) => button === window.document.activeElement);
+        if (current < 0) return;
+        event.preventDefault();
+        const next =
+          (current + (event.key === 'ArrowRight' ? 1 : -1) + menus.length) % menus.length;
+        triggers()[next]?.focus();
+        if (open !== null) openMenu(next);
+      }}
+    >
       {menus.map((menu, index) => (
         <div className="dropdown" key={menu.label}>
           <button
@@ -138,14 +201,35 @@ export function MenuBar({ menus }: { readonly menus: readonly MenuDefinition[] }
             className="menubar-item"
             aria-haspopup="menu"
             aria-expanded={open === index}
-            onClick={() => setOpen(open === index ? null : index)}
+            onClick={() => (open === index ? setOpen(null) : openMenu(index))}
             onPointerEnter={() => {
-              if (open !== null) setOpen(index);
+              if (open !== null && open !== index) openMenu(index);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                openMenu(index, 'first');
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                openMenu(index, 'last');
+              } else if (event.key === 'Home' || event.key === 'End') {
+                event.preventDefault();
+                const target = event.key === 'Home' ? 0 : menus.length - 1;
+                triggers()[target]?.focus();
+                if (open !== null) openMenu(target);
+              }
             }}
           >
             {menu.label}
           </button>
-          {open === index && <MenuList label={menu.label} items={menu.items} onClose={close} />}
+          {open === index && (
+            <MenuList
+              label={menu.label}
+              items={menu.items}
+              onClose={closeAndFocus}
+              initialFocus={initialFocus}
+            />
+          )}
         </div>
       ))}
     </div>
