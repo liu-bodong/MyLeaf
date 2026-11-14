@@ -5,6 +5,7 @@ import type {
   FileEntryDto,
   ForwardSearchResponse,
   InverseSearchResponse,
+  LivePreviewInfo,
   ProjectDto,
   UpdateProjectRequest,
 } from '@myleaf/api';
@@ -86,6 +87,16 @@ export class ApiClient {
 
   inverseSearch(id: ProjectId, point: PdfPoint): Promise<InverseSearchResponse> {
     return this.#json('POST', apiRoutes.inverseSearch(id), point);
+  }
+
+  livePreviewInfo(): Promise<LivePreviewInfo> {
+    return this.#json('GET', apiRoutes.livePreviewInfo());
+  }
+
+  /** WebSocket URL of a project's live preview, on the page's own host. */
+  livePreviewUrl(id: ProjectId): string {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}${apiRoutes.livePreview(id)}`;
   }
 
   async #json<T>(method: string, url: string, body?: unknown): Promise<T> {

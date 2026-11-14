@@ -76,6 +76,7 @@ export function registerProjectRoutes(
               properties: {
                 autoCompile: { type: 'boolean' },
                 precompilePreamble: { type: 'boolean' },
+                livePreview: { type: 'boolean' },
               },
               additionalProperties: false,
             },

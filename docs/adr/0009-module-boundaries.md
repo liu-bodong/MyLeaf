@@ -13,11 +13,11 @@ particular sync library, database, server framework or UI framework.
 
 Packages are organized in three layers. Dependencies point inward only.
 
-| Layer    | Packages (current)                                      | May depend on                         |
-| -------- | ------------------------------------------------------- | ------------------------------------- |
-| Domain   | `doc-model`, `annotations`, `project`, `compile`, `api` | Other domain packages only            |
-| Adapters | `sync-yjs`, `storage-fs`, `compile-texlive`             | Domain packages, third-party libs     |
-| Apps     | `server`, `web`                                         | Anything; they wire adapters to ports |
+| Layer    | Packages (current)                                                      | May depend on                         |
+| -------- | ----------------------------------------------------------------------- | ------------------------------------- |
+| Domain   | `doc-model`, `annotations`, `project`, `compile`, `api`, `live-preview` | Other domain packages only            |
+| Adapters | `sync-yjs`, `storage-fs`, `compile-texlive`, `live-texpresso`           | Domain packages, third-party libs     |
+| Apps     | `server`, `web`                                                         | Anything; they wire adapters to ports |
 
 1. **Ports** are TypeScript interfaces defined in domain packages (e.g.
    `TextDocument` in `doc-model`). Domain code uses only ports.

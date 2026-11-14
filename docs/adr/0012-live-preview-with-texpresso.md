@@ -1,6 +1,6 @@
 # 0012. Live preview with a patched TeXpresso
 
-- Status: Accepted (integration design: Proposed)
+- Status: Accepted
 - Date: 2026-11-14
 - Refines: ADR 0006 (L3)
 
@@ -59,16 +59,29 @@ the nearest snapshot is further back.
 3. `headless-export.patch` writes each displayed page as SVG (vector, ~2 ms)
    and announces it on stdout as `["page-exported", page, path, ms]`.
 
-## Integration design (Proposed)
+## Integration
 
-- A `LivePreview` port in a domain package, with a TeXpresso adapter that runs
-  one TeXpresso process per open project (sessions capped and closed when
-  idle, given ~250 MB each).
-- A WebSocket per open project: the browser sends edits and the viewed page;
-  the server pushes page SVGs (with `data-text` stripped). Edits go to the
-  live session immediately, independent of the debounced save.
-- The web app shows live pages in place of the PDF while live preview is on.
-- CI builds TeXpresso and runs an integration test.
+- Port `LivePreviewBackend` (`@myleaf/live-preview`); adapter
+  `TexpressoLivePreview` (`@myleaf/live-texpresso`) runs one TeXpresso process
+  group per session, sends file changes with `open-base64` (full content) and
+  page changes with `next-page` / `previous-page`, and emits sanitized SVG
+  pages. Closing a session waits for the whole process group to exit.
+- The server (`/api/projects/:id/live`, WebSocket) opens a session per
+  connection from the stored files. The browser sends the open document's
+  text on every change, independent of the debounced save; saved files and
+  uploads are forwarded to open sessions too.
+- `LiveSessionPool` limits sessions (`MYLEAF_LIVE_MAX_SESSIONS`, default 4)
+  and closes idle ones (`MYLEAF_LIVE_IDLE_MINUTES`, default 10). Live preview
+  is enabled by `MYLEAF_TEXPRESSO`. These are environment variables for now;
+  engine choice, compile settings and resource limits are to become
+  configurable in the UI later.
+- The web app shows live pages in place of the PDF when the project setting
+  `livePreview` is on (Compile menu, off by default).
+- CI builds TeXpresso; adapter and end-to-end tests cover it.
+
+Measured in Chromium against the dev server (benchmark paper, page 1):
+keystroke to updated page on screen about 130–145 ms; the first edit after
+the session starts about 0.9 s.
 
 ## Consequences
 

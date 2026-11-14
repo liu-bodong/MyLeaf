@@ -10,7 +10,7 @@ import tseslint from 'typescript-eslint';
  * and other domain packages; third-party libraries belong in adapter packages
  * (see docs/adr/0009-module-boundaries.md).
  */
-const DOMAIN_PACKAGES = ['doc-model', 'annotations', 'project', 'compile', 'api'];
+const DOMAIN_PACKAGES = ['doc-model', 'annotations', 'project', 'compile', 'api', 'live-preview'];
 
 export default defineConfig(
   { ignores: ['**/dist/**', '**/coverage/**'] },

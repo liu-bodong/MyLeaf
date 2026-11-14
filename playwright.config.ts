@@ -27,7 +27,12 @@ export default defineConfig({
   webServer: [
     {
       command: 'node apps/server/dist/main.js',
-      env: { PORT: String(API_PORT), MYLEAF_DATA_DIR: dataDir },
+      env: {
+        PORT: String(API_PORT),
+        MYLEAF_DATA_DIR: dataDir,
+        // Live preview tests run when the patched TeXpresso is available.
+        ...(process.env.MYLEAF_TEXPRESSO ? { MYLEAF_TEXPRESSO: process.env.MYLEAF_TEXPRESSO } : {}),
+      },
       url: `http://127.0.0.1:${API_PORT}/health`,
       reuseExistingServer: false,
     },

@@ -9,6 +9,8 @@ import { api } from '../api/client.js';
 import { FilePreview } from '../files/FilePreview.js';
 import { previewType } from '../files/file-types.js';
 import { itemsFromFileList } from '../files/upload-items.js';
+import { LiveChannel } from '../live/live-channel.js';
+import { LivePreviewPane } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { LatexEditorHandle } from '../editor/LatexEditor.js';
@@ -52,6 +54,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [compiling, setCompiling] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [liveAvailable, setLiveAvailable] = useState(false);
+  const [liveChannel] = useState(() => new LiveChannel());
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -122,6 +126,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       if (cancelled) return;
       setProject(loaded);
       setFiles(entries);
+      setLiveAvailable((await api.livePreviewInfo()).available);
       if (entries.some((entry) => entry.path === loaded.rootFile)) {
         const text = decodeText(await api.readFile(projectId, loaded.rootFile));
         if (!cancelled && text !== null) {
@@ -179,13 +184,23 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         timer: setTimeout(() => void flushSave().catch(report), SAVE_DELAY_MS),
       };
       setSaveState('unsaved');
+      liveChannel.publish({ path: document.path, text });
       if (project?.settings.autoCompile) {
         if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
         autoCompileTimer.current = setTimeout(() => void compile(), AUTO_COMPILE_DELAY_MS);
       }
     },
-    [compile, document, flushSave, project?.settings.autoCompile, report],
+    [compile, document, flushSave, liveChannel, project?.settings.autoCompile, report],
   );
+
+  /** A new live session starts from saved files: send the open document's unsaved text. */
+  const sendOpenDocumentToLive = useCallback(() => {
+    if (document?.kind === 'text' && editorRef.current !== null) {
+      liveChannel.publish({ path: document.path, text: editorRef.current.text() });
+    }
+  }, [document, liveChannel]);
+
+  const showLive = liveAvailable && project?.settings.livePreview === true;
 
   /** Applies a settings change immediately and reverts it if saving fails. */
   const updateSettings = async (settings: Partial<ProjectSettings>) => {
@@ -381,6 +396,24 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   <small>Faster pdfLaTeX compiles; turn off if a package misbehaves</small>
                 </span>
               </label>
+              <label title={liveAvailable ? undefined : 'Not enabled on this server'}>
+                <input
+                  type="checkbox"
+                  disabled={!liveAvailable}
+                  checked={showLive}
+                  onChange={(event) =>
+                    void updateSettings({ livePreview: event.target.checked }).catch(report)
+                  }
+                />
+                <span>
+                  Live preview (XeLaTeX)
+                  <small>
+                    {liveAvailable
+                      ? 'Pages update as you type; may differ from the pdfLaTeX PDF'
+                      : 'Not enabled on this server'}
+                  </small>
+                </span>
+              </label>
             </div>
           )}
         </div>
@@ -455,11 +488,19 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         {document === null && <p className="placeholder">Select a file.</p>}
       </main>
       <section className="output">
-        <PdfViewer
-          url={pdfVersion === 0 ? null : api.pdfUrl(projectId, pdfVersion)}
-          highlights={highlights}
-          onInverseSearch={(point) => void inverseSearch(point).catch(report)}
-        />
+        {showLive ? (
+          <LivePreviewPane
+            projectId={projectId}
+            channel={liveChannel}
+            onReady={sendOpenDocumentToLive}
+          />
+        ) : (
+          <PdfViewer
+            url={pdfVersion === 0 ? null : api.pdfUrl(projectId, pdfVersion)}
+            highlights={highlights}
+            onInverseSearch={(point) => void inverseSearch(point).catch(report)}
+          />
+        )}
         {result !== null && <Diagnostics result={result} onSelect={selectDiagnostic} />}
       </section>
     </div>

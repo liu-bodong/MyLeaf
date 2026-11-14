@@ -129,15 +129,20 @@ describe('server API', () => {
     });
 
     it('updates settings partially and validates them', async () => {
-      expect(project.settings).toEqual({ autoCompile: false, precompilePreamble: true });
+      expect(project.settings).toEqual({
+        autoCompile: false,
+        precompilePreamble: true,
+        livePreview: false,
+      });
       const response = await app.inject({
         method: 'PATCH',
         url: `/api/projects/${project.id}`,
-        payload: { settings: { autoCompile: true } },
+        payload: { settings: { autoCompile: true, livePreview: true } },
       });
       expect(response.json<ProjectDto>().settings).toEqual({
         autoCompile: true,
         precompilePreamble: true,
+        livePreview: true,
       });
       for (const settings of [{ autoCompile: 'yes' }, { unknown: true }]) {
         const invalid = await app.inject({

@@ -24,6 +24,8 @@ export interface LatexEditorHandle {
   goToLine(line: number): void;
   /** 1-based line of the cursor. */
   cursorLine(): number;
+  /** Current text, including unsaved edits. */
+  text(): string;
 }
 
 interface LatexEditorProps {
@@ -113,6 +115,9 @@ export function LatexEditor({
       cursorLine() {
         const view = viewRef.current;
         return view === null ? 1 : view.state.doc.lineAt(view.state.selection.main.head).number;
+      },
+      text() {
+        return viewRef.current?.state.doc.toString() ?? '';
       },
     }),
     [],

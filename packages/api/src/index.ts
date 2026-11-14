@@ -48,6 +48,32 @@ export interface InverseSearchResponse {
   readonly location: SourceLocation | null;
 }
 
+/** `GET /api/live-preview`: whether this server offers live preview (ADR 0012). */
+export interface LivePreviewInfo {
+  readonly available: boolean;
+}
+
+/** Messages the browser sends on a project's live-preview WebSocket. */
+export type LiveClientMessage =
+  /** Full text of a project file that changed (not necessarily saved yet). */
+  | { readonly type: 'update'; readonly path: string; readonly content: string }
+  /** The 1-based page the browser shows. */
+  | { readonly type: 'page'; readonly page: number };
+
+/** Messages the server sends on a project's live-preview WebSocket. */
+export type LiveServerMessage =
+  | { readonly type: 'page'; readonly page: number; readonly svg: string }
+  | {
+      readonly type: 'status';
+      /**
+       * `starting`: session opened, first page follows. `unavailable`: not
+       * offered by this server. `busy`: too many sessions. `stopped`: ended
+       * (idle, or the renderer exited); `message` says why.
+       */
+      readonly state: 'starting' | 'unavailable' | 'busy' | 'stopped';
+      readonly message?: string;
+    };
+
 /** Body of every non-2xx JSON response. */
 export interface ErrorResponse {
   /** Machine-readable error kind, e.g. `ProjectNotFoundError`. */
@@ -71,4 +97,7 @@ export const apiRoutes = {
   pdf: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/output.pdf`,
   forwardSearch: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/synctex/forward`,
   inverseSearch: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/synctex/inverse`,
+  livePreviewInfo: () => '/api/live-preview',
+  /** WebSocket. */
+  livePreview: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/live`,
 } as const;

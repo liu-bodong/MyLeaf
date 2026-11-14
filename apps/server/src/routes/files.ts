@@ -3,6 +3,7 @@ import { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
+import type { LiveSessionPool } from '../live/live-session-pool.js';
 
 /** Upper bound for one uploaded file. */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -12,7 +13,11 @@ interface FileParams {
   readonly '*': string;
 }
 
-export function registerFileRoutes(app: FastifyInstance, store: ProjectStore): void {
+export function registerFileRoutes(
+  app: FastifyInstance,
+  store: ProjectStore,
+  livePreview: LiveSessionPool | null,
+): void {
   // File contents travel as raw bytes in both directions.
   app.addContentTypeParser(
     'application/octet-stream',
@@ -46,11 +51,14 @@ export function registerFileRoutes(app: FastifyInstance, store: ProjectStore): v
           message: 'File content must be sent as application/octet-stream',
         });
       }
-      await store.writeFile(
-        ProjectId(request.params.id),
-        parseProjectPath(request.params['*']),
-        new Uint8Array(request.body),
-      );
+      const id = ProjectId(request.params.id);
+      const file = {
+        path: parseProjectPath(request.params['*']),
+        content: new Uint8Array(request.body),
+      };
+      await store.writeFile(id, file.path, file.content);
+      // Open live previews see saved files and uploads too.
+      for (const handle of livePreview?.forProject(id) ?? []) handle.session.updateFile(file);
       return reply.status(204).send();
     },
   );

@@ -14,6 +14,9 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # Enables live-preview tests (ADR 0012); built below.
+      MYLEAF_TEXPRESSO: ${{ github.workspace }}/vendor/texpresso/build/bin/texpresso
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -21,11 +24,19 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Install TeX Live for compile tests
-        # latex-extra provides mylatexformat, used to precompile preambles (ADR 0011).
+      - name: Install TeX Live and TeXpresso build dependencies
+        # latex-extra provides mylatexformat (ADR 0011); xetex and the libraries
+        # are needed to build and run TeXpresso (vendor/texpresso/README.md).
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-extra latexmk
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-extra texlive-xetex latexmk \
+            build-essential pkg-config libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev \
+            libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev \
+            libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+            libpng-dev zlib1g-dev
+      - name: Build TeXpresso
+        run: vendor/texpresso/build.sh
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint

@@ -67,11 +67,19 @@ export function describeProjectStoreContract(
           files: [],
           settings: { autoCompile: true },
         });
-        expect(project.settings).toEqual({ autoCompile: true, precompilePreamble: true });
+        expect(project.settings).toEqual({
+          autoCompile: true,
+          precompilePreamble: true,
+          livePreview: false,
+        });
         const updated = await store.updateProject(project.id, {
           settings: { precompilePreamble: false },
         });
-        expect(updated.settings).toEqual({ autoCompile: true, precompilePreamble: false });
+        expect(updated.settings).toEqual({
+          autoCompile: true,
+          precompilePreamble: false,
+          livePreview: false,
+        });
         expect((await store.getProject(project.id))?.settings).toEqual(updated.settings);
       });
 

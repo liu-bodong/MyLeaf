@@ -7,11 +7,14 @@ export interface ProjectSettings {
   readonly autoCompile: boolean;
   /** Reuse a precompiled preamble between compiles when the engine supports it. */
   readonly precompilePreamble: boolean;
+  /** Show live-rendered pages while editing, where the server offers it (ADR 0012). */
+  readonly livePreview: boolean;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoCompile: false,
   precompilePreamble: true,
+  livePreview: false,
 };
 
 export interface ProjectSummary {
