@@ -23,7 +23,15 @@ import { CompileSettings } from './CompileSettings.js';
 import { Diagnostics } from './Diagnostics.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { FileTree } from './FileTree.js';
-import { SPLIT_MAX, SPLIT_MIN, loadLayout, saveLayout } from './layout.js';
+import { Sidebar } from './Sidebar.js';
+import {
+  SIDEBAR_MAX,
+  SIDEBAR_MIN,
+  SPLIT_MAX,
+  SPLIT_MIN,
+  loadLayout,
+  saveLayout,
+} from './layout.js';
 import type { Layout, LayoutView } from './layout.js';
 import { PdfToolbar } from './PdfToolbar.js';
 import { shortcut } from './shortcuts.js';
@@ -515,7 +523,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         </div>
       )}
       <div className="workspace-body">
-        <aside className="sidebar">
+        <Sidebar
+          width={layout.sidebar}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          onWidthChange={(sidebar) => updateLayout({ sidebar })}
+        >
           <div className="sidebar-actions">
             <button onClick={() => void newFile('').catch(report)}>New file</button>
             <button onClick={() => chooseUpload('', fileInput.current)}>Upload files</button>
@@ -558,7 +571,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
             onUpload={(folder) => chooseUpload(folder, fileInput.current)}
             onDropFiles={(items, folder) => void uploadItems(items, folder).catch(report)}
           />
-        </aside>
+        </Sidebar>
         <SplitPane
           view={layout.view === 'split' ? 'both' : layout.view === 'editor' ? 'start' : 'end'}
           ratio={layout.split}
