@@ -219,7 +219,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     await api.moveFile(projectId, from, to);
     if (project?.rootFile === from)
       setProject(await api.updateProject(projectId, { rootFile: to }));
-    if (document?.path === from) setDocument({ ...document, path: to });
+    // Reload so the editor shows the saved content under the new path.
+    if (document?.path === from) await openFile(to);
     await refreshFiles();
   };
 

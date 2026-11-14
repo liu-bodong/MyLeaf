@@ -66,8 +66,18 @@ test('edit a multi-file project, compile, and navigate between source and PDF', 
   await expect(page.locator('.diagnostics .status')).toHaveText('success');
   await expect(page.locator('.diagnostic.error')).toHaveCount(0);
 
+  // Renaming the open file keeps its latest content in the editor.
+  await replaceEditorText(page, 'Renamed chapter text.\n');
+  page.removeAllListeners('dialog');
+  page.on('dialog', (dialog) => void dialog.accept('chapters/first.tex'));
+  const row = page.locator('.file-row', { hasText: 'intro.tex' });
+  await row.hover();
+  await row.getByRole('button', { name: 'Rename' }).click();
+  await expect(page.locator('.file-row.active')).toContainText('first.tex');
+  await expect(page.locator('.cm-content')).toHaveText('Renamed chapter text.');
+
   // Edits persist across reloads.
   await page.reload();
-  await page.locator('.file-name', { hasText: 'intro.tex' }).click();
-  await expect(page.locator('.cm-content')).toHaveText('Text from the chapter.');
+  await page.locator('.file-name', { hasText: 'first.tex' }).click();
+  await expect(page.locator('.cm-content')).toHaveText('Renamed chapter text.');
 });
