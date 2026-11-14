@@ -14,6 +14,10 @@ const PATHS = {
   share: 'M8 2.5v7M5 5.5l3-3 3 3M3.5 9v4h9V9',
   recompile: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3',
   home: 'M2.5 7.5L8 3l5.5 4.5M4 6.5V13h8V6.5',
+  'file-plus': 'M9 2H4v12h8V5zM9 2v3h3M8 7.5v4M6 9.5h4',
+  upload: 'M8 10.5V3M5 6l3-3 3 3M3 10v3h10v-3',
+  'folder-upload': 'M2 4h4l1.5 1.5H14V13H2zM8 11.5V7.5M6.2 9.3L8 7.5l1.8 1.8',
+  more: 'M3.25 8a.75.75 0 1 0 1.5 0a.75.75 0 1 0-1.5 0M7.25 8a.75.75 0 1 0 1.5 0a.75.75 0 1 0-1.5 0M11.25 8a.75.75 0 1 0 1.5 0a.75.75 0 1 0-1.5 0',
 } as const;
 
 export type IconName = keyof typeof PATHS;

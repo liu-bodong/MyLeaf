@@ -535,9 +535,33 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
           onWidthChange={(sidebar) => updateLayout({ sidebar })}
         >
           <div className="sidebar-actions">
-            <button onClick={() => void newFile('').catch(report)}>New file</button>
-            <button onClick={() => chooseUpload('', fileInput.current)}>Upload files</button>
-            <button onClick={() => chooseUpload('', folderInput.current)}>Upload folder</button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="New file"
+              title="New file"
+              onClick={() => void newFile('').catch(report)}
+            >
+              <Icon name="file-plus" />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Upload files"
+              title="Upload files"
+              onClick={() => chooseUpload('', fileInput.current)}
+            >
+              <Icon name="upload" />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Upload folder"
+              title="Upload folder"
+              onClick={() => chooseUpload('', folderInput.current)}
+            >
+              <Icon name="folder-upload" />
+            </button>
             <input
               ref={fileInput}
               type="file"

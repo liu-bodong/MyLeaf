@@ -31,10 +31,11 @@ test('folders, uploads, image preview and images in the PDF', async ({ page }) =
   const folder = page.locator('.file-row.directory', { hasText: 'figures' });
   await expect(folder).toBeVisible();
 
-  // Upload into that folder through its own Upload action.
+  // Upload into that folder through its own menu; the menu button shows on hover.
   await folder.hover();
   const chooser = page.waitForEvent('filechooser');
-  await folder.getByRole('button', { name: 'Upload' }).click();
+  await folder.getByRole('button', { name: 'Actions for figures' }).click();
+  await page.getByRole('menuitem', { name: 'Upload files…' }).click();
   await (await chooser).setFiles({ name: 'dot.png', mimeType: 'image/png', buffer: PNG });
   const uploaded = page.locator('.file-name', { hasText: 'dot.png' });
   await expect(uploaded).toBeVisible();
@@ -68,9 +69,9 @@ test('folders, uploads, image preview and images in the PDF', async ({ page }) =
   await expect(page.locator('.diagnostic.error')).toHaveCount(0);
 
   // Collapsing a folder hides its files.
-  await folder.getByRole('button', { name: /figures/ }).click();
+  await folder.getByRole('button', { name: 'figures', exact: true }).click();
   await expect(uploaded).toBeHidden();
-  await folder.getByRole('button', { name: /figures/ }).click();
+  await folder.getByRole('button', { name: 'figures', exact: true }).click();
   await expect(uploaded).toBeVisible();
 
   // Uploading an existing name asks before replacing it.

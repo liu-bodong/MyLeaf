@@ -5,6 +5,9 @@ import type { DragEvent, ReactNode } from 'react';
 import { previewType } from '../files/file-types.js';
 import { itemsFromDrop } from '../files/upload-items.js';
 import type { UploadItem } from '../files/upload-items.js';
+import { Icon } from '../ui/icons.js';
+import { Dropdown } from '../ui/Menu.js';
+import type { MenuItem } from '../ui/Menu.js';
 
 interface FileTreeProps {
   readonly files: readonly FileEntryDto[];
@@ -54,6 +57,21 @@ const fileKind = (path: string) =>
       : (previewType(path)?.kind ?? 'file');
 
 const INDENT = 14;
+
+/** "⋯" button opening a row's actions. */
+function RowMenu({ name, items }: { readonly name: string; readonly items: readonly MenuItem[] }) {
+  return (
+    <Dropdown
+      label={`Actions for ${name}`}
+      trigger={<Icon name="more" />}
+      items={items}
+      align="end"
+      className="row-menu"
+      buttonClassName="icon-button"
+      title="More actions"
+    />
+  );
+}
 
 /**
  * Project files as a collapsible folder tree. Files and folders dropped from
@@ -107,17 +125,18 @@ export function FileTree(props: FileTreeProps) {
               aria-expanded={!collapsed.has(child.path)}
               onClick={() => toggle(child.path)}
             >
-              <span className="caret">{collapsed.has(child.path) ? '▸' : '▾'}</span>
+              <span className="caret" aria-hidden="true">
+                {collapsed.has(child.path) ? '▸' : '▾'}
+              </span>
               {child.name}
             </button>
-            <span className="file-actions">
-              <button onClick={() => onNewFile(child.path)} title={`New file in ${child.path}`}>
-                New
-              </button>
-              <button onClick={() => onUpload(child.path)} title={`Upload to ${child.path}`}>
-                Upload
-              </button>
-            </span>
+            <RowMenu
+              name={child.name}
+              items={[
+                { label: 'New file…', onSelect: () => onNewFile(child.path) },
+                { label: 'Upload files…', onSelect: () => onUpload(child.path) },
+              ]}
+            />
           </div>
           {!collapsed.has(child.path) && <ul>{renderFolder(child, depth + 1)}</ul>}
         </li>
@@ -135,19 +154,17 @@ export function FileTree(props: FileTreeProps) {
               {name}
               {path === rootFile && <span className="badge">main</span>}
             </button>
-            <span className="file-actions">
-              {path !== rootFile && name.endsWith('.tex') && (
-                <button onClick={() => onSetRoot(path)} title="Use as main document">
-                  Main
-                </button>
-              )}
-              <button onClick={() => onRename(path)} title="Rename or move">
-                Rename
-              </button>
-              <button onClick={() => onDelete(path)} title="Delete">
-                Delete
-              </button>
-            </span>
+            <RowMenu
+              name={name}
+              items={[
+                ...(path !== rootFile && name.endsWith('.tex')
+                  ? [{ label: 'Use as main document', onSelect: () => onSetRoot(path) }]
+                  : []),
+                { label: 'Rename or move…', onSelect: () => onRename(path) },
+                { kind: 'separator' },
+                { label: 'Delete…', onSelect: () => onDelete(path) },
+              ]}
+            />
           </div>
         </li>
       );

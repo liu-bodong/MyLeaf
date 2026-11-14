@@ -198,8 +198,9 @@ a {
 
 .sidebar-actions {
   display: flex;
-  gap: 6px;
-  padding: 8px;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
 }
 
 .upload input {
@@ -239,19 +240,20 @@ a {
   white-space: nowrap;
 }
 
-.file-actions {
-  display: none;
-  gap: 2px;
+/* The "⋯" menu shows on the open file, on hover, and while focused or open. */
+.row-menu {
+  visibility: hidden;
 }
 
-.file-row:hover .file-actions,
-.file-row:focus-within .file-actions {
-  display: flex;
+.file-row.active .row-menu,
+.file-row:hover .row-menu,
+.file-row:focus-within .row-menu {
+  visibility: visible;
 }
 
-.file-actions button {
-  font-size: 11px;
-  padding: 0 4px;
+.row-menu .icon-button {
+  min-width: 22px;
+  height: 22px;
 }
 
 .badge {
@@ -501,10 +503,6 @@ a {
 }
 
 /* File tree */
-
-.sidebar-actions {
-  flex-wrap: wrap;
-}
 
 .file-tree-area {
   min-height: calc(100% - 48px);

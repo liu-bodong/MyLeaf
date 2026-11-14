@@ -72,8 +72,8 @@ test('edit a multi-file project, compile, and navigate between source and PDF', 
   page.removeAllListeners('dialog');
   page.on('dialog', (dialog) => void dialog.accept('chapters/first.tex'));
   const row = page.locator('.file-row', { hasText: 'intro.tex' });
-  await row.hover();
-  await row.getByRole('button', { name: 'Rename' }).click();
+  await row.getByRole('button', { name: 'Actions for intro.tex' }).click();
+  await page.getByRole('menuitem', { name: 'Rename or move…' }).click();
   await expect(page.locator('.file-row.active')).toContainText('first.tex');
   await expect(page.locator('.cm-content')).toHaveText('Renamed chapter text.');
 
