@@ -1,0 +1,18 @@
+# Architecture Decision Records
+
+Each ADR records one decision: its context, the decision, and its consequences.
+ADRs are immutable once accepted; a change of mind is a new ADR that supersedes the old one.
+
+Status values: `Proposed`, `Accepted`, `Superseded by NNNN`.
+
+| ADR | Title | Status |
+|---|---|---|
+| [0001](0001-build-from-scratch.md) | Build from scratch, reuse libraries | Accepted |
+| [0002](0002-typescript-full-stack.md) | TypeScript full stack | Accepted |
+| [0003](0003-license-agpl.md) | License: AGPL-3.0 | Accepted |
+| [0004](0004-collaboration-and-sync.md) | Collaboration and sync model | Accepted |
+| [0005](0005-comments-and-suggestions.md) | Comments and suggestions model | Accepted |
+| [0006](0006-compilation.md) | Compilation architecture | Accepted |
+| [0007](0007-ai-agents-as-actors.md) | AI agents as collaborators | Accepted |
+
+Template: copy [0000-template.md](0000-template.md).
