@@ -305,6 +305,11 @@ export class TexLiveCompileBackend implements CompileBackend {
       } else {
         await formats.markFailed(key);
       }
+    } catch (error) {
+      // A rejected run (e.g. `pdflatex` missing) still counts as a failed
+      // build, so it is not retried on every compile.
+      await formats.markFailed(key);
+      console.error('Precompiling the preamble failed:', error);
     } finally {
       await rm(buildDir, { recursive: true, force: true });
     }

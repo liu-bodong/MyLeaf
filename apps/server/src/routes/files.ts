@@ -57,8 +57,12 @@ export function registerFileRoutes(
         content: new Uint8Array(request.body),
       };
       await store.writeFile(id, file.path, file.content);
-      // Open live previews see saved files and uploads too.
-      for (const handle of livePreview?.forProject(id) ?? []) handle.session.updateFile(file);
+      // Open live previews see saved files and uploads too. Touch each session
+      // so an active preview is not closed for idleness mid-upload.
+      for (const handle of livePreview?.forProject(id) ?? []) {
+        handle.touch();
+        handle.session.updateFile(file);
+      }
       return reply.status(204).send();
     },
   );

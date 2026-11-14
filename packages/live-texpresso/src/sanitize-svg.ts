@@ -5,5 +5,6 @@
  * needed for display.
  */
 export function sanitizeSvg(svg: string): string {
-  return svg.replace(/ data-text="[^"]*"/g, '');
+  // Strip the attribute whether it is single- or double-quoted.
+  return svg.replace(/ data-text=(["'])[^"']*\1/g, '');
 }

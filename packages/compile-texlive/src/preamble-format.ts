@@ -13,12 +13,19 @@ const COMMENT = /(?<!\\)%.*$/;
  */
 export function extractPreamble(source: string): string | null {
   let offset = 0;
-  for (const line of source.split('\n')) {
+  for (const line of source.split(/\r?\n/)) {
+    // A `\begin{document}` inside \verb or a macro argument is treated as the
+    // body start; full TeX tokenisation is out of scope for this check.
     const index = line.replace(COMMENT, '').indexOf(BEGIN_DOCUMENT);
     if (index >= 0) {
       return source.slice(0, offset + index);
     }
-    offset += line.length + 1;
+    offset += line.length;
+    if (source.startsWith('\r\n', offset)) {
+      offset += 2;
+    } else if (source.startsWith('\n', offset)) {
+      offset += 1;
+    }
   }
   return null;
 }

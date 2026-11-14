@@ -26,10 +26,15 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (status >= 500) {
       request.log.error(error);
     }
-    const body: ErrorResponse =
-      status >= 500
-        ? { error: 'InternalServerError', message: 'Internal server error' }
-        : { error: error.name, message: error.message };
+    let body: ErrorResponse;
+    if (status >= 500) {
+      body = { error: 'InternalServerError', message: 'Internal server error' };
+    } else if (error.validation) {
+      // AJV reports are verbose and not a stable client contract.
+      body = { error: 'ValidationError', message: 'Request failed validation' };
+    } else {
+      body = { error: error.name, message: error.message };
+    }
     return reply.status(status).send(body);
   });
 }

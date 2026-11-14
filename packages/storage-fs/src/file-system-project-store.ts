@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import { ProjectId } from '@myleaf/doc-model';
 import {
@@ -63,9 +73,13 @@ export class FileSystemProjectStore implements ProjectStore {
     }
     try {
       const json = await readFile(join(this.#root, id, METADATA_FILE), 'utf8');
-      const stored = JSON.parse(json) as ProjectSummary;
+      const stored: unknown = JSON.parse(json);
+      if (!hasProjectSummaryShape(stored)) {
+        throw new Error(`Corrupt project metadata: ${id}`);
+      }
+      const summary = stored as ProjectSummary;
       // Metadata written before a setting existed takes its default.
-      return { ...stored, settings: { ...DEFAULT_PROJECT_SETTINGS, ...stored.settings } };
+      return { ...summary, settings: { ...DEFAULT_PROJECT_SETTINGS, ...summary.settings } };
     } catch (error) {
       if (isErrnoException(error, 'ENOENT')) {
         return null;
@@ -134,7 +148,7 @@ export class FileSystemProjectStore implements ProjectStore {
   async readFile(id: ProjectId, path: ProjectPath): Promise<Uint8Array> {
     await this.#require(id);
     try {
-      return new Uint8Array(await readFile(this.#absolute(id, path)));
+      return new Uint8Array(await readFile(await this.#containedReal(id, path)));
     } catch (error) {
       if (isErrnoException(error, 'ENOENT', 'ENOTDIR', 'EISDIR')) {
         throw new FileNotFoundError(path);
@@ -253,6 +267,47 @@ export class FileSystemProjectStore implements ProjectStore {
     }
     return absolute;
   }
+
+  /**
+   * Symlink-resolved path of a project file, verified to stay inside the
+   * project. `#absolute` checks containment lexically only, so a symlink
+   * inside `files/` could point outside; reads resolve the real path and
+   * re-check it against the real root.
+   */
+  async #containedReal(id: ProjectId, path: ProjectPath): Promise<string> {
+    const realRoot = await realpath(this.#filesRoot(id));
+    const real = await realpath(this.#absolute(id, path));
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+      throw new Error(`Path escapes project root: ${path}`);
+    }
+    return real;
+  }
+}
+
+/** Checks that a parsed `project.json` has the fields we rely on. */
+function hasProjectSummaryShape(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const { id, name, rootFile, createdAt, settings } = value as Record<string, unknown>;
+  if (
+    typeof id !== 'string' ||
+    typeof name !== 'string' ||
+    typeof rootFile !== 'string' ||
+    typeof createdAt !== 'number'
+  ) {
+    return false;
+  }
+  if (settings === undefined) {
+    return true;
+  }
+  if (typeof settings !== 'object' || settings === null) {
+    return false;
+  }
+  const record = settings as Record<string, unknown>;
+  return ['autoCompile', 'precompilePreamble', 'livePreview'].every(
+    (key) => record[key] === undefined || typeof record[key] === 'boolean',
+  );
 }
 
 function isErrnoException(error: unknown, ...codes: string[]): boolean {

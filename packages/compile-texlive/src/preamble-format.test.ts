@@ -22,6 +22,12 @@ describe('extractPreamble', () => {
     expect(extractPreamble('50\\% \\begin{document}')).toBe('50\\% ');
   });
 
+  it('handles CRLF line endings', () => {
+    expect(extractPreamble('\\documentclass{article}\r\n\\begin{document}\r\nx')).toBe(
+      '\\documentclass{article}\r\n',
+    );
+  });
+
   it('returns null without \\begin{document}', () => {
     expect(extractPreamble('\\documentclass{article}\n% \\begin{document}')).toBeNull();
   });
