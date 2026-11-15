@@ -5,7 +5,7 @@ describe('parseLayout', () => {
   it('reads a saved layout', () => {
     expect(
       parseLayout(
-        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","cleanVisual":true}',
+        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","outline":true,"outlineWidth":260,"cleanVisual":true}',
       ),
     ).toEqual({
       view: 'pdf',
@@ -15,6 +15,8 @@ describe('parseLayout', () => {
       logs: true,
       fileTree: false,
       editorMode: 'visual',
+      outline: true,
+      outlineWidth: 260,
       cleanVisual: true,
     });
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');
@@ -35,5 +37,6 @@ describe('parseLayout', () => {
     expect(parseLayout('{"split":0.99}').split).toBe(SPLIT_MAX);
     expect(parseLayout('{"sidebar":9999}').sidebar).toBe(SIDEBAR_MAX);
     expect(parseLayout('{"sidebar":1}').sidebar).toBe(SIDEBAR_MIN);
+    expect(parseLayout('{"outlineWidth":9999}').outlineWidth).toBe(SIDEBAR_MAX);
   });
 });

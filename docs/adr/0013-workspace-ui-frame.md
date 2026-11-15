@@ -30,6 +30,13 @@ format commands) do not exist yet.
    - **Divider** between editor and PDF: drag handle and two arrows, forward
      search (→, "Show in PDF") and inverse search from the PDF's reading line
      (←, "Show in source").
+   - **Outline** (`workspace/OutlinePanel.tsx`): a collapsible, resizable
+     sidebar on the right listing the headings (`\part` to
+     `\subparagraph`) of the root file and the files it pulls in with
+     `\input`/`\include`, nested by level. It follows unsaved edits of the
+     open file. Selecting a heading forward-searches it in the PDF; the
+     editor does not move. Hidden by default; a rail button or View → Outline
+     shows it.
 2. **Placeholders.** Controls for features that do not exist yet are shown
    disabled with the tooltip "Not available yet", so the layout does not
    shift when they arrive. A feature replaces its placeholder.
