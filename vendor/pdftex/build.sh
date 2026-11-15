@@ -31,18 +31,24 @@ for patch in "$here"/*.patch; do
 done
 
 # Only pdfTeX and the libraries it needs (kpathsea, xpdf, libpng, zlib).
+# A fresh object directory, so a changed patch or CFLAGS cannot meet a stale
+# configure cache.
+rm -rf "$obj"
 mkdir -p "$obj"
 (
   cd "$obj"
-  "$src/configure" --cache-file=config.cache --prefix=/nonexistent \
-    --disable-all-pkgs --enable-web2c --enable-pdftex \
-    --disable-tex --disable-etex --disable-ptex --disable-eptex \
-    --disable-uptex --disable-euptex --disable-aleph --disable-hitex \
-    --disable-xetex --disable-luatex --disable-luajittex --disable-luahbtex \
-    --disable-luajithbtex --disable-mp --disable-pmp --disable-upmp \
-    --disable-mf --disable-mf-nowin --disable-synctex \
-    --without-x --disable-shared --disable-native-texlive-build \
-    --enable-silent-rules >configure.log
+  # TeX Live 2023's C sources use `bool` as a name, which C23 (the default of
+  # newer compilers, e.g. GCC 15) makes a keyword.
+  CFLAGS="${CFLAGS:--g -O2} -std=gnu17" \
+    "$src/configure" --cache-file=config.cache --prefix=/nonexistent \
+      --disable-all-pkgs --enable-web2c --enable-pdftex \
+      --disable-tex --disable-etex --disable-ptex --disable-eptex \
+      --disable-uptex --disable-euptex --disable-aleph --disable-hitex \
+      --disable-xetex --disable-luatex --disable-luajittex --disable-luahbtex \
+      --disable-luajithbtex --disable-mp --disable-pmp --disable-upmp \
+      --disable-mf --disable-mf-nowin --disable-synctex \
+      --without-x --disable-shared --disable-native-texlive-build \
+      --enable-silent-rules >configure.log
 )
 # getconf works on Linux and macOS (nproc is Linux-only).
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
