@@ -34,11 +34,13 @@ export interface PdftexLivePreviewOptions {
 }
 
 /**
- * LivePreviewBackend on the patched pdfTeX (vendor/pdftex, level 2 in
+ * LivePreviewBackend on the patched pdfTeX (vendor/pdftex, levels 2 and 3 in
  * docs/spikes/pdflatex-live-preview.md). Per session, an engine process runs
  * the root file's preamble and pauses before `\begin{document}`; each edit
  * forks a child that typesets the document from there into a PDF, whose
- * pages are rendered to SVG with MuPDF. Output is pdfLaTeX's own.
+ * pages are rendered to SVG with MuPDF. Output is pdfLaTeX's own. Pages of
+ * the visible range are shown as soon as the child ships them out, and a new
+ * edit cancels the rest of a run once they are on screen.
  *
  *   <workRoot>/format/pdflatex.fmt          made with the patched binary
  *   <workRoot>/<project-id>/<session>/src/  source files, kept up to date
@@ -102,12 +104,22 @@ interface Engine {
   readonly ready: Promise<boolean>;
   isReady: boolean;
   readonly waiting: Map<string, (status: number | null) => void>;
+  /** Per run: called when a page of the visible range is ready in a finisher's directory. */
+  readonly pages: Map<string, (page: number, dir: string) => void>;
   /** A file it read before the pause changed: start a new engine. */
   stale: boolean;
 }
 
 /** Most runs in a row without an edit to bring references up to date. */
 const MAX_SETTLE_RUNS = 3;
+
+/** A run of an engine's child that has not finished yet. */
+interface InFlightRun {
+  readonly engine: Engine;
+  readonly id: string;
+  /** The last page of the visible range was shown from this run. */
+  shown: boolean;
+}
 
 class PdftexSession implements LivePreviewSession {
   readonly #options: Required<PdftexLivePreviewOptions>;
@@ -136,8 +148,11 @@ class PdftexSession implements LivePreviewSession {
   /** Page renders, in order. */
   #renders: Promise<void> = Promise.resolve();
   #range: readonly [number, number] = [1, 1];
-  #pdf: { readonly path: string; readonly pages: number } | null = null;
+  #pdf: { readonly path: string; readonly pages: number; readonly run: number } | null = null;
   readonly #emitted = new Map<number, string>();
+  /** The run whose content each emitted page shows: an older run's page never replaces it. */
+  readonly #pageRuns = new Map<number, number>();
+  #inFlight: InFlightRun | null = null;
 
   constructor(
     options: Required<PdftexLivePreviewOptions>,
@@ -195,6 +210,8 @@ class PdftexSession implements LivePreviewSession {
     if (!this.#format || this.#closing) return;
     if (this.#running) {
       this.#pending = true;
+      // The visible pages are on screen: the rest of the run is not worth waiting for.
+      if (this.#inFlight?.shown) this.#cancel(this.#inFlight);
       return;
     }
     this.#running = true;
@@ -242,10 +259,19 @@ class PdftexSession implements LivePreviewSession {
     // The engine may have been stopped during the writes above (close()
     // ends its control connection): writing to it then would throw.
     if (engine && !engine.control.writableEnded) {
+      // Pages of the visible range are shown as soon as the child ships them
+      // out (level 3): a finisher closes the PDF there.
+      const [first, last] = this.#range;
+      const inFlight: InFlightRun = { engine, id, shown: false };
+      this.#inFlight = inFlight;
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
-        engine.control.write(`run\t${id}\t${main}\t${out}\n`);
+        engine.pages.set(id, (page, pageDir) => {
+          void this.#renderFinished(inFlight, page, join(pageDir, `${this.#job}.pdf`));
+        });
+        engine.control.write(`run\t${id}\t${main}\t${out}\t${first}\t${last}\n`);
       });
+      this.#inFlight = null;
     } else {
       // No \begin{document} in the root file, or the engine failed: a full run.
       status = await this.#fullRun(out);
@@ -280,7 +306,7 @@ class PdftexSession implements LivePreviewSession {
     // Without a PDF (fatal error, or no pages), the last one stays on screen.
     const previous = pages ? this.#pdf : { path: join(out, `${this.#job}.pdf`), pages: 0 };
     if (pages) {
-      this.#pdf = { path: join(out, `${this.#job}.pdf`), pages: Number(pages[1]) };
+      this.#pdf = { path: join(out, `${this.#job}.pdf`), pages: Number(pages[1]), run: Number(id) };
       this.#onEvent({ type: 'page-count', count: this.#pdf.pages, final: true });
       await this.#render();
     }
@@ -316,12 +342,53 @@ class PdftexSession implements LivePreviewSession {
     for (let page = first; page <= last; page++) {
       const raw = await readFile(join(dirname(pdf.path), `page-${page}.svg`), 'utf8');
       if (this.#closing || this.#pdf !== pdf) return;
-      const svg = sanitizeSvg(raw);
-      const hash = createHash('sha1').update(svg).digest('base64');
-      if (this.#emitted.get(page) === hash) continue;
-      this.#emitted.set(page, hash);
-      this.#onEvent({ type: 'page', page, svg });
+      this.#emitPage(page, pdf.run, raw);
     }
+  }
+
+  /** Emits a page rendered from run `run`, unless it is unchanged or a newer run's is shown. */
+  #emitPage(page: number, run: number, raw: string): void {
+    if ((this.#pageRuns.get(page) ?? 0) > run) return;
+    this.#pageRuns.set(page, run);
+    const svg = sanitizeSvg(raw);
+    const hash = createHash('sha1').update(svg).digest('base64');
+    if (this.#emitted.get(page) === hash) return;
+    this.#emitted.set(page, hash);
+    this.#onEvent({ type: 'page', page, svg });
+  }
+
+  /** Shows page `page` of a running child from its finisher's PDF (pages 1 to `page`). */
+  #renderFinished(inFlight: InFlightRun, page: number, pdf: string): Promise<void> {
+    this.#renders = this.#renders
+      .then(async () => {
+        const id = Number(inFlight.id);
+        if (this.#closing || (this.#pageRuns.get(page) ?? 0) >= id) return;
+        const pattern = join(dirname(pdf), 'page-%d.svg');
+        await run(this.#options.mutool, [
+          'draw',
+          '-q',
+          '-F',
+          'svg',
+          '-o',
+          pattern,
+          pdf,
+          String(page),
+        ]);
+        const raw = await readFile(join(dirname(pdf), `page-${page}.svg`), 'utf8');
+        if (this.#closing) return;
+        this.#emitPage(page, id, raw);
+        this.#onEvent({ type: 'page-count', count: page, final: false });
+        if (page >= this.#range[1] && this.#inFlight === inFlight) {
+          inFlight.shown = true;
+          if (this.#pending) this.#cancel(inFlight);
+        }
+      })
+      .catch(() => {});
+    return this.#renders;
+  }
+
+  #cancel(run: InFlightRun): void {
+    if (!run.engine.control.writableEnded) run.engine.control.write(`cancel\t${run.id}\n`);
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -367,6 +434,7 @@ class PdftexSession implements LivePreviewSession {
     control.on('error', () => {}); // The exit is handled below.
     const inputs = new Set<string>();
     const waiting = new Map<string, (status: number | null) => void>();
+    const pages = new Map<string, (page: number, dir: string) => void>();
     let markReady: (ready: boolean) => void = () => {};
     const ready = new Promise<boolean>((resolveReady) => (markReady = resolveReady));
     const engine: Engine = {
@@ -379,17 +447,22 @@ class PdftexSession implements LivePreviewSession {
       ready,
       isReady: false,
       waiting,
+      pages,
       stale: false,
     };
     createInterface({ input: control }).on('line', (line) => {
-      const [kind, first, second] = line.split('\t');
+      const [kind, first, second, third] = line.split('\t');
       if (kind === 'input' && first !== undefined) {
         const path = this.#projectPath(first);
         if (path !== null) inputs.add(path);
       } else if (kind === 'ready') {
         engine.isReady = true;
         markReady(true);
+      } else if (kind === 'page' && first !== undefined && third !== undefined) {
+        pages.get(first)?.(Number(second), third);
       } else if (kind === 'done' && first !== undefined) {
+        // Later `page` lines of this run are covered by its whole PDF.
+        pages.delete(first);
         waiting.get(first)?.(Number(second));
         waiting.delete(first);
       }
@@ -405,6 +478,7 @@ class PdftexSession implements LivePreviewSession {
       markReady(false);
       for (const resolveRun of waiting.values()) resolveRun(null);
       waiting.clear();
+      pages.clear();
       if (this.#engine === engine) this.#engine = null;
       if (this.#next === engine) this.#next = null;
     });

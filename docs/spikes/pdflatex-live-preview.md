@@ -1,8 +1,10 @@
 # Spike: live preview with pdfLaTeX
 
-Status: level 2 done. pdfTeX builds from source with pass-through stream
-hooks (finding 5); the level 2 engine (finding 6) runs live preview with
-`MYLEAF_LIVE_ENGINE=pdftex`. Level 3 is not started; the owner decides.
+Status: level 2 done; level 3 in progress (owner approved on 2026-11-15).
+pdfTeX builds from source with pass-through stream hooks (finding 5); the
+level 2 engine (finding 6) runs live preview with
+`MYLEAF_LIVE_ENGINE=pdftex`. Level 3 step 1, page-by-page output, is done
+(finding 8); step 2 is snapshots inside the document.
 Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
@@ -152,6 +154,39 @@ about 16 differences are math-extraction noise, not layout.
    now happens once in the engine; which work that is was not
    investigated.
 
+8. **Page-by-page output (level 3, step 1).** `warm-fork.patch` also hooks
+   pdfTeX's `ship_out` (`pdftex.web`: one call after `pdf_ship_out`; the C
+   side is in `pdftexdir/utils.c` and `lib/openclose.c`). A `run` can name
+   a page range. When the child ships out a page in it, it forks a
+   finisher: a copy that moves its open output files to
+   `<output-dir>/page-<n>/`, runs pdfTeX's end of job
+   (`close_files_and_terminate`: font subsets used so far, cross-reference
+   table), says `page` and exits. The child continues.
+   - Page k of a finisher's PDF renders identically (`mutool draw` to PNG)
+     to page k of the child's whole PDF (benchmark paper, pages 1 to 3).
+     The finisher's PDF has pages 1 to k only.
+   - Finishers run beside the child, so a `page` line can come after the
+     run's `done`, and out of order.
+   - Children keep the control descriptor for `page` (in level 2 they
+     closed it); only the engine sends `input` lines, so files that
+     children read do not count as preamble dependencies.
+   - Each finisher costs a fork and a copy of the PDF so far. With a
+     finisher for each of the 7 pages of the ICML sample
+     (`samples/icml2027`), the child took 155–208 ms instead of 136–147 ms
+     (6 runs each, 4 cores). The adapter asks only for the visible pages.
+
+   Measured with `pnpm bench:pdftex-warm` (cloud container, median of 11,
+   text edit, pause after the `\begin{document}` line):
+
+   | Page shown (benchmark paper) | To its `page` message | To `done` |
+   | ---------------------------- | --------------------- | --------- |
+   | 1                            | 34 ms                 | 88 ms     |
+   | 3                            | 55 ms                 | 90 ms     |
+   | 8 (last)                     | 97 ms                 | 96 ms     |
+
+   The last page gains nothing: the child still typesets the body from its
+   start. Snapshots inside the document (step 2) are for that.
+
 ## Proposed design (B)
 
 - Engine: TeX Live pdfTeX built with TeXpresso's I/O and snapshot hooks
@@ -173,24 +208,26 @@ about 16 differences are math-extraction noise, not layout.
   reading input) and whether all state survives a fork (open `FILE*`s,
   kpathsea caches, pdfTeX's PDF object state).
 - Ending a forked child mid-document cleanly (pending floats, `\end` rules).
+  Finishers (finding 8) end at a shipout with pdfTeX's end of job, not
+  LaTeX's `\end{document}`; pages compared so far were identical.
 - Images, fonts and file primitives read outside `openclose.c` (finding 5)
   must also go through the driver for rollback to be correct.
 
 ## Levels of pdfLaTeX speed
 
 Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011). The
-owner approved level 2 on 2026-11-15; level 3 is not decided.
+owner approved level 2 on 2026-11-15, and level 3 later that day.
 
 | Level                                                                                   | Work                                            | Server time per edit (8 pages)                                                                 | Keystroke to screen                         |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | 1. Single pass without latexmk                                                          | Done                                            | ~280–330 ms (measured)                                                                         | ~300–450 ms (estimate)                      |
 | 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (findings 6 and 7, `packages/live-pdftex`) | 80 ms child, ~97 ms to the SVG page, against 222 ms for level 1 on the same machine (measured) | 123–269 ms, medians 177–193 ms (measured)   |
-| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                                 | Comparable to TeXpresso (estimate)                                                             | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | In progress: step 1 done (finding 8)            | Comparable to TeXpresso (estimate)                                                             | TeXpresso: ~130–145 ms (measured, ADR 0012) |
 
 Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
 output), so it can be a first step towards it.
 
-## Live preview on the level 2 engine
+## Live preview on the level 2 and 3 engine
 
 `packages/live-pdftex` (`PdftexLivePreview`) implements the
 `LivePreviewBackend` port; the server uses it with
@@ -205,6 +242,13 @@ messages and UI are unchanged.
   full pdfTeX run.
 - Pages: the child's PDF pages in the requested range are rendered to SVG
   with `mutool draw` (about 10 ms per page) and emitted when they changed.
+- Page by page (finding 8): each `run` names the visible range. On a
+  `page` line the adapter renders that page from the finisher's PDF and
+  emits it, with a non-final `page-count`; a page from an older run never
+  replaces a newer run's. When an edit arrives during a run whose last
+  visible page is already shown, the adapter cancels the rest of that run;
+  references and the final page count then come from the next run that
+  completes.
   MuPDF names glyph outlines after their index in pdfTeX's font subset,
   which changes when other pages use new glyphs; the adapter renumbers them
   in order of use, so unchanged pages are not re-sent.
@@ -225,13 +269,30 @@ messages and UI are unchanged.
   message over the WebSocket ~124 ms (the SVG is ~290–330 KB); the browser
   (parsing the message, the image, the editor's own work per keystroke) the
   remaining ~55–65 ms.
+- Edit to `page` event in the adapter, level 2 against page by page
+  (cloud container, one session per row, median of 12 edits 1.5 s apart,
+  each edit next to the page viewed):
+
+  | Document, page viewed        | Level 2 | Page by page |
+  | ---------------------------- | ------- | ------------ |
+  | Benchmark paper (8 pages), 1 | 107 ms  | 54 ms        |
+  | Benchmark paper, 3           | 117 ms  | 75 ms        |
+  | ICML sample (7 pages), 1     | 178 ms  | 84 ms        |
+  | ICML sample, 3               | 178 ms  | 124 ms       |
+
+  Typing 25 keys 80 ms apart with page 1 viewed: level 2 emitted 20
+  (paper) and 11 (ICML) page updates during the typing, the last one 103
+  and 250 ms after the last key; page by page, 25 and 24 updates, the last
+  46 and 100 ms after the last key. Keystroke to screen in the browser was
+  not measured again yet.
 
 ## Next step
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
-(findings 6 and 7); the live-preview adapter.
+(findings 6 and 7); the live-preview adapter; level 3 step 1, page-by-page
+output (finding 8).
 
-Level 3 (snapshots inside the document, page-by-page output) is not
-started; the owner decides. After finding 7, what a level 2 run repeats is
-typesetting the whole body (about 66 ms for 8 pages); level 3 would stop at
-the shown page.
+Level 3 step 2: snapshots inside the document, so a run resumes from the
+last snapshot before the edit instead of from `\begin{document}`; pages
+before the edit are then not typeset again. Step 3: keystroke to screen in
+the browser, side by side with TeXpresso where it runs.

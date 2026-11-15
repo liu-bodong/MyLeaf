@@ -116,6 +116,32 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     expect(pages()[2]?.svg).not.toBe(first?.svg);
   });
 
+  // After page 1 the document never ends: what is shown comes from finishers.
+  const endless = (text: string) =>
+    bytes(String.raw`\documentclass{article}
+\begin{document}
+${text}
+\newpage
+\loop\iftrue\repeat
+\end{document}
+`);
+
+  it('shows a visible page as soon as it is shipped out', async () => {
+    const live = await open([mainFile(endless('First page.'))]);
+    live.showPages(1, 1);
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'page-count', final: true }));
+  });
+
+  it('cancels the rest of a run for an edit once the visible pages are shown', async () => {
+    const live = await open([mainFile(endless('Before.'))]);
+    live.showPages(1, 1);
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
+    live.updateFile(mainFile(endless('After the edit.')));
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
+    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+  });
+
   it('starts a new engine when the preamble or a file it read changes', async () => {
     const sty = (size: string) => ({
       path: parseProjectPath('local.sty'),
