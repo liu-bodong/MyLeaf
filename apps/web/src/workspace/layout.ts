@@ -20,6 +20,8 @@ export interface Layout {
   /** Whether the file-tree sidebar is shown. */
   readonly fileTree: boolean;
   readonly editorMode: EditorMode;
+  /** Clean visual mode: unrendered commands shown as blocks with their name. */
+  readonly cleanVisual: boolean;
   /** Whether the editor uses Vim key bindings. */
   readonly vim: boolean;
 }
@@ -37,6 +39,7 @@ export const DEFAULT_LAYOUT: Layout = {
   logs: false,
   fileTree: true,
   editorMode: 'code',
+  cleanVisual: false,
   vim: false,
 };
 
@@ -88,6 +91,8 @@ export function parseLayout(raw: string | null): Layout {
     logs: typeof saved.logs === 'boolean' ? saved.logs : DEFAULT_LAYOUT.logs,
     fileTree: typeof saved.fileTree === 'boolean' ? saved.fileTree : DEFAULT_LAYOUT.fileTree,
     editorMode: EDITOR_MODES.find((mode) => mode === saved.editorMode) ?? DEFAULT_LAYOUT.editorMode,
+    cleanVisual:
+      typeof saved.cleanVisual === 'boolean' ? saved.cleanVisual : DEFAULT_LAYOUT.cleanVisual,
     vim: typeof saved.vim === 'boolean' ? saved.vim : DEFAULT_LAYOUT.vim,
   };
 }

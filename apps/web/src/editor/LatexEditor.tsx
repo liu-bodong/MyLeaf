@@ -65,6 +65,8 @@ interface LatexEditorProps {
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
+  /** Clean visual mode (only with `visual`). */
+  readonly clean?: boolean;
   /** Vim key bindings, with a status line showing the Vim mode. */
   readonly vim?: boolean;
   /** Macros from the project's other files, for math in visual mode. */
@@ -110,9 +112,11 @@ function visualOptions(
   macros: MacroDefinitions,
   images: ImageLoader | undefined,
   references: AuxReferences | null,
+  clean: boolean,
 ): VisualModeOptions {
   return {
     macros,
+    clean,
     ...(images === undefined ? {} : { images }),
     ...(references === null ? {} : { references }),
   };
@@ -134,6 +138,7 @@ export function LatexEditor({
   onSave,
   onHistoryChange,
   visual = false,
+  clean = false,
   vim = false,
   macros = NO_MACROS,
   images,
@@ -143,7 +148,9 @@ export function LatexEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
-  const visualRef = useRef(visual ? visualMode(visualOptions(macros, images, references)) : []);
+  const visualRef = useRef(
+    visual ? visualMode(visualOptions(macros, images, references, clean)) : [],
+  );
   const [keys] = useState(() => new Compartment());
   const vimRef = useRef(vim ? vimBindings({ status: true }) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
@@ -209,9 +216,9 @@ export function LatexEditor({
   }, [documentId]);
 
   useEffect(() => {
-    visualRef.current = visual ? visualMode(visualOptions(macros, images, references)) : [];
+    visualRef.current = visual ? visualMode(visualOptions(macros, images, references, clean)) : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
-  }, [images, macros, mode, references, visual]);
+  }, [clean, images, macros, mode, references, visual]);
 
   useEffect(() => {
     vimRef.current = vim ? vimBindings({ status: true }) : [];

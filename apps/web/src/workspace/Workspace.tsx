@@ -672,6 +672,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onToggleFileTree={() => updateLayout({ fileTree: !layout.fileTree })}
                 mode={layout.editorMode}
                 onModeChange={(editorMode) => updateLayout({ editorMode })}
+                clean={layout.cleanVisual}
+                onToggleClean={() => updateLayout({ cleanVisual: !layout.cleanVisual })}
                 vim={layout.vim}
                 onToggleVim={() => updateLayout({ vim: !layout.vim })}
               />
@@ -686,6 +688,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onSave={() => void flushSave().catch(report)}
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
+                    clean={layout.cleanVisual}
                     vim={layout.vim}
                     macros={projectMacros}
                     images={imageLoader}

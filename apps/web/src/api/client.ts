@@ -37,6 +37,15 @@ export class ApiClient {
     return this.#json('POST', apiRoutes.projects(), { name });
   }
 
+  /** Creates a project from the files in a zip archive. */
+  async importProject(name: string, zip: Blob): Promise<ProjectDto> {
+    const response = await this.#fetch('POST', apiRoutes.importProject(name), {
+      body: zip,
+      headers: { 'content-type': 'application/zip' },
+    });
+    return (await response.json()) as ProjectDto;
+  }
+
   getProject(id: ProjectId): Promise<ProjectDto> {
     return this.#json('GET', apiRoutes.project(id));
   }

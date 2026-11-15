@@ -5,7 +5,7 @@ describe('parseLayout', () => {
   it('reads a saved layout', () => {
     expect(
       parseLayout(
-        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","vim":true}',
+        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","vim":true,"cleanVisual":true}',
       ),
     ).toEqual({
       view: 'pdf',
@@ -15,6 +15,7 @@ describe('parseLayout', () => {
       logs: true,
       fileTree: false,
       editorMode: 'visual',
+      cleanVisual: true,
       vim: true,
     });
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');

@@ -12,14 +12,28 @@ interface EditorToolbarProps {
   readonly onToggleFileTree: () => void;
   readonly mode: EditorMode;
   readonly onModeChange: (mode: EditorMode) => void;
+  /** Clean visual mode; the toggle works only in Visual mode. */
+  readonly clean: boolean;
+  readonly onToggleClean: () => void;
   readonly vim: boolean;
   readonly onToggleVim: () => void;
 }
 
-/** Above the editor: file-tree toggle, Code/Visual switch, Vim toggle and undo/redo. */
+/** Above the editor: file-tree toggle, Code/Visual switch, Clean and Vim toggles and undo/redo. */
 export function EditorToolbar(props: EditorToolbarProps) {
-  const { history, onUndo, onRedo, fileTreeOpen, onToggleFileTree, mode, onModeChange } = props;
-  const { vim, onToggleVim } = props;
+  const {
+    history,
+    onUndo,
+    onRedo,
+    fileTreeOpen,
+    onToggleFileTree,
+    mode,
+    onModeChange,
+    clean,
+    onToggleClean,
+    vim,
+    onToggleVim,
+  } = props;
   return (
     <div className="pane-toolbar editor-toolbar" role="toolbar" aria-label="Editor">
       <button
@@ -55,7 +69,21 @@ export function EditorToolbar(props: EditorToolbarProps) {
       </div>
       <button
         type="button"
-        className="icon-button toggle-button"
+        className="toggle-button"
+        aria-pressed={clean}
+        disabled={mode !== 'visual'}
+        title={
+          mode === 'visual'
+            ? 'Show commands visual mode does not render as blocks with their name'
+            : 'Clean is available in Visual mode'
+        }
+        onClick={onToggleClean}
+      >
+        Clean
+      </button>
+      <button
+        type="button"
+        className="toggle-button"
         aria-pressed={vim}
         title={vim ? 'Turn off Vim key bindings' : 'Turn on Vim key bindings'}
         onClick={onToggleVim}
