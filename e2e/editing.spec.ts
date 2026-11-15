@@ -51,13 +51,21 @@ test('edit a multi-file project, compile, and navigate between source and PDF', 
   await page.getByRole('button', { name: 'Show in PDF' }).click();
   const highlight = page.locator('.pdf-highlight').first();
   await expect(highlight).toBeVisible();
+  // Its position within its page; the PDF may still be scrolling to it.
+  const offset = await highlight.evaluate((element: HTMLElement) => ({
+    page: element.parentElement?.getAttribute('data-page') ?? null,
+    x: element.offsetLeft,
+    y: element.offsetTop + element.offsetHeight / 2,
+  }));
+  // The highlight is removed after about a second.
+  await expect(page.locator('.pdf-highlight')).toHaveCount(0, { timeout: 2000 });
 
   // Inverse search from another file jumps back to the source line.
   await page.locator('.file-name', { hasText: 'main.tex' }).click();
   await expect(page.locator('.file-row.active')).toContainText('main.tex');
-  const box = await highlight.boundingBox();
-  if (box === null) throw new Error('highlight has no bounding box');
-  await page.mouse.dblclick(box.x + 10, box.y + box.height / 2);
+  const pageBox = await page.locator(`.pdf-page[data-page="${offset.page}"]`).boundingBox();
+  if (pageBox === null) throw new Error('PDF page has no bounding box');
+  await page.mouse.dblclick(pageBox.x + offset.x + 10, pageBox.y + offset.y);
   await expect(page.locator('.file-row.active')).toContainText('intro.tex');
   await expect(page.locator('.cm-activeLine')).toHaveText('A \\badmacro here.');
 

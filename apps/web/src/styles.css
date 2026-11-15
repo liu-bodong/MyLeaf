@@ -22,21 +22,20 @@
   background: var(--bg);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191d;
-    --bg-muted: #1f2227;
-    --bg-hover: #2a2e35;
-    --fg: #e4e6ea;
-    --fg-muted: #9aa1ad;
-    --border: #343941;
-    --accent: #5fae86;
-    --accent-fg: #0d1a13;
-    --error: #ff8a80;
-    --warning: #e3b341;
-    --pdf-bg: #0f1114;
-    color-scheme: dark;
-  }
+/* Set by the settings (src/settings), which resolve "System" to light or dark. */
+:root[data-theme='dark'] {
+  --bg: #17191d;
+  --bg-muted: #1f2227;
+  --bg-hover: #2a2e35;
+  --fg: #e4e6ea;
+  --fg-muted: #9aa1ad;
+  --border: #343941;
+  --accent: #5fae86;
+  --accent-fg: #0d1a13;
+  --error: #ff8a80;
+  --warning: #e3b341;
+  --pdf-bg: #0f1114;
+  color-scheme: dark;
 }
 
 * {
@@ -79,7 +78,8 @@ button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 85%, var(--fg));
 }
 
-input {
+input,
+select {
   font: inherit;
   color: var(--fg);
   background: var(--bg);
@@ -108,6 +108,12 @@ a {
   max-width: 720px;
   margin: 0 auto;
   padding: 24px 16px;
+}
+
+.project-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .project-list form {
@@ -196,6 +202,102 @@ a {
   background: var(--bg-hover);
 }
 
+.sidebar-resizer.end {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+/* Outline */
+
+.outline-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  background: var(--bg-muted);
+  border-left: 1px solid var(--border);
+}
+
+.outline-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  font-size: 13px;
+}
+
+.outline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.outline-heading {
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.outline-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--fg-muted);
+}
+
+.outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.outline-row {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding-right: 6px;
+}
+
+.outline-toggle {
+  flex: 0 0 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--fg-muted);
+  background: none;
+  border: none;
+}
+
+.outline-toggle .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.outline-title {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-title:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.outline-title:disabled {
+  color: var(--fg-muted);
+  cursor: default;
+}
+
 .sidebar-actions {
   display: flex;
   gap: 2px;
@@ -277,13 +379,7 @@ a {
   height: 100%;
 }
 
-.editor .cm-editor {
-  font-size: 14px;
-}
-
-.editor .cm-scroller {
-  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-}
+/* Font and colors: src/editor/editor-appearance.ts, from the settings. */
 
 /* Completion popup, in the app's colours. */
 .editor .cm-tooltip.cm-tooltip-autocomplete {
@@ -377,6 +473,19 @@ a {
   position: absolute;
   background: var(--highlight);
   pointer-events: none;
+  /* Same length as HIGHLIGHT_MS in Workspace.tsx, which then removes the box. */
+  animation: pdf-highlight-fade 1s ease-in forwards;
+}
+
+@keyframes pdf-highlight-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
 }
 
 /* Diagnostics */
@@ -797,9 +906,9 @@ button.icon-button:hover:not(:disabled) {
   display: inline-flex;
 }
 
+/* Placed next to its trigger by `placeMenu` in Menu.tsx. */
 .menu {
-  position: absolute;
-  top: calc(100% + 2px);
+  position: fixed;
   z-index: 20;
   min-width: 200px;
   padding: 4px 0;
@@ -809,14 +918,6 @@ button.icon-button:hover:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.menu.align-start {
-  left: 0;
-}
-
-.menu.align-end {
-  right: 0;
 }
 
 .menu button {
@@ -966,10 +1067,8 @@ button.icon-button:hover:not(:disabled) {
 
 .split-divider {
   position: relative;
-  flex: 0 0 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  flex: 0 0 6px;
+  min-width: 0;
   background: var(--bg-muted);
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
@@ -987,18 +1086,22 @@ button.icon-button:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 
+/* Wider than the divider, so they sit centred over it instead of widening it. */
 .sync-buttons {
-  position: relative;
-  margin-top: 48px;
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
 .sync-buttons .icon-button {
-  min-width: 22px;
-  width: 22px;
-  height: 26px;
+  min-width: 18px;
+  width: 18px;
+  height: 24px;
   padding: 0;
   background: var(--bg);
   border-color: var(--border);
@@ -1131,6 +1234,54 @@ button.icon-button:hover:not(:disabled) {
   color: var(--fg-muted);
 }
 
+/* Settings window */
+
+.settings h3 {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+.settings section:first-child h3 {
+  margin-top: 0;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+}
+
+.settings-row small {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.settings-row select,
+.settings-row input[type='text'] {
+  width: 200px;
+}
+
+.settings-row input[type='number'] {
+  width: 72px;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
 @media (max-width: 800px) {
   .workspace {
     height: auto;
@@ -1148,6 +1299,10 @@ button.icon-button:hover:not(:disabled) {
   }
 
   .sidebar-resizer {
+    display: none;
+  }
+
+  .outline-rail {
     display: none;
   }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useDismiss } from './useDismiss.js';
 
@@ -47,6 +47,34 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
   items[next]?.focus();
 }
 
+/** Least distance between an open menu and the window edge. */
+const VIEWPORT_MARGIN = 8;
+/** Gap between the trigger and the menu. */
+const TRIGGER_GAP = 2;
+
+/**
+ * Places a fixed-position menu next to its trigger (the menu's parent), so a
+ * panel with hidden overflow does not cut it off, and keeps it inside the window.
+ */
+function placeMenu(menu: HTMLElement, align: 'start' | 'end') {
+  const trigger = menu.parentElement?.getBoundingClientRect();
+  if (trigger === undefined) return;
+  const { offsetWidth: width, offsetHeight: height } = menu;
+  const { innerWidth, innerHeight } = window;
+  const preferredLeft = align === 'end' ? trigger.right - width : trigger.left;
+  const left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(preferredLeft, innerWidth - width - VIEWPORT_MARGIN),
+  );
+  const below = trigger.bottom + TRIGGER_GAP;
+  const above = trigger.top - TRIGGER_GAP - height;
+  // Open upwards only when there is no room below but there is room above.
+  const top =
+    below + height > innerHeight - VIEWPORT_MARGIN && above >= VIEWPORT_MARGIN ? above : below;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 interface MenuListProps {
   readonly label: string;
   readonly items: readonly MenuItem[];
@@ -65,19 +93,26 @@ export function MenuList({
   initialFocus = 'first',
 }: MenuListProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const menu = listRef.current;
+    if (menu === null) return;
+    const place = () => placeMenu(menu, align);
+    place();
+    // Capture scrolls of any ancestor, e.g. the file tree, to follow the trigger.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [align]);
   useEffect(() => {
     const focusable = [...(listRef.current?.querySelectorAll<HTMLElement>(ENABLED_ITEMS) ?? [])];
     const target = initialFocus === 'last' ? focusable[focusable.length - 1] : focusable[0];
     target?.focus();
   }, [initialFocus]);
   return (
-    <div
-      ref={listRef}
-      role="menu"
-      aria-label={label}
-      className={`menu align-${align}`}
-      onKeyDown={moveFocus}
-    >
+    <div ref={listRef} role="menu" aria-label={label} className="menu" onKeyDown={moveFocus}>
       {items.map((item, index) => {
         if (item.kind === 'separator') {
           return <div key={index} role="separator" className="menu-separator" />;
