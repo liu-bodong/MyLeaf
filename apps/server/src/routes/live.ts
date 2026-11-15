@@ -50,7 +50,10 @@ export function registerLiveRoutes(
   compiler: CompileBackend,
   pool: LiveSessionPool | null,
 ): void {
-  app.get('/api/live-preview', (): LivePreviewInfo => ({ available: pool !== null }));
+  app.get('/api/live-preview', (): LivePreviewInfo => ({
+    available: pool !== null,
+    engine: pool?.engine ?? null,
+  }));
 
   app.get<{ Params: { id: string } }>(
     '/api/projects/:id/live',

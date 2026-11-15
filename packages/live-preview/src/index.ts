@@ -35,12 +35,17 @@ export interface LivePreviewSession {
   close(): Promise<void>;
 }
 
+/** TeX engines a live-preview backend can typeset with. */
+export type LiveEngine = 'pdflatex' | 'xelatex';
+
 /**
  * Port: incremental rendering of the pages being viewed while the source is
  * edited (ADR 0012, 0014). Unlike CompileBackend, output is approximate (it may use
  * a different engine) and is delivered page by page as events.
  */
 export interface LivePreviewBackend {
+  /** The engine that typesets the live pages, which the UI names. */
+  readonly engine: LiveEngine;
   open(
     request: LivePreviewRequest,
     onEvent: (event: LivePreviewEvent) => void,

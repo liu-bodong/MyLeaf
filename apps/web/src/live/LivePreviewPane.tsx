@@ -1,14 +1,18 @@
 import { LIVE_MAX_PAGE_RANGE } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
+import type { TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
+import { engineName } from './engine-name.js';
 import type { LiveChannel } from './live-channel.js';
 import './live-preview.css';
 
 interface LivePreviewPaneProps {
   readonly projectId: ProjectId;
   readonly channel: LiveChannel;
+  /** The engine that typesets the live pages. */
+  readonly engine: TexEngine;
   /** Called once the session runs, so the latest unsaved text can be sent. */
   readonly onReady: () => void;
   /** Offered when the session ended: switch the output pane to the PDF. */
@@ -48,6 +52,7 @@ function svgSize(svg: string): { width: number; height: number } | null {
 export function LivePreviewPane({
   projectId,
   channel,
+  engine,
   onReady,
   onShowPdf,
   onRetry,
@@ -156,7 +161,7 @@ export function LivePreviewPane({
   return (
     <div className="live-pane" data-testid="live-preview">
       <header>
-        <span className="live-badge">Live · XeLaTeX</span>
+        <span className="live-badge">Live · {engineName(engine)}</span>
         <span data-testid="live-page">
           Page {Math.min(current, count)} of {count}
         </span>

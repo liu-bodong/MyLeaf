@@ -1,5 +1,6 @@
 import type { ProjectId } from '@myleaf/doc-model';
 import type {
+  LiveEngine,
   LivePreviewBackend,
   LivePreviewEvent,
   LivePreviewRequest,
@@ -36,6 +37,11 @@ export class LiveSessionPool {
   constructor(backend: LivePreviewBackend, options: LiveSessionPoolOptions) {
     this.#backend = backend;
     this.#options = options;
+  }
+
+  /** The engine of the backend's live pages. */
+  get engine(): LiveEngine {
+    return this.#backend.engine;
   }
 
   get size(): number {
