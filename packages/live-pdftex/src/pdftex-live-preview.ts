@@ -237,8 +237,11 @@ class PdftexSession implements LivePreviewSession {
     // The child reads the root file from a copy, so later edits cannot change it mid-run.
     const main = `${out}.tex`;
     let status: number | null;
-    if (engine) {
-      await writeFile(main, root);
+    if (engine) await writeFile(main, root);
+    if (this.#closing) return;
+    // The engine may have been stopped during the writes above (close()
+    // ends its control connection): writing to it then would throw.
+    if (engine && !engine.control.writableEnded) {
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
         engine.control.write(`run\t${id}\t${main}\t${out}\n`);
