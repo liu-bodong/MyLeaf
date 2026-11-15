@@ -1,5 +1,6 @@
 import type { EditHistory } from '../editor/LatexEditor.js';
 import { Icon } from '../ui/icons.js';
+import type { EditorMode } from './layout.js';
 import { shortcut } from './shortcuts.js';
 
 interface EditorToolbarProps {
@@ -9,11 +10,13 @@ interface EditorToolbarProps {
   readonly onRedo: () => void;
   readonly fileTreeOpen: boolean;
   readonly onToggleFileTree: () => void;
+  readonly mode: EditorMode;
+  readonly onModeChange: (mode: EditorMode) => void;
 }
 
-/** Above the editor: file-tree toggle, Code/Visual switch (Visual is planned) and undo/redo. */
+/** Above the editor: file-tree toggle, Code/Visual switch and undo/redo. */
 export function EditorToolbar(props: EditorToolbarProps) {
-  const { history, onUndo, onRedo, fileTreeOpen, onToggleFileTree } = props;
+  const { history, onUndo, onRedo, fileTreeOpen, onToggleFileTree, mode, onModeChange } = props;
   return (
     <div className="pane-toolbar editor-toolbar" role="toolbar" aria-label="Editor">
       <button
@@ -28,10 +31,22 @@ export function EditorToolbar(props: EditorToolbarProps) {
       </button>
       <span className="toolbar-separator" />
       <div className="segmented" role="radiogroup" aria-label="Editor mode">
-        <button type="button" role="radio" aria-checked="true">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'code'}
+          title="Show the LaTeX source"
+          onClick={() => onModeChange('code')}
+        >
           Code
         </button>
-        <button type="button" role="radio" aria-checked="false" disabled title="Not available yet">
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'visual'}
+          title="Show LaTeX rendered in place; the source appears where the cursor is"
+          onClick={() => onModeChange('visual')}
+        >
           Visual
         </button>
       </div>

@@ -368,6 +368,9 @@ importers:
       '@myleaf/doc-model':
         specifier: workspace:*
         version: link:../../packages/doc-model
+      '@myleaf/editor-visual':
+        specifier: workspace:*
+        version: link:../../packages/editor-visual
       '@myleaf/project':
         specifier: workspace:*
         version: link:../../packages/project
@@ -484,6 +487,40 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+
+  packages/editor-visual:
+    dependencies:
+      '@codemirror/state':
+        specifier: 'catalog:'
+        version: 6.7.6
+      '@codemirror/view':
+        specifier: 'catalog:'
+        version: 6.43.15
+      '@myleaf/latex-syntax':
+        specifier: workspace:*
+        version: link:../latex-syntax
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
+
+  packages/latex-syntax:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
 
   packages/live-preview:
     dependencies:

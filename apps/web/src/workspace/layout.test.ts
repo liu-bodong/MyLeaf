@@ -5,7 +5,7 @@ describe('parseLayout', () => {
   it('reads a saved layout', () => {
     expect(
       parseLayout(
-        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false}',
+        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual"}',
       ),
     ).toEqual({
       view: 'pdf',
@@ -14,6 +14,7 @@ describe('parseLayout', () => {
       zoom: 1.25,
       logs: true,
       fileTree: false,
+      editorMode: 'visual',
     });
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');
   });
@@ -22,9 +23,11 @@ describe('parseLayout', () => {
     expect(parseLayout(null)).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout('not json')).toEqual(DEFAULT_LAYOUT);
     expect(parseLayout('[]')).toEqual({ ...DEFAULT_LAYOUT });
-    expect(parseLayout('{"view":"sideways","split":"wide","zoom":99,"logs":"yes"}')).toEqual(
-      DEFAULT_LAYOUT,
-    );
+    expect(
+      parseLayout(
+        '{"view":"sideways","split":"wide","zoom":99,"logs":"yes","editorMode":"wysiwyg"}',
+      ),
+    ).toEqual(DEFAULT_LAYOUT);
   });
 
   it('clamps the split and the sidebar width', () => {

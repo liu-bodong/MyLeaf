@@ -4,6 +4,9 @@ import { ZOOM_STEPS } from '../pdf/zoom.js';
 /** Which panes the workspace shows. */
 export type LayoutView = 'split' | 'editor' | 'pdf';
 
+/** How the editor shows LaTeX: source, or rendered in place (ADR 0016). */
+export type EditorMode = 'code' | 'visual';
+
 /** Workspace layout, saved per browser. */
 export interface Layout {
   readonly view: LayoutView;
@@ -16,6 +19,7 @@ export interface Layout {
   readonly logs: boolean;
   /** Whether the file-tree sidebar is shown. */
   readonly fileTree: boolean;
+  readonly editorMode: EditorMode;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -30,10 +34,12 @@ export const DEFAULT_LAYOUT: Layout = {
   zoom: 'fit-width',
   logs: false,
   fileTree: true,
+  editorMode: 'code',
 };
 
 const STORAGE_KEY = 'myleaf.layout';
 const VIEWS: readonly LayoutView[] = ['split', 'editor', 'pdf'];
+const EDITOR_MODES: readonly EditorMode[] = ['code', 'visual'];
 
 export function clampSplit(split: number): number {
   return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, split));
@@ -78,6 +84,7 @@ export function parseLayout(raw: string | null): Layout {
     zoom: parseZoom(saved.zoom) ?? DEFAULT_LAYOUT.zoom,
     logs: typeof saved.logs === 'boolean' ? saved.logs : DEFAULT_LAYOUT.logs,
     fileTree: typeof saved.fileTree === 'boolean' ? saved.fileTree : DEFAULT_LAYOUT.fileTree,
+    editorMode: EDITOR_MODES.find((mode) => mode === saved.editorMode) ?? DEFAULT_LAYOUT.editorMode,
   };
 }
 

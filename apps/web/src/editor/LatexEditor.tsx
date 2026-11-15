@@ -16,7 +16,7 @@ import {
 } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import {
   EditorView,
   drawSelection,
@@ -25,7 +25,8 @@ import {
   keymap,
   lineNumbers,
 } from '@codemirror/view';
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
+import { visualMode } from '@myleaf/editor-visual';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
 
 export interface LatexEditorHandle {
@@ -55,6 +56,8 @@ interface LatexEditorProps {
   /** Mod-S / Mod-Enter. */
   readonly onCompile: () => void;
   readonly onHistoryChange?: (history: EditHistory) => void;
+  /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
+  readonly visual?: boolean;
   readonly ref?: Ref<LatexEditorHandle>;
 }
 
@@ -72,10 +75,13 @@ export function LatexEditor({
   onChange,
   onCompile,
   onHistoryChange,
+  visual = false,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [mode] = useState(() => new Compartment());
+  const visualRef = useRef(visual);
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -107,6 +113,7 @@ export function LatexEditor({
           StreamLanguage.define(stex),
           syntaxHighlighting(defaultHighlightStyle),
           EditorView.lineWrapping,
+          mode.of(visualRef.current ? visualMode() : []),
           keymap.of([
             { key: 'Mod-s', run: compile, preventDefault: true },
             { key: 'Mod-Enter', run: compile, preventDefault: true },
@@ -133,6 +140,11 @@ export function LatexEditor({
     // Recreate only when another document is opened; text edits stay inside CodeMirror.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
+
+  useEffect(() => {
+    visualRef.current = visual;
+    viewRef.current?.dispatch({ effects: mode.reconfigure(visual ? visualMode() : []) });
+  }, [mode, visual]);
 
   useImperativeHandle(
     ref,

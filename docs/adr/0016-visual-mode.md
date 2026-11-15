@@ -1,6 +1,6 @@
 # 0016. Visual mode: rendering in place over the LaTeX source
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-14
 - Refines: ADR 0006 (L2, "shared with visual mode"), ADR 0013 (Code/Visual switch)
 
@@ -86,17 +86,18 @@ a marker.
 3. Lists; reference and citation chips; figures.
 4. Numbers for references and citations from the last compile; PDF images.
 
-## Questions for the owner
+## Owner's answers
 
-1. **Math engine:** KaTeX (fast, covers most paper math; source shown when it
-   cannot render) or MathJax (broader coverage, slower and larger)?
-   Proposed: KaTeX.
-2. **Editing rendered math:** when the cursor enters, show the source in
-   place (proposed), or show the source with a rendered preview under it
-   (for display math)?
-3. **Remembering the mode:** per browser, like the other layout settings
-   (proposed), or per project?
-4. **Default:** new projects open in Code mode (proposed) or Visual?
+1. **Math engine:** KaTeX.
+2. **Editing rendered math:** the source in place.
+3. **Remembering the mode:** per browser, with the other layout settings.
+4. **Default:** Code mode.
+
+## Implementation notes
+
+- A newly opened document has its cursor at offset 0, inside the preamble.
+  The preamble fold therefore opens only for a selection beyond offset 0;
+  clicking the fold puts the cursor at the end of the preamble.
 
 ## Consequences
 

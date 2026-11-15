@@ -56,22 +56,24 @@ There is no authentication yet, and compilation is hardened but not
 sandboxed (see [ADR 0010](docs/adr/0010-projects-storage-and-compile-service.md)).
 Only expose the server to people you trust.
 
-| Path                       | Layer   | Purpose                                                   |
-| -------------------------- | ------- | --------------------------------------------------------- |
-| `packages/doc-model`       | Domain  | Ids, actors, `TextDocument` port (text, marks, anchors)   |
-| `packages/annotations`     | Domain  | Comment threads, suggestions (track changes), projections |
-| `packages/project`         | Domain  | Project paths and files, `ProjectStore` port              |
-| `packages/compile`         | Domain  | `CompileBackend` port, SyncTeX types, log diagnostics     |
-| `packages/api`             | Domain  | HTTP routes and DTO types shared by server and web        |
-| `packages/sync-yjs`        | Adapter | `TextDocument` on Yjs                                     |
-| `packages/storage-fs`      | Adapter | `ProjectStore` on the filesystem                          |
-| `packages/compile-texlive` | Adapter | `CompileBackend` on latexmk + synctex                     |
-| `packages/live-preview`    | Domain  | `LivePreviewBackend` port                                 |
-| `packages/live-texpresso`  | Adapter | `LivePreviewBackend` on patched TeXpresso                 |
-| `packages/testing`         | Testing | Port contract suites and in-memory test doubles           |
-| `apps/server`              | App     | Fastify HTTP server                                       |
-| `apps/web`                 | App     | React web client (CodeMirror, PDF.js)                     |
-| `samples/icml2027`         | Sample  | Third-party paper loaded by `pnpm dev` for manual testing |
+| Path                       | Layer   | Purpose                                                    |
+| -------------------------- | ------- | ---------------------------------------------------------- |
+| `packages/doc-model`       | Domain  | Ids, actors, `TextDocument` port (text, marks, anchors)    |
+| `packages/annotations`     | Domain  | Comment threads, suggestions (track changes), projections  |
+| `packages/project`         | Domain  | Project paths and files, `ProjectStore` port               |
+| `packages/compile`         | Domain  | `CompileBackend` port, SyncTeX types, log diagnostics      |
+| `packages/api`             | Domain  | HTTP routes and DTO types shared by server and web         |
+| `packages/sync-yjs`        | Adapter | `TextDocument` on Yjs                                      |
+| `packages/storage-fs`      | Adapter | `ProjectStore` on the filesystem                           |
+| `packages/compile-texlive` | Adapter | `CompileBackend` on latexmk + synctex                      |
+| `packages/live-preview`    | Domain  | `LivePreviewBackend` port                                  |
+| `packages/live-texpresso`  | Adapter | `LivePreviewBackend` on patched TeXpresso                  |
+| `packages/latex-syntax`    | Domain  | Structural LaTeX parser with source offsets                |
+| `packages/editor-visual`   | Adapter | Visual mode: CodeMirror extension rendering LaTeX in place |
+| `packages/testing`         | Testing | Port contract suites and in-memory test doubles            |
+| `apps/server`              | App     | Fastify HTTP server                                        |
+| `apps/web`                 | App     | React web client (CodeMirror, PDF.js)                      |
+| `samples/icml2027`         | Sample  | Third-party paper loaded by `pnpm dev` for manual testing  |
 
 Layering rules: [ADR 0009](docs/adr/0009-module-boundaries.md).
 
@@ -102,7 +104,7 @@ Layering rules: [ADR 0009](docs/adr/0009-module-boundaries.md).
 | 2     | Multi-user: auth, real-time sync, presence                                                                                                                                                                                                                                                                              |
 | 3     | Comments, threads, suggestions                                                                                                                                                                                                                                                                                          |
 | 4     | AI actors and MCP server                                                                                                                                                                                                                                                                                                |
-| 5     | Visual modes, instant in-editor rendering (L2): visual mode proposed in ADR 0016                                                                                                                                                                                                                                        |
+| 5     | Visual modes, instant in-editor rendering (L2): visual mode in progress (ADR 0016: headings, text styles, comments, preamble done; math next)                                                                                                                                                                           |
 | 6     | Tables, navigation, configuration                                                                                                                                                                                                                                                                                       |
 | —     | Configurable from the UI: engine choice, compile settings, resource limits (now environment variables)                                                                                                                                                                                                                  |
 | —     | Live preview (L3) with TeXpresso: done, with continuous scroll, references and citations (ADR 0012, 0014)                                                                                                                                                                                                               |

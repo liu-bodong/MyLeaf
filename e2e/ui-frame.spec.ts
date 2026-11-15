@@ -27,7 +27,9 @@ test('top bar, editor toolbar, PDF toolbar and layout', async ({ page }) => {
   // Placeholders are visible but disabled.
   await expect(page.getByRole('button', { name: 'History' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Share' })).toBeDisabled();
-  await expect(page.getByRole('radio', { name: 'Visual' })).toBeDisabled();
+  // Code is the default editor mode; Visual is available (ADR 0016).
+  await expect(page.getByRole('radio', { name: 'Code' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radio', { name: 'Visual' })).toBeEnabled();
   await page.getByRole('menuitem', { name: 'Insert' }).click();
   await expect(page.getByRole('menuitem', { name: 'Figure…' })).toHaveAttribute(
     'aria-disabled',

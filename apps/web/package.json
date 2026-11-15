@@ -21,6 +21,7 @@
     "@myleaf/api": "workspace:*",
     "@myleaf/compile": "workspace:*",
     "@myleaf/doc-model": "workspace:*",
+    "@myleaf/editor-visual": "workspace:*",
     "@myleaf/project": "workspace:*",
     "pdfjs-dist": "catalog:",
     "react": "catalog:",

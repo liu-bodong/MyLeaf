@@ -659,6 +659,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onRedo={() => editorRef.current?.redo()}
                 fileTreeOpen={layout.fileTree}
                 onToggleFileTree={() => updateLayout({ fileTree: !layout.fileTree })}
+                mode={layout.editorMode}
+                onModeChange={(editorMode) => updateLayout({ editorMode })}
               />
               <main className="source">
                 {document?.kind === 'text' && (
@@ -669,6 +671,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onChange={handleChange}
                     onCompile={() => void compile()}
                     onHistoryChange={setEditHistory}
+                    visual={layout.editorMode === 'visual'}
                   />
                 )}
                 {document?.kind === 'binary' && (
