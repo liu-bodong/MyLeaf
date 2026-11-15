@@ -8,6 +8,7 @@ import {
   ProjectNotFoundError,
 } from '@myleaf/project';
 import type { FastifyError, FastifyInstance } from 'fastify';
+import { ArchiveTooLargeError, InvalidArchiveError } from './zip-import.js';
 
 const STATUS_BY_ERROR = new Map<abstract new (...args: never[]) => Error, number>([
   [ProjectNotFoundError, 404],
@@ -16,6 +17,8 @@ const STATUS_BY_ERROR = new Map<abstract new (...args: never[]) => Error, number
   [InvalidProjectNameError, 400],
   [FileAlreadyExistsError, 409],
   [PathConflictError, 409],
+  [InvalidArchiveError, 400],
+  [ArchiveTooLargeError, 413],
 ]);
 
 /** Maps domain errors to HTTP statuses; hides details of unexpected errors. */

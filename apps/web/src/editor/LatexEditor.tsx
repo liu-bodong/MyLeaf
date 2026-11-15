@@ -51,6 +51,8 @@ interface LatexEditorProps {
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
+  /** Clean visual mode (only with `visual`). */
+  readonly clean?: boolean;
   /** Macros from the project's other files, for math in visual mode. */
   readonly macros?: MacroDefinitions;
   /** Loads `\includegraphics` images for visual mode. */
@@ -67,9 +69,11 @@ function visualOptions(
   macros: MacroDefinitions,
   images: ImageLoader | undefined,
   references: AuxReferences | null,
+  clean: boolean,
 ): VisualModeOptions {
   return {
     macros,
+    clean,
     ...(images === undefined ? {} : { images }),
     ...(references === null ? {} : { references }),
   };
@@ -90,6 +94,7 @@ export function LatexEditor({
   onCompile,
   onHistoryChange,
   visual = false,
+  clean = false,
   macros = NO_MACROS,
   images,
   references = null,
@@ -101,7 +106,9 @@ export function LatexEditor({
   const [appearance] = useState(() => new Compartment());
   const { settings, theme } = useSettings();
   const appearanceRef = useRef(editorAppearance(theme, settings));
-  const visualRef = useRef(visual ? visualMode(visualOptions(macros, images, references)) : []);
+  const visualRef = useRef(
+    visual ? visualMode(visualOptions(macros, images, references, clean)) : [],
+  );
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -158,9 +165,9 @@ export function LatexEditor({
   }, [documentId]);
 
   useEffect(() => {
-    visualRef.current = visual ? visualMode(visualOptions(macros, images, references)) : [];
+    visualRef.current = visual ? visualMode(visualOptions(macros, images, references, clean)) : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
-  }, [images, macros, mode, references, visual]);
+  }, [clean, images, macros, mode, references, visual]);
 
   useEffect(() => {
     appearanceRef.current = editorAppearance(theme, settings);

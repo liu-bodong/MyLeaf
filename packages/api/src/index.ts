@@ -19,6 +19,14 @@ export interface CreateProjectRequest {
   readonly name: string;
 }
 
+/**
+ * `POST /api/projects/import`: query string of a zip upload. The body is the
+ * zip itself, sent as `application/zip`.
+ */
+export interface ImportProjectQuery {
+  readonly name: string;
+}
+
 export interface UpdateProjectRequest {
   readonly name?: string;
   readonly rootFile?: string;
@@ -99,6 +107,7 @@ const encodePath = (path: ProjectPath) => path.split('/').map(encodeURIComponent
 /** URL paths of the API. File contents are sent and received as raw bytes. */
 export const apiRoutes = {
   projects: () => '/api/projects',
+  importProject: (name: string) => `/api/projects/import?name=${encodeURIComponent(name)}`,
   project: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}`,
   files: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/files`,
   file: (id: ProjectId, path: ProjectPath) =>

@@ -64,6 +64,20 @@ about 16 differences are math-extraction noise, not layout.
 - Images and fonts read outside `openclose.c` must also go through the
   driver for rollback to be correct.
 
+## Levels of pdfLaTeX speed
+
+Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011); the
+owner decides on levels 2 and 3.
+
+| Level                                                                                   | Work                                                | Server time per edit (8 pages)                                             | Keystroke to screen                         |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- |
+| 1. Single pass without latexmk                                                          | Done                                                | ~280–330 ms (measured)                                                     | ~300–450 ms (estimate)                      |
+| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Weeks of C work in pdfTeX (I/O hooks, one snapshot) | ~70–150 ms plus typesetting up to the viewed page (estimate, not measured) | ~150–300 ms (estimate)                      |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                                     | Comparable to TeXpresso (estimate)                                         | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+
+Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
+output), so it can be a first step towards it.
+
 ## Next step
 
 Build pdfTeX from TeX Live sources in the container, add the stream
