@@ -4,8 +4,9 @@ Status: level 2 done; level 3 in progress (owner approved on 2026-11-15).
 pdfTeX builds from source with pass-through stream hooks (finding 5); the
 level 2 engine (finding 6) runs live preview with
 `MYLEAF_LIVE_ENGINE=pdftex`. Level 3 steps 1 and 2, page-by-page output
-(finding 8) and snapshots inside the document (finding 9), are done; step 3
-is measuring keystroke to screen against TeXpresso.
+(finding 8) and snapshots inside the document (finding 9), are done, and
+keystroke to screen was measured again (step 3). TeXpresso was not measured
+side by side: it crashes on these documents in the cloud container.
 Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
@@ -268,11 +269,11 @@ about 16 differences are math-extraction noise, not layout.
 Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011). The
 owner approved level 2 on 2026-11-15, and level 3 later that day.
 
-| Level                                                                                   | Work                                            | Server time per edit (8 pages)                                                                 | Keystroke to screen                         |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| 1. Single pass without latexmk                                                          | Done                                            | ~280–330 ms (measured)                                                                         | ~300–450 ms (estimate)                      |
-| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (findings 6 and 7, `packages/live-pdftex`) | 80 ms child, ~97 ms to the SVG page, against 222 ms for level 1 on the same machine (measured) | 123–269 ms, medians 177–193 ms (measured)   |
-| 3. Full TeXpresso-style snapshots (design B above)                                      | Steps 1 and 2 done (findings 8 and 9)           | Comparable to TeXpresso (estimate)                                                             | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+| Level                                                                                   | Work                                            | Server time per edit (8 pages)                                                                 | Keystroke to screen                                                               |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 1. Single pass without latexmk                                                          | Done                                            | ~280–330 ms (measured)                                                                         | ~300–450 ms (estimate)                                                            |
+| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (findings 6 and 7, `packages/live-pdftex`) | 80 ms child, ~97 ms to the SVG page, against 222 ms for level 1 on the same machine (measured) | 123–269 ms, medians 177–193 ms (measured)                                         |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | Steps 1 and 2 done (findings 8 and 9)           | ~32 ms child from a snapshot, 47–70 ms to the SVG page (measured)                              | 82–114 ms medians (measured); TeXpresso ~130–145 ms on another machine (ADR 0012) |
 
 Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
 output), so it can be a first step towards it.
@@ -356,12 +357,31 @@ messages and UI are unchanged.
   above: 25 (paper) and 22 (ICML) updates, the last 56 and 126 ms after the
   last key.
 
+- Keystroke to updated page on screen with page-by-page output and
+  snapshots, measured as for level 2 above (Chromium, dev server, benchmark
+  paper, 12 edits per run):
+
+  | Typing in, page viewed            | Medians of 3 runs | Range       |
+  | --------------------------------- | ----------------- | ----------- |
+  | First paragraph, page 1 (level 2) | 177, 193, 181 ms  | 123–269 ms  |
+  | First paragraph, page 1           | 103, 114, 111 ms  | 55–151 ms\* |
+  | Last paragraph, page 7            | 97, 82, 87 ms     | 40–120 ms\* |
+
+  \* Plus one edit of about 890–910 ms in two of the six runs; the cause was
+  not investigated (a new engine after an `.aux` change would take that
+  long). ADR 0012 measured 130–145 ms for TeXpresso on
+  another machine; TeXpresso, built here with CI's dependencies, exits with
+  a segmentation fault on the first edit of the ICML sample and of the
+  paper, so there is no side-by-side measurement.
+
 ## Next step
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
 (findings 6 and 7); the live-preview adapter; level 3 steps 1 and 2,
 page-by-page output (finding 8) and snapshots (finding 9).
 
-Level 3 step 3: keystroke to screen in the browser, side by side with
-TeXpresso where it runs; then the open risks of finding 9 (a limit on
-snapshot processes).
+Keystroke to screen is now 82–114 ms (medians) on the benchmark paper in
+the cloud container. Open: a side-by-side measurement with TeXpresso on a
+machine where it runs (the owner's Mac), the macOS run of snapshots, and the
+open risks of finding 9 (a limit on snapshot processes, other input files
+open across a snapshot).
