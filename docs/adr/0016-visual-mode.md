@@ -134,6 +134,15 @@ a marker.
   show `??`/`?`, marked. Labelled display equations show their number
   through KaTeX's `\tag`; unlabelled ones stay unnumbered. Numbers are those
   of the last compile, so they lag behind edits until the next one.
+- Clean visual mode (owner's request, 2026-11-15): a "Clean" toggle next
+  to the Code/Visual switch, usable in Visual mode and remembered with the
+  layout. In clean mode, a command visual mode does not render (any
+  letter-named command other than text styles, headings, `\item`,
+  `\centering`, citations, references, `\label`, `\includegraphics`) is
+  replaced by a block showing its name, together with the `{…}` groups right
+  after it (unknown commands have no signature, so those groups are their
+  arguments). Like math, the block shows its source when the selection
+  touches it. Control symbols (`\%`, `\\`) are left as they are.
 
 ## Consequences
 

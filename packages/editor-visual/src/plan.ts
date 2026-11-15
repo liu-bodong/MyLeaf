@@ -83,7 +83,9 @@ export type WidgetSpec =
       readonly missing: boolean;
     }
   /** `\includegraphics`: the image at `path`, as written in the source. */
-  | { readonly type: 'image'; readonly path: string };
+  | { readonly type: 'image'; readonly path: string }
+  /** Clean visual mode: a command visual mode does not render, shown by its name. */
+  | { readonly type: 'command'; readonly name: string };
 
 const CITATIONS = new Set([
   'cite',
@@ -100,6 +102,33 @@ const LISTS = new Set(['itemize', 'enumerate', 'description']);
 const FRAMES = new Set([...LISTS, 'figure', 'figure*', 'center']);
 /** Commands that only affect layout, hidden outside the cursor. */
 const LAYOUT_COMMANDS = new Set(['centering']);
+/** Commands `command()` renders (besides text styles and headings). */
+const RENDERED_COMMANDS = new Set([
+  ...CITATIONS,
+  ...REFERENCES,
+  ...LAYOUT_COMMANDS,
+  'item',
+  'label',
+  'includegraphics',
+  // Parsed as part of environments; a stray one stays source.
+  'begin',
+  'end',
+]);
+
+/** Whether clean visual mode shows `name` as a command block: not rendered, not a control symbol. */
+const isUnrendered = (name: string) =>
+  /^[A-Za-z@]+$/.test(name) &&
+  !RENDERED_COMMANDS.has(name) &&
+  TEXT_STYLES[name] === undefined &&
+  HEADINGS[name] === undefined;
+
+export interface VisualOptions {
+  /**
+   * Clean visual mode: commands visual mode does not render are replaced by a
+   * block with their name, together with the `{…}` groups right after them.
+   */
+  readonly clean?: boolean;
+}
 const BULLETS = ['•', '◦', '▪'];
 const ALPHA = 'abcdefghijklmnopqrstuvwxyz';
 const ROMAN = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii'];
@@ -151,19 +180,37 @@ export function planVisual(
   selection: readonly Range[],
   /** Numbers from the last compile; null shows keys. */
   references: AuxReferences | null = null,
+  options: VisualOptions = {},
 ): VisualSpan[] {
   const spans: VisualSpan[] = [];
   const fold = preambleFold(text, document, selection);
   if (fold !== null) spans.push(fold);
 
   const visit = (nodes: readonly LatexNode[], list: ListContext | null) => {
-    for (const node of nodes) {
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index]!;
       if (fold !== null && node.from < fold.to) continue;
       switch (node.kind) {
         case 'comment':
           spans.push({ kind: 'style', from: node.from, to: node.to, style: 'comment' });
           break;
         case 'command': {
+          if (options.clean === true && isUnrendered(node.name)) {
+            // Groups right after a command without a known signature are its arguments.
+            let last = index;
+            let to = node.to;
+            while (nodes[last + 1]?.kind === 'group' && nodes[last + 1]!.from === to) {
+              last++;
+              to = nodes[last]!.to;
+            }
+            const block = { from: node.from, to };
+            if (!touches(block, selection)) {
+              const widget: WidgetSpec = { type: 'command', name: node.name };
+              spans.push({ kind: 'widget', ...block, widget });
+              index = last;
+              break;
+            }
+          }
           if (!command(text, node, list, selection, references, spans)) {
             for (const arg of node.args) visit(arg.children, list);
           }

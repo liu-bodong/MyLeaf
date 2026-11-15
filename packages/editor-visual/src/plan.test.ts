@@ -8,7 +8,9 @@ const widgetText = (widget: WidgetSpec) =>
     ? widget.label
     : widget.type === 'chip'
       ? `${widget.chip}:${widget.text}`
-      : `image:${widget.path}`;
+      : widget.type === 'image'
+        ? `image:${widget.path}`
+        : `command:${widget.name}`;
 
 /** The text as visual mode shows it: hidden spans removed, folds as `[label]`, math as `⟨tex⟩`. */
 function shown(text: string, spans: readonly VisualSpan[]): string {
@@ -198,5 +200,50 @@ describe('planVisual', () => {
     expect(shown(text, planVisual(text, parseLatex(text), [], references))).toBe(
       String.raw`«ref:(4)» «cite:(Kay, 1999)» «ref:??» ⟨\begin{equation*}x \tag{4}\end{equation*}⟩`,
     );
+  });
+
+  describe('clean mode', () => {
+    const clean = (text: string, cursor: number | null = null) =>
+      planVisual(
+        text,
+        parseLatex(text),
+        cursor === null ? [] : [{ from: cursor, to: cursor }],
+        null,
+        { clean: true },
+      );
+
+    it('shows unrendered commands and their groups as a block with the name', () => {
+      const text = String.raw`\icmlaffiliation{yyy}{Department of XXX} and \printAffiliationsAndNotice{} end`;
+      expect(shown(text, clean(text))).toBe(
+        '«command:icmlaffiliation» and «command:printAffiliationsAndNotice» end',
+      );
+    });
+
+    it('does not take groups separated by whitespace', () => {
+      const text = String.raw`\foo{a} {b}`;
+      expect(shown(text, clean(text))).toBe('«command:foo» {b}');
+    });
+
+    it('takes the arguments of commands with a signature', () => {
+      const text = String.raw`See\footnote{a \emph{note}}.`;
+      expect(shown(text, clean(text))).toBe('See«command:footnote».');
+    });
+
+    it('shows the source of a block the cursor touches, with its content rendered', () => {
+      const text = String.raw`\icmltitle{A \textbf{bold} title} x`;
+      const spans = clean(text, text.indexOf('title}'));
+      expect(shown(text, spans)).toBe(String.raw`\icmltitle{A bold title} x`);
+      expect(styled(text, spans)).toEqual([['bold', 'bold']]);
+    });
+
+    it('keeps rendered commands and control symbols as before', () => {
+      const text = String.raw`\section{Intro} 50\% \textbf{b} \cite{k}\\`;
+      expect(shown(text, clean(text))).toBe(String.raw`Intro 50\% b «cite:[k]»\\`);
+    });
+
+    it('leaves code mode output unchanged when off', () => {
+      const text = String.raw`\icmlaffiliation{yyy}{Dept}`;
+      expect(shown(text, plan(text))).toBe(text);
+    });
   });
 });

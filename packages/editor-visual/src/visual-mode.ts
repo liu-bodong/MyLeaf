@@ -25,6 +25,11 @@ const compiledReferences = Facet.define<AuxReferences, AuxReferences | null>({
   combine: (values) => values.at(-1) ?? null,
 });
 
+/** Clean visual mode (`VisualOptions.clean`). */
+const cleanMode = Facet.define<boolean, boolean>({
+  combine: (values) => values.some(Boolean),
+});
+
 interface Parsed {
   readonly document: LatexDocument;
   readonly macros: MacroDefinitions;
@@ -236,6 +241,8 @@ function widgetFor(
       );
     case 'image':
       return new ImageWidget(spec.path, images.get(spec.path), load);
+    case 'command':
+      return new LabelWidget(`\\${spec.name}`, 'cm-visual-chip cm-visual-command');
   }
 }
 
@@ -301,6 +308,7 @@ function build(state: EditorState): DecorationSet {
     document,
     state.selection.ranges,
     state.facet(compiledReferences),
+    { clean: state.facet(cleanMode) },
   );
   return Decoration.set(
     spans
@@ -367,6 +375,7 @@ const theme = EditorView.baseTheme({
   '.cm-visual-chip-cite': { color: '#2a7d4f' },
   '.cm-visual-chip-ref': { color: '#2b5fa8' },
   '.cm-visual-chip-label': { opacity: '0.6' },
+  '.cm-visual-command': { fontFamily: 'ui-monospace, Menlo, Consolas, monospace', cursor: 'text' },
   '.cm-visual-chip-missing': { color: '#c0392b', borderColor: '#c0392b' },
   '.cm-visual-image img': {
     display: 'block',
@@ -397,6 +406,8 @@ export interface VisualModeOptions {
   readonly images?: ImageLoader;
   /** Numbers from the last compile; without them, chips show keys. */
   readonly references?: AuxReferences;
+  /** Clean visual mode: commands visual mode does not render are shown as blocks with their name. */
+  readonly clean?: boolean;
 }
 
 /**
@@ -410,6 +421,7 @@ export function visualMode(options: VisualModeOptions = {}): Extension {
     projectMacros.of(options.macros ?? {}),
     ...(options.images === undefined ? [] : [imageLoader.of(options.images)]),
     ...(options.references === undefined ? [] : [compiledReferences.of(options.references)]),
+    cleanMode.of(options.clean === true),
     EditorView.editorAttributes.of({ class: 'cm-visual' }),
     parsed,
     loadedImages,
