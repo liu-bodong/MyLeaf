@@ -2,6 +2,22 @@
 
 An open-source, self-hostable collaborative LaTeX editor.
 
+> **Early development.** MyLeaf runs as a single-user editor today;
+> collaboration (real-time sync, comments, suggestions) is on the roadmap.
+
+![MyLeaf in dark mode: the bundled ICML 2027 sample in Visual mode, next to its compiled PDF](docs/images/screenshot.png)
+
+## Features
+
+- **Editor**: CodeMirror with LaTeX autocomplete, an optional vim mode, and
+  three modes: Code, Visual (LaTeX rendered in place) and Clean.
+- **PDF viewer**: PDF.js with SyncTeX navigation between source and PDF, and
+  a document outline panel.
+- **Compiling**: TeX Live through `latexmk`, with optional live preview
+  (TeXpresso or a patched pdfTeX).
+- **Projects**: file tree, drag-and-drop upload and `.zip` import.
+- **Appearance**: light and dark themes, editor font and layout settings.
+
 "MyLeaf" (and the `@myleaf/*` package scope) is a working name.
 
 Licensed under [AGPL-3.0](LICENSE). Design decisions: [docs/adr](docs/adr/README.md).
