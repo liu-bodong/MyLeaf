@@ -188,15 +188,15 @@ ${padding}
 ${third}
 \end{document}
 `);
-  /** Page `page` from a new session of `content`, typeset from the start. */
-  const freshPage = async (content: Uint8Array, page: number) => {
+  /** Page `page` from a new session of `content` (or files), typeset from the start. */
+  const freshPage = async (content: Uint8Array | ProjectFile[], page: number) => {
     const fresh: LivePreviewEvent[] = [];
     const backend = new PdftexLivePreview({ command, workRoot, kpathsea: kpathsea ?? {} });
     const other = await backend.open(
       {
         projectId: ProjectId('fresh'),
         rootFile: parseProjectPath('main.tex'),
-        files: [mainFile(content)],
+        files: content instanceof Uint8Array ? [mainFile(content)] : content,
       },
       (event) => fresh.push(event),
     );
@@ -209,9 +209,13 @@ ${third}
       await other.close();
     }
   };
-  const timeToPages = async (live: LivePreviewSession, content: Uint8Array, count: number) => {
+  const timeToPages = async (
+    live: LivePreviewSession,
+    content: Uint8Array | ProjectFile,
+    count: number,
+  ) => {
     const start = performance.now();
-    live.updateFile(mainFile(content));
+    live.updateFile(content instanceof Uint8Array ? mainFile(content) : content);
     await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(count);
     return performance.now() - start;
   };
@@ -234,7 +238,61 @@ ${third}
     expect(pages()[2]?.svg).toBe(await freshPage(edited, 3));
   });
 
-  it('does not resume from a snapshot after another file changed', async () => {
+  it('resumes from the last snapshot before an edit in an \\input file', async () => {
+    const chapter = (first: string, third: string) => ({
+      path: parseProjectPath('chapter.tex'),
+      content: bytes(String.raw`${first}
+\newpage
+${padding}
+Second page.
+\newpage
+${padding}
+${third}
+`),
+    });
+    const root = mainFile(
+      bytes(String.raw`\documentclass{article}
+\begin{document}
+\count255=0 \loop\advance\count255 by 1 \ifnum\count255<1000000 \repeat
+\input{chapter}
+\end{document}
+`),
+    );
+    const live = await open([root, chapter('First page.', 'Third page.')]);
+    live.showPages(3, 3);
+    const finalCounts = () =>
+      events.filter((event) => event.type === 'page-count' && event.final).length;
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
+    expect(pages()).toHaveLength(1);
+    const third = chapter('First page.', 'Third page, edited.');
+    const resumed = await timeToPages(live, third, 2);
+    const edited = chapter('First page, edited.', 'Third page, edited once more.');
+    const startedOver = await timeToPages(live, edited, 3);
+    expect(resumed).toBeLessThan(startedOver / 2);
+    expect(pages()[1]?.svg).toBe(await freshPage([root, third], 3));
+    expect(pages()[2]?.svg).toBe(await freshPage([root, edited], 3));
+  });
+
+  it('does not resume from a snapshot after a file it did not read appeared', async () => {
+    // \IfFileExists on page 1 does not open a missing file, so snapshots
+    // after it cannot tell that they depend on it.
+    const root = mainFile(
+      threePages(
+        String.raw`\IfFileExists{extra.tex}{\gdef\extra{found}}{\gdef\extra{missing}}First page.`,
+        String.raw`Third page: \extra.`,
+      ),
+    );
+    const live = await open([root]);
+    live.showPages(3, 3);
+    const finalCounts = () =>
+      events.filter((event) => event.type === 'page-count' && event.final).length;
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
+    const extra = { path: parseProjectPath('extra.tex'), content: bytes('% extra\n') };
+    await timeToPages(live, extra, 2);
+    expect(pages()[1]?.svg).toBe(await freshPage([root, extra], 3));
+  });
+
+  it('does not resume from a snapshot that read a changed file', async () => {
     const body = (text: string) => ({ path: parseProjectPath('first.tex'), content: bytes(text) });
     const live = await open([
       mainFile(threePages('\\input{first}', 'Third page.')),

@@ -69,7 +69,9 @@ directory. Messages are lines of tab-separated fields:
 | engine → driver | `ready`                                              | Paused before byte `<n>`                                           |
 | driver → engine | `run <id> <main-file> <output-dir> [<first> <last>]` | Fork a child; its bytes before the pause must equal the original's |
 | engine → driver | `started <id> <pid>`                                 | The child's process (to cancel the run, the driver kills it)       |
+| engine → driver | `read <path>`                                        | A file a child opened                                              |
 | engine → driver | `page <id> <n> <dir>`                                | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3)   |
+| engine → driver | `file <pid> <bytes> <eof> <path>`                    | Snapshot `<pid>` read `<bytes>` of `<path>` (`<eof>`: to its end)  |
 | engine → driver | `snapshot <id> <n> <pos> <pid> <child-pid>`          | A snapshot after page `<n>` and `<pos>` bytes (level 3)            |
 | engine → driver | `done <id> <status>`                                 | The child exited (exit status, or minus the signal)                |
 | engine → driver | `resumed <pid>`                                      | That process (engine or snapshot) reads commands again             |
@@ -83,11 +85,19 @@ child, so a `page` line can come after the run's `done`, and out of order.
 The hook is in pdfTeX's `ship_out` (`pdftex.web`).
 
 With `MYLEAF_PDFTEX_SNAPSHOTS` as well (level 3), the first time the child
-reads the main file after a shipout (it reads in blocks of 512 bytes), it
-forks: the new process goes on typesetting, and the old one stays paused as
-a snapshot of the state after `<pos>` bytes of the main file. A `run` sent
-to a snapshot resumes from there; the new content's first `<pos>` bytes must
-equal the old one's, and other files must be unchanged. The engine and its
+reads a TeX input (the main file, or an `\input`'d file; they are read in
+blocks of 512 bytes) after a shipout, it forks: the new process goes on
+typesetting, and the old one stays paused as a snapshot of the state after
+`<pos>` bytes of the main file. Before `snapshot`, it sends a `file` line
+for each input its run has read so far, open or closed (the main file
+included, under its original name): the bytes read, and whether it read to
+the end. A `run` sent to a snapshot resumes from there; for each of those
+files, the new content's first `<bytes>` must be the old one's (and, with
+`<eof>` 1, nothing may follow), and other files must not have changed, apart
+from files the snapshot had not opened yet (the driver knows these from
+`read` lines; images are not opened through the hooks and have none). The
+new child opens each input that was open at the snapshot again, by name, at
+the position read so far. The engine and its
 snapshots form a chain, and only the last paused process reads `<fd>`: each
 waits for its child to exit, then says `done` (for its child's run) and
 `resumed`. To run from snapshot _k_, the driver kills the snapshots after it

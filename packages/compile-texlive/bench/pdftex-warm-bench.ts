@@ -13,7 +13,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -117,10 +117,11 @@ try {
     const lines = createInterface({ input: control })[Symbol.asyncIterator]();
     // `started` and `resumed` lines (for cancelling, and for snapshots) are
     // not needed here: without snapshots the engine itself reads each `run`.
+    // Nor are `read` lines (the files a run opens).
     const next = async (): Promise<string> => {
       const line = await lines.next();
       if (line.done) throw new Error('pdfTeX closed the control connection');
-      return /^(started|resumed)\t/.test(line.value) ? next() : line.value;
+      return /^(started|resumed|read)\t/.test(line.value) ? next() : line.value;
     };
     let inputs = 0;
     while ((await next()) !== 'ready') inputs++;
@@ -222,23 +223,42 @@ try {
    * shipout. An edit in the last paragraph resumes from the last snapshot
    * before it; an edit in the first paragraph starts from the engine, after
    * the driver killed the snapshots. Includes killing them and waiting for
-   * `resumed` (protocol in vendor/pdftex/README.md).
+   * `resumed` (protocol in vendor/pdftex/README.md). With `split`, the body
+   * is in body.tex, which the main file `\input`s, and the edits are there.
    */
-  async function measureSnapshots(pauseAt: number) {
-    const engineDir = join(work, 'engine-snapshots');
+  async function measureSnapshots(pauseAt: number, split: boolean) {
+    const job = split ? 'main-split' : 'main';
+    const rootOf = (text: string) =>
+      split ? `${text.slice(0, bodyStart)}\\input{body}\n\\end{document}\n` : text;
+    const bodyOf = (text: string) => text.slice(bodyStart, text.lastIndexOf('\\end{document}'));
+    if (split) {
+      await writeFile(join(work, `${job}.tex`), rootOf(base));
+      await writeFile(join(work, 'body.tex'), bodyOf(base));
+      // As for main.tex above: the engine reads the .aux of a full run.
+      execFileSync(pdftex, [...args.slice(0, -1), `${job}.tex`], {
+        cwd: work,
+        env: fullEnv,
+        stdio: 'ignore',
+      });
+    }
+    const engineDir = join(work, `engine-snapshots-${job}`);
     await mkdir(engineDir);
-    const engine = spawn(pdftex, [`-output-directory=${engineDir}`, ...args], {
-      cwd: work,
-      env: {
-        ...fullEnv,
-        MYLEAF_PDFTEX_HOOKS: '1',
-        MYLEAF_PDFTEX_PAUSE_OFFSET: String(pauseAt),
-        MYLEAF_PDFTEX_CONTROL_FD: '3',
-        MYLEAF_PDFTEX_SNAPSHOTS: '1',
+    const engine = spawn(
+      pdftex,
+      [`-output-directory=${engineDir}`, ...args.slice(0, -1), `${job}.tex`],
+      {
+        cwd: work,
+        env: {
+          ...fullEnv,
+          MYLEAF_PDFTEX_HOOKS: '1',
+          MYLEAF_PDFTEX_PAUSE_OFFSET: String(pauseAt),
+          MYLEAF_PDFTEX_CONTROL_FD: '3',
+          MYLEAF_PDFTEX_SNAPSHOTS: '1',
+        },
+        stdio: ['ignore', 'ignore', 'inherit', 'pipe'],
+        detached: true,
       },
-      stdio: ['ignore', 'ignore', 'inherit', 'pipe'],
-      detached: true,
-    });
+    );
     const control = engine.stdio[3] as Duplex;
     const lines = createInterface({ input: control })[Symbol.asyncIterator]();
     const next = async () => {
@@ -248,15 +268,25 @@ try {
     };
     while ((await next())[0] !== 'ready');
     let reader = engine.pid!;
-    const snaps: { pid: number; pos: number; source: Buffer }[] = [];
+    /** Per snapshot: the files its run typeset, and the bytes it read of each (`file` lines). */
+    type Sources = Map<string, Buffer>;
+    const snaps: { pid: number; sources: Sources; reads: [string, number, boolean][] }[] = [];
+    const reads = new Map<number, [string, number, boolean][]>();
+    // The adapter's rule (packages/live-pdftex): the bytes read are unchanged,
+    // and no more of a file read to its end.
+    const holds = ({ sources, reads: read }: (typeof snaps)[number], now: Sources) =>
+      read.every(([name, bytes, eof]) => {
+        const before = sources.get(name);
+        const after = now.get(name);
+        if (!before || !after) return true; // not one of the benchmark's files
+        if (after.length < bytes || (eof && after.length !== bytes)) return false;
+        return before.subarray(0, bytes).equals(after.subarray(0, bytes));
+      });
     const run = async (id: string, text: string) => {
-      const source = Buffer.from(text, 'latin1');
+      const sources: Sources = new Map([[`${job}.tex`, Buffer.from(rootOf(text), 'latin1')]]);
+      if (split) sources.set('body.tex', Buffer.from(bodyOf(text), 'latin1'));
       let kept = 0;
-      while (kept < snaps.length) {
-        const { pos, source: old } = snaps[kept]!;
-        if (!old.subarray(0, pos).equals(source.subarray(0, pos))) break;
-        kept++;
-      }
+      while (kept < snaps.length && holds(snaps[kept]!, sources)) kept++;
       const target = kept > 0 ? snaps[kept - 1]!.pid : engine.pid!;
       const start = performance.now();
       if (reader !== target) {
@@ -266,24 +296,31 @@ try {
           if (kind === 'resumed' && Number(pid) === target) break;
         }
       }
-      const main = join(work, `snap-${id}.tex`);
-      const out = join(work, `out-snap-${id}`);
-      await writeFile(main, source);
+      const main = join(work, `snap-${job}-${id}.tex`);
+      const out = join(work, `out-snap-${job}-${id}`);
+      await writeFile(main, sources.get(`${job}.tex`)!);
+      if (split) await writeFile(join(work, 'body.tex'), sources.get('body.tex')!);
       await mkdir(out);
       control.write(`run\t${id}\t${main}\t${out}\t${LAST_PAGE}\t${LAST_PAGE}\n`);
       let shown = 0;
       let finished = 0;
       for (;;) {
-        const [kind, a, , c, d] = await next();
-        if (kind === 'snapshot' && a === id) snaps.push({ pid: Number(d), pos: Number(c), source });
-        else if (kind === 'page' && a === id) shown = performance.now() - start;
+        const [kind, a, b, c, d] = await next();
+        if (kind === 'file') {
+          const pid = Number(a);
+          if (!reads.has(pid)) reads.set(pid, []);
+          reads.get(pid)!.push([basename(d!), Number(b), c === '1']);
+        } else if (kind === 'snapshot' && a === id) {
+          snaps.push({ pid: Number(d), sources, reads: reads.get(Number(d)) ?? [] });
+          reads.delete(Number(d));
+        } else if (kind === 'page' && a === id) shown = performance.now() - start;
         else if (kind === 'done' && a === id) finished = performance.now() - start;
         else if (kind === 'resumed' && finished > 0) {
           reader = Number(a);
           break;
         }
       }
-      await stat(join(out, 'main.pdf'));
+      await stat(join(out, `${job}.pdf`));
       return { shown, finished };
     };
     // Each edit in the last paragraph keeps the run before's first paragraph,
@@ -322,7 +359,10 @@ try {
     results.push({ ...point, ...(await measure(point.offset, String(index))) });
   }
 
-  const snapshots = await measureSnapshots(pausePoints[1]!.offset);
+  const snapshots = {
+    'the main file': await measureSnapshots(pausePoints[1]!.offset, false),
+    'body.tex, which the main file \\inputs': await measureSnapshots(pausePoints[1]!.offset, true),
+  };
 
   const version = execFileSync(pdftex, ['--version'], { encoding: 'utf8' }).split('\n')[0];
   console.log(`${version} (vendor/pdftex)\nMedian of ${RUNS} runs (ms), benchmark paper.\n`);
@@ -349,13 +389,15 @@ try {
       console.log(`| ${page} | ${shown.toFixed(0)} | ${finished.toFixed(0)} |`);
     }
   }
-  console.log(
-    `\nSnapshots (level 3), pause after the \\begin{document} line, page ${LAST_PAGE} shown:\n`,
-  );
-  console.log(`| Run | To page ${LAST_PAGE}'s \`page\` message | To \`done\` |`);
-  console.log('| --- | ---: | ---: |');
-  for (const [name, times] of Object.entries(snapshots)) {
-    console.log(`| ${name} | ${times.shown.toFixed(0)} | ${times.finished.toFixed(0)} |`);
+  for (const [where, times] of Object.entries(snapshots)) {
+    console.log(
+      `\nSnapshots (level 3), pause after the \\begin{document} line, page ${LAST_PAGE} shown, body in ${where}:\n`,
+    );
+    console.log(`| Run | To page ${LAST_PAGE}'s \`page\` message | To \`done\` |`);
+    console.log('| --- | ---: | ---: |');
+    for (const [name, time] of Object.entries(times)) {
+      console.log(`| ${name} | ${time.shown.toFixed(0)} | ${time.finished.toFixed(0)} |`);
+    }
   }
   for (const { name, split } of results) {
     if (split === null) continue;

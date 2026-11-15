@@ -4,8 +4,9 @@ Status: level 2 done; level 3 in progress (owner approved on 2026-11-15).
 pdfTeX builds from source with pass-through stream hooks (finding 5); the
 level 2 engine (finding 6) runs live preview with
 `MYLEAF_LIVE_ENGINE=pdftex`. Level 3 steps 1 and 2, page-by-page output
-(finding 8) and snapshots inside the document (finding 9), are done, and
-keystroke to screen was measured again (step 3). TeXpresso was not measured
+(finding 8) and snapshots inside the document (finding 9), are done,
+snapshots also cover `\input`'d files (finding 10), and keystroke to screen
+was measured again (step 3). TeXpresso was not measured
 side by side: it crashes on these documents in the cloud container.
 Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
@@ -231,6 +232,55 @@ about 16 differences are math-extraction noise, not layout.
    | Edit in the first paragraph, from the engine | 114 ms    | 125 ms    |
    | Edit in the last paragraph, from a snapshot  | 32 ms     | 34 ms     |
 
+10. **Snapshots in `\input`'d files.** Finding 9 took snapshots only while
+    pdfTeX read the main file, and any change to another file discarded all
+    of them, so an edit in a chapter file typeset the whole body again
+    (level 2 speed). Now:
+    - A snapshot is taken at the first read of any TeX input (`\input`,
+      `\include`, `\openin`; kpathsea's `tex` format) after a shipout. All
+      TeX inputs are read in blocks of 512 bytes.
+    - Before its `snapshot` line, a snapshot sends a `file` line for every
+      input its run has read, open or closed: the bytes read and whether it
+      read to the end. A run child also sends `read <path>` for each input
+      it opens.
+    - The adapter resumes from the last snapshot for which each of those
+      project files has the same first bytes (and no more bytes, if it read
+      to the end), and every other changed project file is one a run opened
+      through the hooks (`read`), so the snapshot had not opened it yet. Any
+      other change (an image, a file that did not exist) discards all
+      snapshots, as before.
+    - A run's child opens every input that was open at the snapshot again,
+      by name, and seeks to the position read so far. This also fixes the
+      open risk of finding 9 (descriptors shared with the snapshot's
+      descendants).
+    - The adapter now writes changed files to `src/` only between runs, so
+      the files a run read are the ones its snapshots record.
+    - Each resumed page was compared with a fresh session of the same
+      sources (SVG text identical): benchmark paper and ICML sample with the
+      body moved to `body.tex`, edits next to the page viewed (paper pages 3
+      and 8, ICML pages 3 and 7), including 25 keys typed 80 ms apart.
+
+    Edit to `page` event in the adapter, body in an `\input`'d file (cloud
+    container, median of 12 edits 1.5 s apart, edits next to the page):
+
+    | Document, page viewed | Before (finding 9) | Now      |
+    | --------------------- | ------------------ | -------- |
+    | Benchmark paper, 1    | 50 ms              | 50 ms    |
+    | Benchmark paper, 3    | 86 ms              | 48 ms    |
+    | Benchmark paper, 8    | 122 ms             | 42–48 ms |
+    | ICML sample, 3        | 140 ms             | 54–76 ms |
+    | ICML sample, 7        | 181 ms             | 62–76 ms |
+
+    (Ranges: two sessions.) `pnpm bench:pdftex-warm` (median of 7, page 8
+    shown): with the body in `body.tex`, an edit in the last paragraph
+    resumes from a snapshot in 39 ms to page 8 (146 ms from the engine);
+    with the body in the main file, 34 ms (130 ms).
+
+    Memory (Linux, `smaps_rollup`, after the first runs): the engine and 7
+    snapshots of the benchmark paper use 62 MB in total (PSS); each
+    snapshot has about 3 MB of its own (private) memory. Snapshots are
+    still not limited in number (one per page).
+
 ## Proposed design (B)
 
 - Engine: TeX Live pdfTeX built with TeXpresso's I/O and snapshot hooks
@@ -254,13 +304,13 @@ about 16 differences are math-extraction noise, not layout.
 - Ending a forked child mid-document cleanly (pending floats, `\end` rules).
   Finishers (finding 8) end at a shipout with pdfTeX's end of job, not
   LaTeX's `\end{document}`; pages compared so far were identical.
-- Snapshots (finding 9): input files other than the main file that are open
-  at a snapshot (an `\openin` kept open across pages) share their offset
-  with the snapshot's descendants, which would make a resumed run read
-  from the wrong place. Not handled; snapshots are only valid when other
-  files are unchanged, but this case is not detected.
 - Number of snapshot processes for long documents (one per page, not
-  limited yet).
+  limited yet; about 3 MB each on Linux, finding 10). The owner chose a
+  server-wide maximum (environment variable) and a per-project setting in
+  compile settings.
+- Snapshots assume that a project file opened through the hooks is only
+  read that way (finding 10); a file that is also read another way (for
+  example as an image) would not invalidate them.
 - Images, fonts and file primitives read outside `openclose.c` (finding 5)
   must also go through the driver for rollback to be correct.
 
@@ -303,10 +353,10 @@ messages and UI are unchanged.
   visible page is already shown, the adapter cancels the rest of that run
   (it kills the run's child); references and the final page count then
   come from the next run that completes.
-- Snapshots (finding 9): the adapter keeps each engine's snapshots in
-  chain order with the root-file bytes they read. A run resumes from the
-  last one whose bytes match the new root file, if no other project file
-  changed since its run started; otherwise from the engine.
+- Snapshots (findings 9 and 10): the adapter keeps each engine's
+  snapshots in chain order with the project files their run typeset and
+  the bytes they read of each. A run resumes from the last one whose bytes
+  still match (finding 10); otherwise from the engine.
 - References: the engine reads the `.aux` at `\begin{document}`. When a run
   writes a different `.aux`, a new engine that reads it starts in the
   background, replaces the current one when ready, and the adapter runs
@@ -378,10 +428,9 @@ messages and UI are unchanged.
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
 (findings 6 and 7); the live-preview adapter; level 3 steps 1 and 2,
-page-by-page output (finding 8) and snapshots (finding 9).
+page-by-page output (finding 8) and snapshots (findings 9 and 10).
 
 Keystroke to screen is now 82–114 ms (medians) on the benchmark paper in
 the cloud container. Open: a side-by-side measurement with TeXpresso on a
-machine where it runs (the owner's Mac), the macOS run of snapshots, and the
-open risks of finding 9 (a limit on snapshot processes, other input files
-open across a snapshot).
+machine where it runs (the owner's Mac), and a limit on snapshot processes
+(next).

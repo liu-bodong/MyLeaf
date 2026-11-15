@@ -127,10 +127,23 @@ interface Engine {
   readonly snapshots: Snapshot[];
   /** The running child of the current run, to cancel it. */
   leaf: number | null;
-  /** Per run: the sources it typeset, which its snapshots record. */
-  readonly runs: Map<string, { readonly root: Buffer; readonly version: number }>;
+  /** Per run: the project files it typeset, which its snapshots record. */
+  readonly runs: Map<string, Sources>;
+  /** Per snapshot process: the `file` lines sent before its `snapshot` line. */
+  readonly reads: Map<number, Read[]>;
   /** Called when a process of the chain reads commands again (`resumed`). */
   readonly resumed: Map<number, (resumed: boolean) => void>;
+}
+
+/** Content of each project file, by project path. */
+type Sources = ReadonlyMap<string, Uint8Array>;
+
+/** What a snapshot's run had read of a project file. */
+interface Read {
+  readonly path: string;
+  readonly bytes: number;
+  /** It read to the end of the file. */
+  readonly eof: boolean;
 }
 
 /** A paused copy of a run's child, after a page was shipped out (level 3). */
@@ -138,11 +151,10 @@ interface Snapshot {
   readonly pid: number;
   /** Pages shipped out before it. */
   readonly page: number;
-  /** Bytes of the root file read before it: a run with the same bytes can resume there. */
-  readonly pos: number;
-  readonly root: Buffer;
-  /** `#version` when its run started: other files must not have changed since. */
-  readonly version: number;
+  /** The project files its run typeset. */
+  readonly files: Sources;
+  /** What it read of them: a run can resume there if those bytes are unchanged. */
+  readonly reads: readonly Read[];
 }
 
 /** Most runs in a row without an edit to bring references up to date. */
@@ -164,6 +176,14 @@ class PdftexSession implements LivePreviewSession {
   readonly #srcDir: string;
   readonly #onEvent: (event: LivePreviewEvent) => void;
   readonly #files = new Map<string, Uint8Array>();
+  /** Files changed since they were written to `src/`. */
+  readonly #dirty = new Set<string>();
+  /**
+   * Project files a run opened through pdfTeX's file hooks (`read`), which
+   * snapshots account for. A snapshot is invalid after a change to any
+   * other file, such as an image, or a file that did not exist.
+   */
+  readonly #hookedReads = new Set<string>();
   #format = '';
   #engine: Engine | null = null;
   /** An engine starting in the background with a newer `.aux`, to replace `#engine`. */
@@ -176,8 +196,6 @@ class PdftexSession implements LivePreviewSession {
   #running = false;
   #pending = false;
   #runs = 0;
-  /** File writes, in order; a run starts after those queued before it. */
-  #writes: Promise<void> = Promise.resolve();
   /** The run loop, while one is going. */
   #loop: Promise<void> = Promise.resolve();
   /** Page renders, in order. */
@@ -188,8 +206,6 @@ class PdftexSession implements LivePreviewSession {
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
   #inFlight: InFlightRun | null = null;
-  /** Counts changes to files other than the root file, which invalidate snapshots. */
-  #version = 0;
 
   constructor(
     options: Required<PdftexLivePreviewOptions>,
@@ -207,9 +223,26 @@ class PdftexSession implements LivePreviewSession {
 
   async writeSource(file: ProjectFile): Promise<void> {
     this.#files.set(file.path, file.content);
-    const path = join(this.#srcDir, ...file.path.split('/'));
+    await this.#writeFile(file.path, file.content);
+  }
+
+  async #writeFile(projectPath: string, content: Uint8Array): Promise<void> {
+    const path = join(this.#srcDir, ...projectPath.split('/'));
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, file.content);
+    await writeFile(path, content);
+  }
+
+  /**
+   * Writes the changed files to `src/` and returns the sources they hold.
+   * Files are written only between runs, so a run reads the sources it was
+   * started with, which its snapshots record.
+   */
+  async #writeSources(): Promise<Sources> {
+    const files: Sources = new Map(this.#files);
+    const dirty = [...this.#dirty];
+    this.#dirty.clear();
+    for (const path of dirty) await this.#writeFile(path, files.get(path)!);
+    return files;
   }
 
   start(format: string): void {
@@ -222,10 +255,9 @@ class PdftexSession implements LivePreviewSession {
     for (const engine of [this.#engine, this.#next]) {
       if (engine?.inputs.has(file.path) && file.path !== this.#rootFile) engine.stale = true;
     }
-    if (file.path !== this.#rootFile) this.#version++;
     this.#files.set(file.path, file.content);
+    this.#dirty.add(file.path);
     this.#settleRuns = 0;
-    this.#writes = this.#writes.then(() => this.writeSource(file)).catch(() => {});
     this.#schedule();
   }
 
@@ -240,7 +272,7 @@ class PdftexSession implements LivePreviewSession {
     this.#closing = true;
     this.#stopEngine(this.#engine);
     this.#stopEngine(this.#next);
-    await Promise.all([this.#writes, this.#loop, this.#renders]);
+    await Promise.all([this.#loop, this.#renders]);
     await rm(this.#dir, { recursive: true, force: true });
   }
 
@@ -256,16 +288,16 @@ class PdftexSession implements LivePreviewSession {
     this.#loop = (async () => {
       do {
         this.#pending = false;
-        await this.#writes;
-        await this.#runOnce().catch(() => {});
+        const files = await this.#writeSources().catch(() => null);
+        if (files) await this.#runOnce(files).catch(() => {});
       } while (this.#pending && !this.#closing);
       this.#running = false;
     })();
   }
 
-  /** Typesets the current sources once and shows the result. */
-  async #runOnce(): Promise<void> {
-    const root = Buffer.from(this.#files.get(this.#rootFile) ?? new Uint8Array());
+  /** Typesets `files` (the sources in `src/`) once and shows the result. */
+  async #runOnce(files: Sources): Promise<void> {
+    const root = Buffer.from(files.get(this.#rootFile) ?? new Uint8Array());
     const offset = pauseOffset(root);
     let engine: Engine | null = null;
     if (offset !== null) {
@@ -297,7 +329,7 @@ class PdftexSession implements LivePreviewSession {
     // The engine may have been stopped during the writes above (close()
     // ends its control connection): writing to it then would throw.
     // Level 3: the run resumes from the last snapshot before the edit.
-    if (engine && !(await this.#resume(engine, root))) engine = null;
+    if (engine && !(await this.#resume(engine, files))) engine = null;
     if (this.#closing) return;
     if (engine && !engine.control.writableEnded) {
       // Pages of the visible range are shown as soon as the child ships them
@@ -305,7 +337,7 @@ class PdftexSession implements LivePreviewSession {
       const [first, last] = this.#range;
       const inFlight: InFlightRun = { engine, id, shown: false };
       this.#inFlight = inFlight;
-      engine.runs.set(id, { root, version: this.#version });
+      engine.runs.set(id, files);
       engine.reader = null;
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
@@ -436,17 +468,13 @@ class PdftexSession implements LivePreviewSession {
   }
 
   /**
-   * Makes the last snapshot whose state still holds for `root` (or the engine
-   * itself) read commands: kills the processes after it in the chain and
-   * waits for its `resumed`. Returns false if the engine exited.
+   * Makes the last snapshot whose state still holds for `files` (or the
+   * engine itself) read commands: kills the processes after it in the chain
+   * and waits for its `resumed`. Returns false if the engine exited.
    */
-  async #resume(engine: Engine, root: Buffer): Promise<boolean> {
-    const holds = (snapshot: Snapshot) =>
-      snapshot.version === this.#version &&
-      snapshot.pos <= root.length &&
-      snapshot.root.subarray(0, snapshot.pos).equals(root.subarray(0, snapshot.pos));
+  async #resume(engine: Engine, files: Sources): Promise<boolean> {
     let kept = 0;
-    while (kept < engine.snapshots.length && holds(engine.snapshots[kept]!)) kept++;
+    while (kept < engine.snapshots.length && this.#holds(engine.snapshots[kept]!, files)) kept++;
     const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
     if (target === undefined) return false;
     if (engine.reader === target) return true;
@@ -457,6 +485,33 @@ class PdftexSession implements LivePreviewSession {
     for (const snapshot of engine.snapshots.splice(kept)) kill(snapshot.pid);
     if (engine.leaf !== null) kill(engine.leaf);
     return resumed;
+  }
+
+  /**
+   * Whether a run of `files` can resume from `snapshot`: each file it read
+   * has the same bytes up to where it read (and no more, if it read to the
+   * end), and other changed files are ones it had not opened yet.
+   */
+  #holds(snapshot: Snapshot, files: Sources): boolean {
+    const bytes = (content: Uint8Array | undefined, length?: number) =>
+      content && Buffer.from(content.buffer, content.byteOffset, length ?? content.length);
+    const same = (a: Uint8Array | undefined, b: Uint8Array | undefined, length?: number) =>
+      a === b ||
+      (a !== undefined && b !== undefined && bytes(a, length)!.equals(bytes(b, length)!));
+    const read = new Set<string>();
+    for (const { path, bytes: length, eof } of snapshot.reads) {
+      read.add(path);
+      const then = snapshot.files.get(path);
+      const now = files.get(path);
+      if (then === now) continue;
+      if (!then || !now || now.length < length || (eof && now.length !== length)) return false;
+      if (!same(then, now, length)) return false;
+    }
+    for (const path of new Set([...snapshot.files.keys(), ...files.keys()])) {
+      if (read.has(path) || same(snapshot.files.get(path), files.get(path))) continue;
+      if (!this.#hookedReads.has(path)) return false;
+    }
+    return true;
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -522,6 +577,7 @@ class PdftexSession implements LivePreviewSession {
       snapshots: [],
       leaf: null,
       runs: new Map(),
+      reads: new Map(),
       resumed: new Map(),
     };
     createInterface({ input: control }).on('line', (line) => {
@@ -530,6 +586,16 @@ class PdftexSession implements LivePreviewSession {
       if (kind === 'input' && first !== undefined) {
         const path = this.#projectPath(first);
         if (path !== null) inputs.add(path);
+      } else if (kind === 'read' && first !== undefined) {
+        const path = this.#projectPath(fields.slice(1).join('\t'));
+        if (path !== null) this.#hookedReads.add(path);
+      } else if (kind === 'file' && fields.length >= 5) {
+        const path = this.#projectPath(fields.slice(4).join('\t'));
+        const pid = Number(first);
+        if (!engine.reads.has(pid)) engine.reads.set(pid, []);
+        if (path !== null) {
+          engine.reads.get(pid)!.push({ path, bytes: Number(second), eof: third === '1' });
+        }
       } else if (kind === 'ready') {
         engine.isReady = true;
         engine.reader = child.pid ?? null;
@@ -539,15 +605,12 @@ class PdftexSession implements LivePreviewSession {
       } else if (kind === 'started' && second !== undefined) {
         engine.leaf = Number(second);
       } else if (kind === 'snapshot' && first !== undefined && fields.length === 6) {
-        const run = engine.runs.get(first);
-        if (run) {
-          const [page, pos, pid, leaf] = fields.slice(2).map(Number) as [
-            number,
-            number,
-            number,
-            number,
-          ];
-          engine.snapshots.push({ pid, page, pos, root: run.root, version: run.version });
+        const files = engine.runs.get(first);
+        const [page, , pid, leaf] = fields.slice(2).map(Number) as [number, number, number, number];
+        const reads = engine.reads.get(pid) ?? [];
+        engine.reads.delete(pid);
+        if (files) {
+          engine.snapshots.push({ pid, page, files, reads });
           engine.leaf = leaf;
         }
       } else if (kind === 'resumed' && first !== undefined) {
