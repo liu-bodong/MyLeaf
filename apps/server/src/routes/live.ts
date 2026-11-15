@@ -53,6 +53,7 @@ export function registerLiveRoutes(
   app.get('/api/live-preview', (): LivePreviewInfo => ({
     available: pool !== null,
     engine: pool?.engine ?? null,
+    maxSnapshots: pool?.maxSnapshots ?? null,
   }));
 
   app.get<{ Params: { id: string } }>(
@@ -123,7 +124,14 @@ export function registerLiveRoutes(
           ? stored
           : [...stored.filter((file) => file.path !== bibliography.path), bibliography];
       handle = await pool.open(
-        { projectId, rootFile: project.rootFile, files },
+        {
+          projectId,
+          rootFile: project.rootFile,
+          files,
+          ...(project.settings.liveSnapshots === null
+            ? {}
+            : { maxSnapshots: project.settings.liveSnapshots }),
+        },
         (event) => {
           if (event.type === 'page') {
             send(socket, { type: 'page', page: event.page, svg: event.svg });

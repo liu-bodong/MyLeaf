@@ -273,6 +273,55 @@ ${third}
     expect(pages()[2]?.svg).toBe(await freshPage([root, edited], 3));
   });
 
+  it('keeps at most the snapshots asked for', async () => {
+    /** pdfTeX processes of this test's sessions: the engine and its snapshots, once idle. */
+    const processes = () => {
+      try {
+        return execFileSync('pgrep', ['-f', workRoot], { encoding: 'utf8' }).trim().split('\n')
+          .length;
+      } catch {
+        return 0; // pgrep exits with 1 when nothing matches
+      }
+    };
+    events = [];
+    const backend = new PdftexLivePreview({
+      command,
+      workRoot,
+      kpathsea: kpathsea ?? {},
+      maxSnapshots: 3,
+    });
+    expect(backend.maxSnapshots).toBe(3);
+    const live = await backend.open(
+      {
+        projectId: ProjectId('p'),
+        rootFile: parseProjectPath('main.tex'),
+        files: [mainFile(threePages('First page.', 'Third page.'))],
+        maxSnapshots: 0,
+      },
+      (event) => events.push(event),
+    );
+    session = live;
+    live.showPages(3, 3);
+    const finalCounts = () =>
+      events.filter((event) => event.type === 'page-count' && event.final).length;
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
+    await expect.poll(processes, { timeout: 10_000 }).toBe(1);
+    // The backend's 3: a snapshot after each page (after page 3, when
+    // \end{document} reads the .aux).
+    live.setMaxSnapshots?.(null);
+    live.updateFile(mainFile(threePages('First page, edited.', 'Third page.')));
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(3);
+    await expect.poll(processes, { timeout: 10_000 }).toBe(4);
+    // Down to 1: the run resumes from the first snapshot and takes no more.
+    live.setMaxSnapshots?.(1);
+    live.updateFile(mainFile(threePages('First page, edited.', 'Third page, edited.')));
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(4);
+    await expect.poll(processes, { timeout: 10_000 }).toBe(2);
+    expect(pages().at(-1)?.svg).toBe(
+      await freshPage(threePages('First page, edited.', 'Third page, edited.'), 3),
+    );
+  });
+
   it('does not resume from a snapshot after a file it did not read appeared', async () => {
     // \IfFileExists on page 1 does not open a missing file, so snapshots
     // after it cannot tell that they depend on it.
@@ -324,6 +373,15 @@ ${third}
     await live.close();
     session = undefined;
     expect(readdirSync(join(workRoot, 'p'))).toEqual([]);
+    expect(tool('pgrep', ['-f', `${workRoot}/format`])).toBeNull();
+  });
+
+  it('stops the engine of a session closed while it starts', async () => {
+    const live = await open([mainFile(main('', 'Text.'))]);
+    await live.close();
+    session = undefined;
+    // The engine may be spawned after close() returned; it must not stay.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
     expect(tool('pgrep', ['-f', `${workRoot}/format`])).toBeNull();
   });
 });

@@ -67,6 +67,11 @@ export interface LivePreviewInfo {
   readonly available: boolean;
   /** The engine that typesets live pages, or `null` when not available. */
   readonly engine: TexEngine | null;
+  /**
+   * Most snapshots a session may keep on this server
+   * (`MYLEAF_LIVE_MAX_SNAPSHOTS`), or `null` when the engine has none.
+   */
+  readonly maxSnapshots: number | null;
 }
 
 /** Messages the browser sends on a project's live-preview WebSocket. */

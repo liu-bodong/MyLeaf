@@ -71,6 +71,7 @@ export function describeProjectStoreContract(
           autoCompile: true,
           precompilePreamble: true,
           livePreview: false,
+          liveSnapshots: null,
         });
         const updated = await store.updateProject(project.id, {
           settings: { precompilePreamble: false },
@@ -79,6 +80,7 @@ export function describeProjectStoreContract(
           autoCompile: true,
           precompilePreamble: false,
           livePreview: false,
+          liveSnapshots: null,
         });
         expect((await store.getProject(project.id))?.settings).toEqual(updated.settings);
       });

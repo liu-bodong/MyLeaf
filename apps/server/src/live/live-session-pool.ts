@@ -44,6 +44,11 @@ export class LiveSessionPool {
     return this.#backend.engine;
   }
 
+  /** Most snapshots a session may keep, or `null` when the backend has none. */
+  get maxSnapshots(): number | null {
+    return this.#backend.maxSnapshots ?? null;
+  }
+
   get size(): number {
     return this.#handles.size;
   }

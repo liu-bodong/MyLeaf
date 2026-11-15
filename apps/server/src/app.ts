@@ -40,7 +40,7 @@ export function buildApp(
   });
   registerErrorHandler(app);
   app.get('/health', () => ({ status: 'ok' }));
-  registerProjectRoutes(app, store, compiler);
+  registerProjectRoutes(app, store, compiler, livePreview);
   registerFileRoutes(app, store, livePreview);
   registerCompileRoutes(app, store, compiler, livePreview);
   void app.register(websocket, { options: { perMessageDeflate: liveSocketCompression } });

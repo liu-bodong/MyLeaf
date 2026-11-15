@@ -88,18 +88,25 @@ describe('server API', () => {
         autoCompile: false,
         precompilePreamble: true,
         livePreview: false,
+        liveSnapshots: null,
       });
       const response = await app.inject({
         method: 'PATCH',
         url: `/api/projects/${project.id}`,
-        payload: { settings: { autoCompile: true, livePreview: true } },
+        payload: { settings: { autoCompile: true, livePreview: true, liveSnapshots: 8 } },
       });
       expect(response.json<ProjectDto>().settings).toEqual({
         autoCompile: true,
         precompilePreamble: true,
         livePreview: true,
+        liveSnapshots: 8,
       });
-      for (const settings of [{ autoCompile: 'yes' }, { unknown: true }]) {
+      for (const settings of [
+        { autoCompile: 'yes' },
+        { unknown: true },
+        { liveSnapshots: -1 },
+        { liveSnapshots: 1.5 },
+      ]) {
         const invalid = await app.inject({
           method: 'PATCH',
           url: `/api/projects/${project.id}`,

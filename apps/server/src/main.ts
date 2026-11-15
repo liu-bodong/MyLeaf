@@ -1,7 +1,8 @@
 import { rm } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { TexLiveCompileBackend } from '@myleaf/compile-texlive';
-import { PdftexLivePreview } from '@myleaf/live-pdftex';
+import { DEFAULT_MAX_SNAPSHOTS, PdftexLivePreview } from '@myleaf/live-pdftex';
 import type { LivePreviewBackend } from '@myleaf/live-preview';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
 import { FileSystemProjectStore } from '@myleaf/storage-fs';
@@ -11,14 +12,15 @@ import { choosePdftex } from './live/pdftex-command.js';
 import { chooseTexpresso } from './live/texpresso-command.js';
 import { seedSampleProject } from './sample-project.js';
 
-function positiveInt(name: string, fallback: number): number {
+function positiveInt(name: string, fallback: number, minimum = 1): number {
   const raw = process.env[name];
   if (raw === undefined) {
     return fallback;
   }
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  if (!Number.isInteger(value) || value < minimum) {
+    const kind = minimum === 0 ? 'a non-negative' : 'a positive';
+    throw new Error(`${name} must be ${kind} integer, got ${JSON.stringify(raw)}`);
   }
   return value;
 }
@@ -42,6 +44,11 @@ const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds') }
 
 // Live sessions do not survive a restart: remove workspaces a crash left behind.
 const liveRoot = join(dataDir, 'live');
+const liveTracePath = process.env.MYLEAF_LIVE_TRACE;
+const liveTrace =
+  liveTracePath === undefined || liveTracePath === ''
+    ? null
+    : createWriteStream(resolve(liveTracePath), { flags: 'a' });
 await rm(liveRoot, { recursive: true, force: true });
 
 // Live preview engine: the patched TeXpresso (ADR 0012, default) or the
@@ -61,6 +68,12 @@ if (liveEngine === 'pdftex') {
       command: pdftex.command,
       kpathsea: pdftex.kpathsea,
       workRoot: liveRoot,
+      // Each snapshot is a paused pdfTeX process (about 3 MB of its own on Linux).
+      maxSnapshots: positiveInt('MYLEAF_LIVE_MAX_SNAPSHOTS', DEFAULT_MAX_SNAPSHOTS, 0),
+      // For diagnosis: a timestamped line per edit, run, pdfTeX message and page.
+      ...(liveTrace === null
+        ? {}
+        : { trace: (line: string) => liveTrace.write(`${new Date().toISOString()} ${line}\n`) }),
     });
     liveStatus = { level: 'info', message: `Live preview: enabled, pdfTeX (${pdftex.command})` };
   } else {

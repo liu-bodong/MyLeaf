@@ -18,6 +18,7 @@ class FakeLiveSession implements LivePreviewSession {
   readonly emit: (event: LivePreviewEvent) => void;
   readonly updates: ProjectFile[] = [];
   readonly ranges: [number, number][] = [];
+  readonly maxSnapshots: (number | null)[] = [];
   closed = false;
 
   constructor(request: LivePreviewRequest, emit: (event: LivePreviewEvent) => void) {
@@ -30,6 +31,9 @@ class FakeLiveSession implements LivePreviewSession {
   showPages(first: number, last: number): void {
     this.ranges.push([first, last]);
   }
+  setMaxSnapshots(max: number | null): void {
+    this.maxSnapshots.push(max);
+  }
   close(): Promise<void> {
     this.closed = true;
     return Promise.resolve();
@@ -38,6 +42,7 @@ class FakeLiveSession implements LivePreviewSession {
 
 class FakeLivePreview implements LivePreviewBackend {
   readonly engine = 'pdflatex';
+  readonly maxSnapshots = 32;
   readonly sessions: FakeLiveSession[] = [];
   open(request: LivePreviewRequest, onEvent: (e: LivePreviewEvent) => void) {
     const session = new FakeLiveSession(request, onEvent);
@@ -171,6 +176,7 @@ describe('live preview routes', () => {
     expect((await app.inject({ method: 'GET', url: '/api/live-preview' })).json()).toEqual({
       available: false,
       engine: null,
+      maxSnapshots: null,
     });
     const { messages } = await connect();
     await until(() => messages.find((m) => m.type === 'status'), 'status');
@@ -182,6 +188,7 @@ describe('live preview routes', () => {
     expect((await app.inject({ method: 'GET', url: '/api/live-preview' })).json()).toEqual({
       available: true,
       engine: 'pdflatex',
+      maxSnapshots: 32,
     });
     const { socket, messages } = await connect();
     await until(
@@ -238,6 +245,24 @@ describe('live preview routes', () => {
     expect(browser.extensions).toBe('permessage-deflate');
     expect(page).toEqual({ type: 'page', page: 1, svg });
     browser.close();
+  });
+
+  it("applies the project's snapshot setting to new and open sessions", async () => {
+    await start();
+    const patch = (liveSnapshots: number | null) =>
+      app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${project.id}`,
+        payload: { settings: { liveSnapshots } },
+      });
+    await patch(8);
+    const { messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const session = backend.sessions[0]!;
+    expect(session.request.maxSnapshots).toBe(8);
+    await patch(null);
+    await patch(2);
+    expect(session.maxSnapshots).toEqual([null, 2]);
   });
 
   it('passes saved files and uploads to open sessions', async () => {

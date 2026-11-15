@@ -93,6 +93,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   /** The server's live-preview engine, or `null` without live preview. */
   const [liveEngine, setLiveEngine] = useState<TexEngine | null>(null);
+  const [maxSnapshots, setMaxSnapshots] = useState<number | null>(null);
   const [liveChannel] = useState(() => new LiveChannel());
   /** Output shown while live preview is on; the PDF stays reachable. */
   const [outputView, setOutputView] = useState<'live' | 'pdf'>('live');
@@ -204,7 +205,9 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       if (cancelled) return;
       setProject(loaded);
       setFiles(entries);
-      setLiveEngine((await api.livePreviewInfo()).engine);
+      const liveInfo = await api.livePreviewInfo();
+      setLiveEngine(liveInfo.engine);
+      setMaxSnapshots(liveInfo.maxSnapshots);
       if (entries.some((entry) => entry.path === loaded.rootFile)) {
         const text = decodeText(await api.readFile(projectId, loaded.rootFile));
         if (!cancelled && text !== null) {
@@ -771,6 +774,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     settings={project.settings}
                     liveEngine={liveEngine}
                     livePreviewOn={showLive}
+                    maxSnapshots={maxSnapshots}
                     onChange={(settings) => {
                       if (settings.livePreview === true) setOutputView('live');
                       void updateSettings(settings).catch(report);

@@ -6,6 +6,12 @@ export interface LivePreviewRequest {
   readonly rootFile: ProjectPath;
   /** The complete source tree at the start of the session. */
   readonly files: readonly ProjectFile[];
+  /**
+   * Most snapshots (paused copies of the typesetter inside the document)
+   * the session may keep; the backend's `maxSnapshots` applies too.
+   * Default: the backend's.
+   */
+  readonly maxSnapshots?: number;
 }
 
 export type LivePreviewEvent =
@@ -31,6 +37,11 @@ export interface LivePreviewSession {
    * are emitted once typeset, and again whenever their content changes.
    */
   showPages(first: number, last: number): void;
+  /**
+   * Changes the most snapshots the session may keep (`null`: the
+   * backend's), from the next run. Backends without snapshots omit it.
+   */
+  setMaxSnapshots?(max: number | null): void;
   /** Stops the session and releases its resources. */
   close(): Promise<void>;
 }
@@ -46,6 +57,11 @@ export type LiveEngine = 'pdflatex' | 'xelatex';
 export interface LivePreviewBackend {
   /** The engine that typesets the live pages, which the UI names. */
   readonly engine: LiveEngine;
+  /**
+   * Most snapshots a session may keep (each is a process), or undefined for
+   * a backend without snapshots.
+   */
+  readonly maxSnapshots?: number;
   open(
     request: LivePreviewRequest,
     onEvent: (event: LivePreviewEvent) => void,
