@@ -116,8 +116,10 @@ interface Engine {
   readonly waiting: Map<string, (status: number | null) => void>;
   /** Per run: called when a page of the visible range is ready in a finisher's directory. */
   readonly pages: Map<string, (page: number, dir: string) => void>;
-  /** A file it read before the pause changed: start a new engine. */
-  stale: boolean;
+  /** The project files in `src/` when it started. */
+  readonly sources: Sources;
+  /** Files written to `src/` while it started, which it may have read either way. */
+  readonly changedWhileStarting: Set<string>;
   /**
    * Its paused processes form a chain: the engine, then snapshots in
    * document order. `reader` is the one that reads commands (the last one,
@@ -178,6 +180,8 @@ class PdftexSession implements LivePreviewSession {
   readonly #files = new Map<string, Uint8Array>();
   /** Files changed since they were written to `src/`. */
   readonly #dirty = new Set<string>();
+  /** The sources in `src/`. */
+  #written: Sources = new Map();
   /**
    * Project files a run opened through pdfTeX's file hooks (`read`), which
    * snapshots account for. A snapshot is invalid after a change to any
@@ -241,20 +245,23 @@ class PdftexSession implements LivePreviewSession {
     const files: Sources = new Map(this.#files);
     const dirty = [...this.#dirty];
     this.#dirty.clear();
+    for (const engine of [this.#engine, this.#next]) {
+      if (engine && !engine.isReady)
+        for (const path of dirty) engine.changedWhileStarting.add(path);
+    }
     for (const path of dirty) await this.#writeFile(path, files.get(path)!);
+    this.#written = files;
     return files;
   }
 
   start(format: string): void {
     this.#format = format;
+    this.#written = new Map(this.#files);
     this.#schedule();
   }
 
   updateFile(file: ProjectFile): void {
     if (this.#closing) return;
-    for (const engine of [this.#engine, this.#next]) {
-      if (engine?.inputs.has(file.path) && file.path !== this.#rootFile) engine.stale = true;
-    }
     this.#files.set(file.path, file.content);
     this.#dirty.add(file.path);
     this.#settleRuns = 0;
@@ -303,7 +310,9 @@ class PdftexSession implements LivePreviewSession {
     if (offset !== null) {
       const preamble = root.subarray(0, offset);
       const fits = (candidate: Engine | null): candidate is Engine =>
-        candidate !== null && !candidate.stale && candidate.preamble.equals(preamble);
+        candidate !== null &&
+        candidate.preamble.equals(preamble) &&
+        this.#inputsHold(candidate, files);
       if (fits(this.#next) && (this.#next.isReady || !fits(this.#engine))) {
         // The background engine has the newer .aux: use it once it is ready.
         if (await this.#next.ready) this.#promoteNext();
@@ -514,6 +523,24 @@ class PdftexSession implements LivePreviewSession {
     return true;
   }
 
+  /**
+   * Whether the files `engine` read before the pause (other than the root
+   * file, whose preamble is compared) still hold in `files`. An engine
+   * that is still starting has not reported all its inputs yet; it is
+   * checked again once ready.
+   */
+  #inputsHold(engine: Engine, files: Sources): boolean {
+    for (const path of engine.inputs) {
+      if (path === this.#rootFile) continue;
+      if (engine.changedWhileStarting.has(path)) return false;
+      const then = engine.sources.get(path);
+      const now = files.get(path);
+      if (then === now) continue;
+      if (!then || !now || !Buffer.from(then).equals(Buffer.from(now))) return false;
+    }
+    return true;
+  }
+
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     return { ...process.env, ...this.#options.kpathsea, ...extra };
   }
@@ -572,7 +599,8 @@ class PdftexSession implements LivePreviewSession {
       isReady: false,
       waiting,
       pages,
-      stale: false,
+      sources: this.#written,
+      changedWhileStarting: new Set(),
       reader: null,
       snapshots: [],
       leaf: null,
