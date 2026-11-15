@@ -1,5 +1,12 @@
-import { EditorSelection, Facet, StateEffect, StateField } from '@codemirror/state';
-import type { EditorState, Extension, Range as DecorationRange } from '@codemirror/state';
+import {
+  EditorSelection,
+  EditorState,
+  Facet,
+  StateEffect,
+  StateField,
+  Transaction,
+} from '@codemirror/state';
+import type { Extension, Range as DecorationRange, Text } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { DecorationSet } from '@codemirror/view';
 import { macroDefinitions, parseLatex } from '@myleaf/latex-syntax';
@@ -243,6 +250,8 @@ function widgetFor(
       return new ImageWidget(spec.path, images.get(spec.path), load);
     case 'command':
       return new LabelWidget(`\\${spec.name}`, 'cm-visual-chip cm-visual-command');
+    case 'environment':
+      return new LabelWidget(spec.name, 'cm-visual-chip cm-visual-command cm-visual-environment');
   }
 }
 
@@ -256,6 +265,7 @@ const markFor = (style: TextStyle) => {
   return mark;
 };
 const hidden = Decoration.replace({});
+const hiddenBlock = Decoration.replace({ block: true });
 
 function toDecoration(
   span: VisualSpan,
@@ -286,7 +296,7 @@ function toDecoration(
       );
     }
     case 'hide':
-      return hidden.range(span.from, span.to);
+      return (span.block === true ? hiddenBlock : hidden).range(span.from, span.to);
     case 'style':
       return markFor(span.style).range(span.from, span.to);
     case 'fold':
@@ -297,7 +307,13 @@ function toDecoration(
   }
 }
 
-function build(state: EditorState): DecorationSet {
+interface Built {
+  readonly decorations: DecorationSet;
+  /** Clean mode's hidden parts, which the cursor skips (`VisualSpan` hide with `skip`). */
+  readonly skipped: DecorationSet;
+}
+
+function build(state: EditorState): Built {
   const { document, macros: own } = state.field(parsed);
   const macros = { ...state.facet(projectMacros), ...own };
   const key = macrosKey(macros);
@@ -310,16 +326,24 @@ function build(state: EditorState): DecorationSet {
     state.facet(compiledReferences),
     { clean: state.facet(cleanMode) },
   );
-  return Decoration.set(
-    spans
-      .map((span) => toDecoration(span, macros, key, load, images))
-      .filter((range) => range !== null),
-    true,
-  );
+  return {
+    decorations: Decoration.set(
+      spans
+        .map((span) => toDecoration(span, macros, key, load, images))
+        .filter((range) => range !== null),
+      true,
+    ),
+    skipped: Decoration.set(
+      spans
+        .filter((span) => span.kind === 'hide' && span.skip === true && span.from < span.to)
+        .map((span) => hidden.range(span.from, span.to)),
+      true,
+    ),
+  };
 }
 
 // Block decorations (the preamble fold) must come from state, not a view plugin.
-const decorations = StateField.define<DecorationSet>({
+const decorations = StateField.define<Built>({
   create: build,
   update: (value, transaction) =>
     transaction.docChanged ||
@@ -331,7 +355,83 @@ const decorations = StateField.define<DecorationSet>({
     transaction.effects.some((effect) => effect.is(imageLoaded))
       ? build(transaction.state)
       : value,
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) => [
+    EditorView.decorations.from(field, (built) => built.decorations),
+    EditorView.atomicRanges.of((view) => view.state.field(field).skipped),
+  ],
+});
+
+/**
+ * Typing and deleting next to clean mode's hidden parts, which are atomic:
+ * - typing at the end of a hidden part that ends a line (a trailing comment)
+ *   goes before it, so it is not added to the comment;
+ * - Backspace after such a part deletes the character before it;
+ * - any other typing or deleting inside a hidden part is dropped, so a hidden
+ *   part is never changed or removed unseen.
+ * Other changes (undo, remote edits, commands) pass unchanged.
+ */
+const editAroundSkipped = EditorState.transactionFilter.of((transaction) => {
+  if (!transaction.docChanged) return transaction;
+  const backward = transaction.isUserEvent('delete.backward');
+  if (!transaction.isUserEvent('input') && !transaction.isUserEvent('delete')) return transaction;
+  const state = transaction.startState;
+  const ranges: { from: number; to: number; trailing: boolean }[] = [];
+  state.field(decorations).skipped.between(0, state.doc.length, (from, to) => {
+    ranges.push({ from, to, trailing: state.doc.sliceString(to - 1, to) !== '\n' });
+  });
+  if (ranges.length === 0) return transaction;
+  let adjusted = false;
+  const specs: { from: number; to: number; insert: Text }[] = [];
+  transaction.changes.iterChanges((fromA, toA, _fromB, _toB, insert) => {
+    if (fromA === toA) {
+      const range = ranges.find((r) => r.trailing && r.to === fromA);
+      if (range !== undefined) {
+        adjusted = true;
+        specs.push({ from: range.from, to: range.from, insert });
+        return;
+      }
+      specs.push({ from: fromA, to: toA, insert });
+      return;
+    }
+    const range = ranges.find((r) => fromA < r.to && toA > r.from);
+    if (range === undefined) {
+      specs.push({ from: fromA, to: toA, insert });
+      return;
+    }
+    adjusted = true;
+    if (
+      backward &&
+      range.trailing &&
+      fromA === range.from &&
+      toA === range.to &&
+      range.from > 0 &&
+      state.doc.sliceString(range.from - 1, range.from) !== '\n'
+    ) {
+      specs.push({ from: range.from - 1, to: range.from, insert });
+      return;
+    }
+    // Keep what lies before the hidden part (e.g. Enter removing the spaces
+    // before a trailing comment inserts its line break before the spaces).
+    const from = fromA <= range.from ? fromA : range.trailing ? range.from : range.to;
+    const to = fromA <= range.from ? Math.min(toA, range.from) : from;
+    if (to > from || insert.length > 0) specs.push({ from, to, insert });
+  });
+  if (!adjusted) return transaction;
+  const changes = state.changes(specs);
+  // Cursors at the end of a trailing hidden part continue from its start.
+  const selection = EditorSelection.create(
+    state.selection.ranges.map((r) => {
+      const range = r.empty ? ranges.find((h) => h.trailing && h.to === r.head) : undefined;
+      return range === undefined ? r : EditorSelection.cursor(range.from);
+    }),
+    state.selection.mainIndex,
+  ).map(changes, 1);
+  return {
+    changes,
+    selection,
+    scrollIntoView: true,
+    annotations: Transaction.userEvent.of(transaction.annotation(Transaction.userEvent) ?? 'input'),
+  };
 });
 
 const theme = EditorView.baseTheme({
@@ -376,6 +476,7 @@ const theme = EditorView.baseTheme({
   '.cm-visual-chip-ref': { color: '#2b5fa8' },
   '.cm-visual-chip-label': { opacity: '0.6' },
   '.cm-visual-command': { fontFamily: 'ui-monospace, Menlo, Consolas, monospace', cursor: 'text' },
+  '.cm-visual-environment': { fontStyle: 'italic' },
   '.cm-visual-chip-missing': { color: '#c0392b', borderColor: '#c0392b' },
   '.cm-visual-image img': {
     display: 'block',
@@ -426,6 +527,7 @@ export function visualMode(options: VisualModeOptions = {}): Extension {
     parsed,
     loadedImages,
     decorations,
+    editAroundSkipped,
     theme,
   ];
 }
