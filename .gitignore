@@ -9,3 +9,4 @@ data/
 test-results/
 playwright-report/
 vendor/texpresso/build/
+vendor/pdftex/build/
