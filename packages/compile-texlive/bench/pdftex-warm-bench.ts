@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 const RUNS = Number(process.env.BENCH_RUNS ?? 11);
 /** Pages shown page by page (level 3); the benchmark paper has 8. */
 const SHOWN_PAGES = [1, 3, 8];
+const LAST_PAGE = 8;
 const pdftex =
   process.env.PDFTEX ??
   fileURLToPath(new URL('../../../vendor/pdftex/build/bin/pdftex', import.meta.url));
@@ -114,10 +115,12 @@ try {
     });
     const control = engine.stdio[3] as Duplex;
     const lines = createInterface({ input: control })[Symbol.asyncIterator]();
-    const next = async () => {
+    // `started` and `resumed` lines (for cancelling, and for snapshots) are
+    // not needed here: without snapshots the engine itself reads each `run`.
+    const next = async (): Promise<string> => {
       const line = await lines.next();
       if (line.done) throw new Error('pdfTeX closed the control connection');
-      return line.value;
+      return /^(started|resumed)\t/.test(line.value) ? next() : line.value;
     };
     let inputs = 0;
     while ((await next()) !== 'ready') inputs++;
@@ -214,10 +217,112 @@ try {
           }));
     return { ready, inputs, edits: median(edits), short: median(short), split, shownPages };
   };
+  /**
+   * Level 3 snapshots: the run's child leaves a paused copy after each
+   * shipout. An edit in the last paragraph resumes from the last snapshot
+   * before it; an edit in the first paragraph starts from the engine, after
+   * the driver killed the snapshots. Includes killing them and waiting for
+   * `resumed` (protocol in vendor/pdftex/README.md).
+   */
+  async function measureSnapshots(pauseAt: number) {
+    const engineDir = join(work, 'engine-snapshots');
+    await mkdir(engineDir);
+    const engine = spawn(pdftex, [`-output-directory=${engineDir}`, ...args], {
+      cwd: work,
+      env: {
+        ...fullEnv,
+        MYLEAF_PDFTEX_HOOKS: '1',
+        MYLEAF_PDFTEX_PAUSE_OFFSET: String(pauseAt),
+        MYLEAF_PDFTEX_CONTROL_FD: '3',
+        MYLEAF_PDFTEX_SNAPSHOTS: '1',
+      },
+      stdio: ['ignore', 'ignore', 'inherit', 'pipe'],
+      detached: true,
+    });
+    const control = engine.stdio[3] as Duplex;
+    const lines = createInterface({ input: control })[Symbol.asyncIterator]();
+    const next = async () => {
+      const line = await lines.next();
+      if (line.done) throw new Error('pdfTeX closed the control connection');
+      return line.value.split('\t');
+    };
+    while ((await next())[0] !== 'ready');
+    let reader = engine.pid!;
+    const snaps: { pid: number; pos: number; source: Buffer }[] = [];
+    const run = async (id: string, text: string) => {
+      const source = Buffer.from(text, 'latin1');
+      let kept = 0;
+      while (kept < snaps.length) {
+        const { pos, source: old } = snaps[kept]!;
+        if (!old.subarray(0, pos).equals(source.subarray(0, pos))) break;
+        kept++;
+      }
+      const target = kept > 0 ? snaps[kept - 1]!.pid : engine.pid!;
+      const start = performance.now();
+      if (reader !== target) {
+        for (const { pid } of snaps.splice(kept)) process.kill(pid, 'SIGKILL');
+        for (;;) {
+          const [kind, pid] = await next();
+          if (kind === 'resumed' && Number(pid) === target) break;
+        }
+      }
+      const main = join(work, `snap-${id}.tex`);
+      const out = join(work, `out-snap-${id}`);
+      await writeFile(main, source);
+      await mkdir(out);
+      control.write(`run\t${id}\t${main}\t${out}\t${LAST_PAGE}\t${LAST_PAGE}\n`);
+      let shown = 0;
+      let finished = 0;
+      for (;;) {
+        const [kind, a, , c, d] = await next();
+        if (kind === 'snapshot' && a === id) snaps.push({ pid: Number(d), pos: Number(c), source });
+        else if (kind === 'page' && a === id) shown = performance.now() - start;
+        else if (kind === 'done' && a === id) finished = performance.now() - start;
+        else if (kind === 'resumed' && finished > 0) {
+          reader = Number(a);
+          break;
+        }
+      }
+      await stat(join(out, 'main.pdf'));
+      return { shown, finished };
+    };
+    // Each edit in the last paragraph keeps the run before's first paragraph,
+    // so the snapshots that run left hold for it.
+    const atStart = (i: number) => base.replace('Lorem ipsum', `Lorem ipsum ${i}`);
+    const atEnd = (i: number) => {
+      const text = atStart(i);
+      const last = text.lastIndexOf('Lorem ipsum');
+      return `${text.slice(0, last)}Lorem ipsum ${i}${text.slice(last + 'Lorem ipsum'.length)}`;
+    };
+    const end = { shown: [] as number[], finished: [] as number[] };
+    const begin = { shown: [] as number[], finished: [] as number[] };
+    await run('0', atStart(0));
+    for (let i = 1; i <= RUNS; i++) {
+      const fromStart = await run(`start-${i}`, atStart(i));
+      begin.shown.push(fromStart.shown);
+      begin.finished.push(fromStart.finished);
+      const fromSnapshot = await run(`end-${i}`, atEnd(i));
+      end.shown.push(fromSnapshot.shown);
+      end.finished.push(fromSnapshot.finished);
+    }
+    control.end();
+    process.kill(-engine.pid!, 'SIGKILL');
+    const summary = (times: { shown: number[]; finished: number[] }) => ({
+      shown: median(times.shown),
+      finished: median(times.finished),
+    });
+    return {
+      'Edit in the first paragraph (from the engine, snapshots taken)': summary(begin),
+      'Edit in the last paragraph (from the last snapshot before it)': summary(end),
+    };
+  }
+
   const results = [];
   for (const [index, point] of pausePoints.entries()) {
     results.push({ ...point, ...(await measure(point.offset, String(index))) });
   }
+
+  const snapshots = await measureSnapshots(pausePoints[1]!.offset);
 
   const version = execFileSync(pdftex, ['--version'], { encoding: 'utf8' }).split('\n')[0];
   console.log(`${version} (vendor/pdftex)\nMedian of ${RUNS} runs (ms), benchmark paper.\n`);
@@ -243,6 +348,14 @@ try {
     for (const { page, shown, finished } of shownPages) {
       console.log(`| ${page} | ${shown.toFixed(0)} | ${finished.toFixed(0)} |`);
     }
+  }
+  console.log(
+    `\nSnapshots (level 3), pause after the \\begin{document} line, page ${LAST_PAGE} shown:\n`,
+  );
+  console.log(`| Run | To page ${LAST_PAGE}'s \`page\` message | To \`done\` |`);
+  console.log('| --- | ---: | ---: |');
+  for (const [name, times] of Object.entries(snapshots)) {
+    console.log(`| ${name} | ${times.shown.toFixed(0)} | ${times.finished.toFixed(0)} |`);
   }
   for (const { name, split } of results) {
     if (split === null) continue;

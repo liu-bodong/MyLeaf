@@ -170,6 +170,83 @@ ${text}
     expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
   });
 
+  // Three pages; typesetting page 1 takes a while, so a run that starts
+  // over at \begin{document} is slow. A snapshot is taken when pdfTeX reads
+  // more of the main file after a shipout (in blocks of 512 bytes): the
+  // comment lines put the pages in different blocks.
+  const padding = `%${'x'.repeat(600)}`;
+  const threePages = (first: string, third: string) =>
+    bytes(String.raw`\documentclass{article}
+\begin{document}
+\count255=0 \loop\advance\count255 by 1 \ifnum\count255<1000000 \repeat
+${first}
+\newpage
+${padding}
+Second page.
+\newpage
+${padding}
+${third}
+\end{document}
+`);
+  /** Page `page` from a new session of `content`, typeset from the start. */
+  const freshPage = async (content: Uint8Array, page: number) => {
+    const fresh: LivePreviewEvent[] = [];
+    const backend = new PdftexLivePreview({ command, workRoot, kpathsea: kpathsea ?? {} });
+    const other = await backend.open(
+      {
+        projectId: ProjectId('fresh'),
+        rootFile: parseProjectPath('main.tex'),
+        files: [mainFile(content)],
+      },
+      (event) => fresh.push(event),
+    );
+    try {
+      other.showPages(page, page);
+      const svg = () => fresh.find((event) => event.type === 'page' && event.page === page);
+      await expect.poll(svg, { timeout: 30_000 }).toBeDefined();
+      return (svg() as { svg: string }).svg;
+    } finally {
+      await other.close();
+    }
+  };
+  const timeToPages = async (live: LivePreviewSession, content: Uint8Array, count: number) => {
+    const start = performance.now();
+    live.updateFile(mainFile(content));
+    await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(count);
+    return performance.now() - start;
+  };
+
+  it('resumes from the last snapshot before an edit', async () => {
+    const live = await open([mainFile(threePages('First page.', 'Third page.'))]);
+    live.showPages(3, 3);
+    // The first run writes the .aux; a new engine reads it and runs again.
+    const finalCounts = () =>
+      events.filter((event) => event.type === 'page-count' && event.final).length;
+    await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
+    expect(pages()).toHaveLength(1);
+    // An edit on page 3 resumes after page 2; one on page 1 starts over.
+    const third = threePages('First page.', 'Third page, edited.');
+    const resumed = await timeToPages(live, third, 2);
+    const edited = threePages('First page, edited.', 'Third page, edited once more.');
+    const startedOver = await timeToPages(live, edited, 3);
+    expect(resumed).toBeLessThan(startedOver / 2);
+    expect(pages()[1]?.svg).toBe(await freshPage(third, 3));
+    expect(pages()[2]?.svg).toBe(await freshPage(edited, 3));
+  });
+
+  it('does not resume from a snapshot after another file changed', async () => {
+    const body = (text: string) => ({ path: parseProjectPath('first.tex'), content: bytes(text) });
+    const live = await open([
+      mainFile(threePages('\\input{first}', 'Third page.')),
+      body('First page.'),
+    ]);
+    live.showPages(1, 1);
+    await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(1);
+    live.updateFile(body('First page, from another file.'));
+    await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(2);
+    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+  });
+
   it('typesets a root file without \\begin{document} in full runs', async () => {
     const live = await open([
       mainFile(bytes('\\input{body}\n')),

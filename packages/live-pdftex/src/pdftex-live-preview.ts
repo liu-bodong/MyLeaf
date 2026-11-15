@@ -19,6 +19,15 @@ import { sanitizeSvg } from './sanitize-svg.js';
 
 const run = promisify(execFile);
 
+/** Kills a process of an engine's chain; it may have exited already. */
+const kill = (pid: number) => {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Already gone.
+  }
+};
+
 export interface PdftexLivePreviewOptions {
   /** Path of the patched `pdftex` binary (vendor/pdftex/build.sh). */
   readonly command: string;
@@ -40,7 +49,8 @@ export interface PdftexLivePreviewOptions {
  * forks a child that typesets the document from there into a PDF, whose
  * pages are rendered to SVG with MuPDF. Output is pdfLaTeX's own. Pages of
  * the visible range are shown as soon as the child ships them out, and a new
- * edit cancels the rest of a run once they are on screen.
+ * edit cancels the rest of a run once they are on screen. The child leaves a
+ * snapshot after each page; a run resumes from the last one before the edit.
  *
  *   <workRoot>/format/pdflatex.fmt          made with the patched binary
  *   <workRoot>/<project-id>/<session>/src/  source files, kept up to date
@@ -108,6 +118,31 @@ interface Engine {
   readonly pages: Map<string, (page: number, dir: string) => void>;
   /** A file it read before the pause changed: start a new engine. */
   stale: boolean;
+  /**
+   * Its paused processes form a chain: the engine, then snapshots in
+   * document order. `reader` is the one that reads commands (the last one,
+   * once a run's child exited); `null` while a run's child is running.
+   */
+  reader: number | null;
+  readonly snapshots: Snapshot[];
+  /** The running child of the current run, to cancel it. */
+  leaf: number | null;
+  /** Per run: the sources it typeset, which its snapshots record. */
+  readonly runs: Map<string, { readonly root: Buffer; readonly version: number }>;
+  /** Called when a process of the chain reads commands again (`resumed`). */
+  readonly resumed: Map<number, (resumed: boolean) => void>;
+}
+
+/** A paused copy of a run's child, after a page was shipped out (level 3). */
+interface Snapshot {
+  readonly pid: number;
+  /** Pages shipped out before it. */
+  readonly page: number;
+  /** Bytes of the root file read before it: a run with the same bytes can resume there. */
+  readonly pos: number;
+  readonly root: Buffer;
+  /** `#version` when its run started: other files must not have changed since. */
+  readonly version: number;
 }
 
 /** Most runs in a row without an edit to bring references up to date. */
@@ -153,6 +188,8 @@ class PdftexSession implements LivePreviewSession {
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
   #inFlight: InFlightRun | null = null;
+  /** Counts changes to files other than the root file, which invalidate snapshots. */
+  #version = 0;
 
   constructor(
     options: Required<PdftexLivePreviewOptions>,
@@ -185,6 +222,7 @@ class PdftexSession implements LivePreviewSession {
     for (const engine of [this.#engine, this.#next]) {
       if (engine?.inputs.has(file.path) && file.path !== this.#rootFile) engine.stale = true;
     }
+    if (file.path !== this.#rootFile) this.#version++;
     this.#files.set(file.path, file.content);
     this.#settleRuns = 0;
     this.#writes = this.#writes.then(() => this.writeSource(file)).catch(() => {});
@@ -258,12 +296,17 @@ class PdftexSession implements LivePreviewSession {
     if (this.#closing) return;
     // The engine may have been stopped during the writes above (close()
     // ends its control connection): writing to it then would throw.
+    // Level 3: the run resumes from the last snapshot before the edit.
+    if (engine && !(await this.#resume(engine, root))) engine = null;
+    if (this.#closing) return;
     if (engine && !engine.control.writableEnded) {
       // Pages of the visible range are shown as soon as the child ships them
       // out (level 3): a finisher closes the PDF there.
       const [first, last] = this.#range;
       const inFlight: InFlightRun = { engine, id, shown: false };
       this.#inFlight = inFlight;
+      engine.runs.set(id, { root, version: this.#version });
+      engine.reader = null;
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
         engine.pages.set(id, (page, pageDir) => {
@@ -387,8 +430,33 @@ class PdftexSession implements LivePreviewSession {
     return this.#renders;
   }
 
+  /** Kills the running child: its parent in the chain then reads commands again. */
   #cancel(run: InFlightRun): void {
-    if (!run.engine.control.writableEnded) run.engine.control.write(`cancel\t${run.id}\n`);
+    if (run.engine.leaf !== null) kill(run.engine.leaf);
+  }
+
+  /**
+   * Makes the last snapshot whose state still holds for `root` (or the engine
+   * itself) read commands: kills the processes after it in the chain and
+   * waits for its `resumed`. Returns false if the engine exited.
+   */
+  async #resume(engine: Engine, root: Buffer): Promise<boolean> {
+    const holds = (snapshot: Snapshot) =>
+      snapshot.version === this.#version &&
+      snapshot.pos <= root.length &&
+      snapshot.root.subarray(0, snapshot.pos).equals(root.subarray(0, snapshot.pos));
+    let kept = 0;
+    while (kept < engine.snapshots.length && holds(engine.snapshots[kept]!)) kept++;
+    const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
+    if (target === undefined) return false;
+    if (engine.reader === target) return true;
+    const resumed = new Promise<boolean>((resolveResumed) => {
+      engine.resumed.set(target, resolveResumed);
+    });
+    // In chain order, so none of them reads commands before it dies.
+    for (const snapshot of engine.snapshots.splice(kept)) kill(snapshot.pid);
+    if (engine.leaf !== null) kill(engine.leaf);
+    return resumed;
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -424,6 +492,7 @@ class PdftexSession implements LivePreviewSession {
         MYLEAF_PDFTEX_HOOKS: '1',
         MYLEAF_PDFTEX_PAUSE_OFFSET: String(preamble.length),
         MYLEAF_PDFTEX_CONTROL_FD: '3',
+        MYLEAF_PDFTEX_SNAPSHOTS: '1',
       }),
       // fd 3 is a socket pair: the engine's control connection.
       stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
@@ -449,20 +518,53 @@ class PdftexSession implements LivePreviewSession {
       waiting,
       pages,
       stale: false,
+      reader: null,
+      snapshots: [],
+      leaf: null,
+      runs: new Map(),
+      resumed: new Map(),
     };
     createInterface({ input: control }).on('line', (line) => {
-      const [kind, first, second, third] = line.split('\t');
+      const fields = line.split('\t');
+      const [kind, first, second, third] = fields;
       if (kind === 'input' && first !== undefined) {
         const path = this.#projectPath(first);
         if (path !== null) inputs.add(path);
       } else if (kind === 'ready') {
         engine.isReady = true;
+        engine.reader = child.pid ?? null;
         markReady(true);
       } else if (kind === 'page' && first !== undefined && third !== undefined) {
         pages.get(first)?.(Number(second), third);
+      } else if (kind === 'started' && second !== undefined) {
+        engine.leaf = Number(second);
+      } else if (kind === 'snapshot' && first !== undefined && fields.length === 6) {
+        const run = engine.runs.get(first);
+        if (run) {
+          const [page, pos, pid, leaf] = fields.slice(2).map(Number) as [
+            number,
+            number,
+            number,
+            number,
+          ];
+          engine.snapshots.push({ pid, page, pos, root: run.root, version: run.version });
+          engine.leaf = leaf;
+        }
+      } else if (kind === 'resumed' && first !== undefined) {
+        const pid = Number(first);
+        // The processes after it in the chain are gone; a `resumed` from one
+        // that was killed since is stale.
+        const index = engine.snapshots.findIndex((snapshot) => snapshot.pid === pid);
+        if (index === -1 && pid !== child.pid) return;
+        engine.snapshots.length = index + 1;
+        engine.reader = pid;
+        engine.leaf = null;
+        engine.resumed.get(pid)?.(true);
+        engine.resumed.delete(pid);
       } else if (kind === 'done' && first !== undefined) {
         // Later `page` lines of this run are covered by its whole PDF.
         pages.delete(first);
+        engine.runs.delete(first);
         waiting.get(first)?.(Number(second));
         waiting.delete(first);
       }
@@ -479,6 +581,8 @@ class PdftexSession implements LivePreviewSession {
       for (const resolveRun of waiting.values()) resolveRun(null);
       waiting.clear();
       pages.clear();
+      for (const resolveResumed of engine.resumed.values()) resolveResumed(false);
+      engine.resumed.clear();
       if (this.#engine === engine) this.#engine = null;
       if (this.#next === engine) this.#next = null;
     });
