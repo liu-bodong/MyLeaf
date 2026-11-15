@@ -26,6 +26,7 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
+import type { ImageLoader } from '@myleaf/editor-visual';
 import type { MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
@@ -62,6 +63,8 @@ interface LatexEditorProps {
   readonly visual?: boolean;
   /** Macros from the project's other files, for math in visual mode. */
   readonly macros?: MacroDefinitions;
+  /** Loads `\includegraphics` images for visual mode. */
+  readonly images?: ImageLoader;
   readonly ref?: Ref<LatexEditorHandle>;
 }
 
@@ -83,12 +86,15 @@ export function LatexEditor({
   onHistoryChange,
   visual = false,
   macros = NO_MACROS,
+  images,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
-  const visualRef = useRef(visual ? visualMode({ macros }) : []);
+  const visualRef = useRef(
+    visual ? visualMode(images === undefined ? { macros } : { macros, images }) : [],
+  );
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -149,9 +155,11 @@ export function LatexEditor({
   }, [documentId]);
 
   useEffect(() => {
-    visualRef.current = visual ? visualMode({ macros }) : [];
+    visualRef.current = visual
+      ? visualMode(images === undefined ? { macros } : { macros, images })
+      : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
-  }, [macros, mode, visual]);
+  }, [images, macros, mode, visual]);
 
   useImperativeHandle(
     ref,

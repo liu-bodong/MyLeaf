@@ -14,6 +14,7 @@ import { LivePreviewPane } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
+import { useImageLoader } from '../editor/use-image-loader.js';
 import { useProjectMacros } from '../editor/use-project-macros.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
 import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
@@ -114,6 +115,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     document?.path ?? null,
     layout.editorMode === 'visual',
   );
+  const imageLoader = useImageLoader(projectId, files);
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -680,6 +682,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
                     macros={projectMacros}
+                    images={imageLoader}
                   />
                 )}
                 {document?.kind === 'binary' && (

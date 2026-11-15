@@ -338,9 +338,17 @@ class Parser {
     };
   }
 
-  #environment(begin: CommandNode): LatexNode {
-    const nameArg = begin.args[0];
-    if (nameArg === undefined) return begin;
+  #environment(command: CommandNode): LatexNode {
+    const nameArg = command.args[0];
+    if (nameArg === undefined) return command;
+    // Options right after \begin{name}, e.g. figure[t] or enumitem's itemize[noitemsep].
+    const begin: CommandNode =
+      this.#text[this.#pos] === '['
+        ? (() => {
+            const options = this.#argument(true);
+            return { ...command, args: [...command.args, options], to: options.to };
+          })()
+        : command;
     const name = this.#text.slice(nameArg.contentFrom, nameArg.contentTo).trim();
     const math = MATH_ENVIRONMENTS.has(name);
     const raw = math || VERBATIM_ENVIRONMENTS.has(name);

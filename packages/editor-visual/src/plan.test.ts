@@ -1,7 +1,14 @@
 import { parseLatex } from '@myleaf/latex-syntax';
 import { describe, expect, it } from 'vitest';
 import { planVisual } from './plan.js';
-import type { VisualSpan } from './plan.js';
+import type { VisualSpan, WidgetSpec } from './plan.js';
+
+const widgetText = (widget: WidgetSpec) =>
+  widget.type === 'marker'
+    ? widget.label
+    : widget.type === 'chip'
+      ? `${widget.chip}:${widget.text}`
+      : `image:${widget.path}`;
 
 /** The text as visual mode shows it: hidden spans removed, folds as `[label]`, math as `⟨tex⟩`. */
 function shown(text: string, spans: readonly VisualSpan[]): string {
@@ -9,7 +16,13 @@ function shown(text: string, spans: readonly VisualSpan[]): string {
   let at = 0;
   for (const span of spans.filter((s) => s.kind !== 'style')) {
     const replacement =
-      span.kind === 'fold' ? `[${span.label}]` : span.kind === 'math' ? `⟨${span.tex}⟩` : '';
+      span.kind === 'fold'
+        ? `[${span.label}]`
+        : span.kind === 'math'
+          ? `⟨${span.tex}⟩`
+          : span.kind === 'widget'
+            ? `«${widgetText(span.widget)}»`
+            : '';
     out += text.slice(at, span.from) + replacement;
     at = span.to;
   }
@@ -118,5 +131,61 @@ describe('planVisual', () => {
       expect(hidden[i]!.from).toBeGreaterThanOrEqual(hidden[i - 1]!.to);
     }
     expect(shown(text, spans)).toBe('A b c % d');
+  });
+
+  it('shows list items as markers and hides lines holding only begin or end', () => {
+    const text = [
+      String.raw`\begin{enumerate}`,
+      String.raw`  \item One`,
+      String.raw`  \begin{itemize}`,
+      String.raw`    \item Nested`,
+      String.raw`  \end{itemize}`,
+      String.raw`  \item[*] Two`,
+      String.raw`\end{enumerate}`,
+      'After',
+    ].join('\n');
+    expect(shown(text, plan(text, text.length))).toBe(
+      '  «1.» One\n    «•» Nested\n  «*» Two\nAfter',
+    );
+    // The cursor on a hidden line shows it.
+    const atNested = text.indexOf('\\begin{itemize}');
+    expect(shown(text, plan(text, atNested))).toContain('  \\begin{itemize}\n');
+  });
+
+  it('numbers enumerate items by depth and bolds description terms', () => {
+    const text = String.raw`\begin{enumerate}\item a \begin{enumerate}\item b \item c\end{enumerate}\end{enumerate} \begin{description}\item[Term] text\end{description}`;
+    expect(shown(text, plan(text))).toBe('«1.» a «(a)» b «(b)» c «Term» text');
+    expect(
+      plan(text).flatMap((s) =>
+        s.kind === 'widget' && s.widget.type === 'marker' ? [s.widget.term] : [],
+      ),
+    ).toEqual([false, false, false, true]);
+  });
+
+  it('shows references, citations and labels as chips', () => {
+    const text = String.raw`See \cref{sec:a}, \eqref{eq:b} and \citep[p.~3]{smith20, li21}.\label{sec:c} \ref{}`;
+    expect(shown(text, plan(text))).toBe(
+      'See «ref:sec:a», «ref:(eq:b)» and «cite:[smith20, li21]».«label:sec:c» \\ref{}',
+    );
+    expect(shown(text, plan(text, text.indexOf('smith')))).toContain(
+      String.raw`\citep[p.~3]{smith20, li21}`,
+    );
+  });
+
+  it('shows figures as their image and caption, without layout commands', () => {
+    const text = [
+      String.raw`\begin{figure}[t]`,
+      String.raw`  \centering`,
+      String.raw`  \includegraphics[width=\linewidth]{figs/plot}`,
+      String.raw`  \caption{Results \emph{so far}.}\label{fig:plot}`,
+      String.raw`\end{figure}`,
+    ].join('\n');
+    expect(shown(text, plan(text, text.length + 1))).toBe(
+      '  «image:figs/plot»\n  Results so far.«label:fig:plot»\n',
+    );
+    expect(styled(text, plan(text, text.length + 1))).toContainEqual([
+      'caption',
+      String.raw`Results \emph{so far}.`,
+    ]);
   });
 });

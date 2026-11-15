@@ -78,6 +78,13 @@ describe('parseLatex', () => {
     expect(items.map((item) => item.args.length)).toEqual([0, 1]);
   });
 
+  it('reads options right after \\begin{name} as part of it', () => {
+    const text = String.raw`\begin{figure}[t] [x]\end{figure}`;
+    const [figure] = only<EnvironmentNode>(parseLatex(text).nodes, 'environment');
+    expect(slice(text, figure!.begin)).toBe(String.raw`\begin{figure}[t]`);
+    expect(text.slice(figure!.contentFrom, figure!.contentTo)).toBe(' [x]');
+  });
+
   it('keeps math and verbatim environments raw', () => {
     const text = String.raw`\begin{align*}a &= \textbf{b} \\ c\end{align*}\begin{verbatim}\end{x} %\end{verbatim}`;
     const [align, verbatim] = only<EnvironmentNode>(parseLatex(text).nodes, 'environment');

@@ -110,6 +110,17 @@ a marker.
   argument default are skipped.
 - Visual mode shows prose in the interface's proportional font; Code mode
   keeps the monospace font.
+- Lists, chips and figures (milestone 3): list markers follow LaTeX's
+  defaults, with itemize and enumerate depths counted separately; a line
+  holding only `\begin{…}`, `\end{…}` (lists, `figure`, `center`) or
+  `\centering` is hidden whole. Options right after `\begin{name}` (e.g.
+  `figure[t]`) belong to the `\begin`. Chips show keys until milestone 4.
+  `\includegraphics` paths resolve like pdfLaTeX (relative to the project
+  root, graphicx's extension order, so a PDF wins over a PNG of the same
+  name); PNG, JPEG, GIF and WebP are shown, other formats as their path.
+  Images load outside the editor state and arrive as a transaction with
+  their natural size, so the editor measures the new line height (a size
+  change inside a drawn widget left the line numbers misaligned).
 
 ## Consequences
 
