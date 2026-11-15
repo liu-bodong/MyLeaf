@@ -113,8 +113,44 @@ about 16 differences are math-extraction noise, not layout.
    hyperref, microtype and other `AtBeginDocument` code) and finishing the
    document (about 70 ms: `\end{document}` code, embedding font subsets,
    writing the PDF, process exit). Typesetting the 8 pages is about 65 ms.
-   A snapshot after `\begin{document}` would remove the first part; the
-   second part needs level 3's page-by-page output.
+   Finding 7 removes most of this without a new snapshot mechanism.
+
+7. **Pausing after the `\begin{document}` line.** The same patch pauses at
+   any line start, so the engine can also run `\begin{document}` before it
+   pauses (the offset is the start of the line after it). The child then
+   only typesets the body and finishes the document.
+   - The PDF is identical to a full run with the same `.aux`, apart from
+     `/ID` and the dates.
+   - The `.aux` (and other files read at `\begin{document}`, such as
+     hyperref's `.out`) are read once per engine. The adapter starts a new
+     engine in the background when a run writes a different `.aux`, and
+     runs once more on it (below).
+   - The engine has its own `-output-directory`: at `\begin{document}` it
+     opens the `.aux` for writing, which would otherwise truncate the one
+     the next engine reads.
+   - Text typed on the `\begin{document}` line itself is then part of the
+     preamble and starts a new engine (about 480 ms).
+
+   Measured with `pnpm bench:pdftex-warm` (cloud container, median of 11,
+   same run for all rows):
+
+   | Run (benchmark paper)                                   | Time   |
+   | ------------------------------------------------------- | ------ |
+   | Full run, text edit                                     | 546 ms |
+   | Pause before the `\begin{document}` line, text edit     | 185 ms |
+   | Pause before the `\begin{document}` line, one-line body | 114 ms |
+   | Pause after the `\begin{document}` line, text edit      | 80 ms  |
+   | Pause after the `\begin{document}` line, one-line body  | 11 ms  |
+   | Engine start to the pause before the line               | 352 ms |
+   | Engine start to the pause after the line                | 476 ms |
+
+   Instrumented with `\pdfelapsedtime`, the 80 ms are about 66 ms of
+   typesetting the 8 pages and 9 ms after `\end{document}`; the rest is
+   fork and messages. The ~70 ms after the body in finding 6 is down to
+   about 9 ms, while the engine start grew by about 124 ms, more than the
+   ~42 ms of `\begin{document}`. So other work that the child used to do
+   now happens once in the engine; which work that is was not
+   investigated.
 
 ## Proposed design (B)
 
@@ -129,8 +165,10 @@ about 16 differences are math-extraction noise, not layout.
 
 ## Open risks
 
-- Building pdfTeX on macOS (the `funopen` branch is written but not
-  compiled; Linux builds and runs, finding 5).
+- pdfTeX on macOS: it builds with `vendor/pdftex/macos-target-os-mac.patch`
+  and the stream hooks (`funopen`) gave identical PDFs on the owner's Mac
+  with MacTeX 2025; the warm fork has not been run there yet. MacTeX is
+  TeX Live 2025, newer than the pinned pdfTeX 1.40.25 (TeX Live 2023).
 - Where pdfTeX must fork for snapshots (TeXpresso's XeTeX forks while
   reading input) and whether all state survives a fork (open `FILE*`s,
   kpathsea caches, pdfTeX's PDF object state).
@@ -143,11 +181,11 @@ about 16 differences are math-extraction noise, not layout.
 Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011). The
 owner approved level 2 on 2026-11-15; level 3 is not decided.
 
-| Level                                                                                   | Work                                     | Server time per edit (8 pages)                                        | Keystroke to screen                         |
-| --------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
-| 1. Single pass without latexmk                                                          | Done                                     | ~280–330 ms (measured)                                                | ~300–450 ms (estimate)                      |
-| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (finding 6, `packages/live-pdftex`) | 181–188 ms, against 222 ms for level 1 on the same machine (measured) | 231–320 ms, median 272 ms (measured)        |
-| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                          | Comparable to TeXpresso (estimate)                                    | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+| Level                                                                                   | Work                                            | Server time per edit (8 pages)                                                                 | Keystroke to screen                         |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 1. Single pass without latexmk                                                          | Done                                            | ~280–330 ms (measured)                                                                         | ~300–450 ms (estimate)                      |
+| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (findings 6 and 7, `packages/live-pdftex`) | 80 ms child, ~97 ms to the SVG page, against 222 ms for level 1 on the same machine (measured) | 123–269 ms, medians 177–193 ms (measured)   |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                                 | Comparable to TeXpresso (estimate)                                                             | TeXpresso: ~130–145 ms (measured, ADR 0012) |
 
 Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
 output), so it can be a first step towards it.
@@ -159,7 +197,8 @@ output), so it can be a first step towards it.
 `MYLEAF_LIVE_ENGINE=pdftex` (default: TeXpresso). Server routes, WebSocket
 messages and UI are unchanged.
 
-- Per session: an engine for the root file's preamble. Each edit runs one
+- Per session: an engine for the root file's preamble, paused after the
+  `\begin{document}` line (finding 7). Each edit runs one
   child (one at a time; edits during a run are coalesced into one more run).
   A new engine starts when the preamble or a project file read before the
   pause changes. Without `\begin{document}` in the root file, each run is a
@@ -169,20 +208,30 @@ messages and UI are unchanged.
   MuPDF names glyph outlines after their index in pdfTeX's font subset,
   which changes when other pages use new glyphs; the adapter renumbers them
   in order of use, so unchanged pages are not re-sent.
-- References: after a successful run its `.aux` is used by the next one, so
-  they settle over edits (single pass per edit, as in ADR 0014). Citations
-  come from the `.bbl` the server adds (ADR 0014).
+- References: the engine reads the `.aux` at `\begin{document}`. When a run
+  writes a different `.aux`, a new engine that reads it starts in the
+  background, replaces the current one when ready, and the adapter runs
+  once more without an edit, so references settle as with latexmk's reruns
+  (at most 3 such runs in a row). Citations come from the `.bbl` the server
+  adds (ADR 0014).
 - Keystroke to updated page on screen, measured in Chromium against the dev
-  server (benchmark paper, page 1, 12 edits): median 272 ms (231–320 ms).
-  For comparison, ADR 0012 measured 130–145 ms for TeXpresso on another
-  machine; not measured side by side here.
+  server (benchmark paper, typing in the first paragraph, page 1, 12 edits
+  per run, 3 runs): medians 177, 193 and 181 ms (123–269 ms). Pausing
+  before the `\begin{document}` line, measured the same way: medians 268
+  and 292 ms (232–380 ms). For comparison, ADR 0012 measured 130–145 ms for
+  TeXpresso on another machine; not measured side by side here.
+- Where the ~180 ms go (same machine, medians): edit to `page` event in the
+  adapter ~97 ms (child 80 ms, `mutool` ~10 ms per page); edit to `page`
+  message over the WebSocket ~124 ms (the SVG is ~290–330 KB); the browser
+  (parsing the message, the image, the editor's own work per keystroke) the
+  remaining ~55–65 ms.
 
 ## Next step
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
-(finding 6); the live-preview adapter.
+(findings 6 and 7); the live-preview adapter.
 
 Level 3 (snapshots inside the document, page-by-page output) is not
-started; the owner decides. Finding 6 shows where its gains would come
-from: the ~42 ms of `\begin{document}` and the ~70 ms of finishing the
-document that every level 2 run repeats.
+started; the owner decides. After finding 7, what a level 2 run repeats is
+typesetting the whole body (about 66 ms for 8 pages); level 3 would stop at
+the shown page.

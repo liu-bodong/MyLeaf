@@ -14,11 +14,17 @@ const RUNS = Number(process.env.BENCH_RUNS ?? 11);
 const pdftex =
   process.env.PDFTEX ??
   fileURLToPath(new URL('../../../vendor/pdftex/build/bin/pdftex', import.meta.url));
-// The patched binary has no texmf.cnf next to it; use the installed TeX Live's.
-const texmfcnf = execFileSync('kpsewhich', ['-var-value', 'TEXMFCNF'], {
-  encoding: 'utf8',
-}).trim();
-const baseEnv = { ...process.env, TEXMFCNF: texmfcnf };
+// The patched binary is not installed with TeX Live: point kpathsea at the
+// installed TeX Live's files (as packages/live-pdftex's kpathseaEnv does).
+const kpathsea = Object.fromEntries(
+  ['TEXMFCNF', 'TEXMFROOT', 'TEXMFLOCAL']
+    .map((name): [string, string] => [
+      name,
+      execFileSync('kpsewhich', ['-var-value', name], { encoding: 'utf8' }).trim(),
+    ])
+    .filter(([, value]) => value !== ''),
+);
+const baseEnv = { ...process.env, ...kpathsea };
 
 const median = (values: number[]) =>
   [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;

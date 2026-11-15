@@ -8,6 +8,7 @@ import type { LivePreviewEvent, LivePreviewSession } from '@myleaf/live-preview'
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { kpathseaEnv } from './kpathsea-env.js';
 import { pauseOffset } from './pause-offset.js';
 import { PdftexLivePreview } from './pdftex-live-preview.js';
 
@@ -15,23 +16,24 @@ const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text);
 
 describe('pauseOffset', () => {
-  it('returns the start of the line holding \\begin{document}', () => {
+  it('returns the start of the line after the one holding \\begin{document}', () => {
     const preamble = '\\documentclass{article}\n\\usepackage{x}\n';
-    expect(pauseOffset(bytes(`${preamble}\\begin{document}\nHi\n\\end{document}\n`))).toBe(
-      preamble.length,
+    const begin = '\\begin{document}\n';
+    expect(pauseOffset(bytes(`${preamble}${begin}Hi\n\\end{document}\n`))).toBe(
+      preamble.length + begin.length,
     );
-    expect(pauseOffset(bytes(`${preamble}  \\usepackage{y}\\begin{document}Hi`))).toBe(
-      preamble.length,
-    );
+    const line = '  \\usepackage{y}\\begin{document}Hi\n';
+    expect(pauseOffset(bytes(`${preamble}${line}More`))).toBe(preamble.length + line.length);
+    expect(pauseOffset(bytes(`${preamble}\\begin{document}`))).toBe(preamble.length);
   });
 
   it('skips commented occurrences, but not escaped percent signs', () => {
-    const text = '% \\begin{document}\na % b \\begin{document}\n50\\% \\begin{document}\n';
-    expect(pauseOffset(bytes(text))).toBe(text.indexOf('50'));
+    const text = '% \\begin{document}\na % b \\begin{document}\n50\\% \\begin{document}\nX\n';
+    expect(pauseOffset(bytes(text))).toBe(text.indexOf('X'));
   });
 
   it('counts bytes, not characters', () => {
-    expect(pauseOffset(bytes('% é\n\\begin{document}'))).toBe(5);
+    expect(pauseOffset(bytes('% é\n\\begin{document}\nX'))).toBe(22);
   });
 
   it('returns null without \\begin{document}', () => {
@@ -49,11 +51,11 @@ const tool = (name: string, args: string[]) => {
     return null;
   }
 };
-const texmfcnf = tool('kpsewhich', ['-var-value', 'TEXMFCNF']);
+const kpathsea = await kpathseaEnv();
 const available =
   process.platform !== 'win32' &&
   existsSync(command) &&
-  texmfcnf !== null &&
+  kpathsea !== null &&
   tool('mutool', ['-v']) !== null;
 
 const main = (preamble: string, firstPage: string) =>
@@ -84,7 +86,7 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
 
   const open = async (files: ProjectFile[]) => {
     events = [];
-    const backend = new PdftexLivePreview({ command, workRoot, texmfcnf: texmfcnf ?? '' });
+    const backend = new PdftexLivePreview({ command, workRoot, kpathsea: kpathsea ?? {} });
     session = await backend.open(
       { projectId: ProjectId('p'), rootFile: parseProjectPath('main.tex'), files },
       (event) => events.push(event),
@@ -131,6 +133,17 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     expect(new Set(pages().map((page) => page.svg)).size).toBe(3);
   });
 
+  it('brings references up to date without an edit', async () => {
+    const live = await open([
+      mainFile(main('', String.raw`\section{One}\label{one} See section~\ref{one}.`)),
+    ]);
+    live.showPages(1, 1);
+    // The first run has no .aux (section ??); a new engine reads the one it
+    // wrote, and the page is typeset again.
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
+    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+  });
+
   it('typesets a root file without \\begin{document} in full runs', async () => {
     const live = await open([
       mainFile(bytes('\\input{body}\n')),
@@ -161,7 +174,7 @@ describe.skipIf(process.platform === 'win32')('PdftexLivePreview with a missing 
     const backend = new PdftexLivePreview({
       command: join(workRoot, 'no-such-pdftex'),
       workRoot,
-      texmfcnf: '',
+      kpathsea: {},
     });
     const session = await backend.open(
       {

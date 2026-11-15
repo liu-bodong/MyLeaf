@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
@@ -24,8 +24,11 @@ export interface PdftexLivePreviewOptions {
   readonly command: string;
   /** Directory holding the format and per-session workspaces. */
   readonly workRoot: string;
-  /** kpathsea configuration path for the patched binary (`kpsewhich -var-value TEXMFCNF`). */
-  readonly texmfcnf: string;
+  /**
+   * kpathsea variables that point the patched binary at the installed TeX
+   * Live (`kpathseaEnv()`).
+   */
+  readonly kpathsea: Readonly<Record<string, string>>;
   /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
   readonly mutool?: string;
 }
@@ -74,7 +77,7 @@ export class PdftexLivePreview implements LivePreviewBackend {
       await run(
         this.#options.command,
         ['-ini', '-jobname=pdflatex', '-progname=pdflatex', '-etex', 'pdflatex.ini'],
-        { cwd: dir, env: { ...process.env, TEXMFCNF: this.#options.texmfcnf } },
+        { cwd: dir, env: { ...process.env, ...this.#options.kpathsea } },
       );
       return join(dir, 'pdflatex.fmt');
     })();
@@ -87,16 +90,24 @@ export class PdftexLivePreview implements LivePreviewBackend {
 
 interface Engine {
   readonly process: ChildProcess;
+  /** Output directory of the engine process itself (its log and `.aux` until the pause). */
+  readonly dir: string;
+  /** The `.aux` it read at `\begin{document}`, or `null` without one. */
+  readonly aux: Buffer | null;
   readonly control: Duplex;
   /** Root-file bytes before the pause. */
   readonly preamble: Buffer;
   /** Project files the engine read before the pause. */
   readonly inputs: Set<string>;
   readonly ready: Promise<boolean>;
+  isReady: boolean;
   readonly waiting: Map<string, (status: number | null) => void>;
   /** A file it read before the pause changed: start a new engine. */
   stale: boolean;
 }
+
+/** Most runs in a row without an edit to bring references up to date. */
+const MAX_SETTLE_RUNS = 3;
 
 class PdftexSession implements LivePreviewSession {
   readonly #options: Required<PdftexLivePreviewOptions>;
@@ -108,6 +119,11 @@ class PdftexSession implements LivePreviewSession {
   readonly #files = new Map<string, Uint8Array>();
   #format = '';
   #engine: Engine | null = null;
+  /** An engine starting in the background with a newer `.aux`, to replace `#engine`. */
+  #next: Engine | null = null;
+  #engines = 0;
+  /** Runs started without an edit, to settle references; reset by an edit. */
+  #settleRuns = 0;
   #closing = false;
   /** Runs one at a time; edits during a run are coalesced into one more. */
   #running = false;
@@ -151,10 +167,11 @@ class PdftexSession implements LivePreviewSession {
 
   updateFile(file: ProjectFile): void {
     if (this.#closing) return;
-    if (this.#engine?.inputs.has(file.path) && file.path !== this.#rootFile) {
-      this.#engine.stale = true;
+    for (const engine of [this.#engine, this.#next]) {
+      if (engine?.inputs.has(file.path) && file.path !== this.#rootFile) engine.stale = true;
     }
     this.#files.set(file.path, file.content);
+    this.#settleRuns = 0;
     this.#writes = this.#writes.then(() => this.writeSource(file)).catch(() => {});
     this.#schedule();
   }
@@ -168,7 +185,8 @@ class PdftexSession implements LivePreviewSession {
   async close(): Promise<void> {
     if (this.#closing) return;
     this.#closing = true;
-    this.#stopEngine();
+    this.#stopEngine(this.#engine);
+    this.#stopEngine(this.#next);
     await Promise.all([this.#writes, this.#loop, this.#renders]);
     await rm(this.#dir, { recursive: true, force: true });
   }
@@ -197,11 +215,19 @@ class PdftexSession implements LivePreviewSession {
     let engine: Engine | null = null;
     if (offset !== null) {
       const preamble = root.subarray(0, offset);
-      if (!this.#engine || this.#engine.stale || !this.#engine.preamble.equals(preamble)) {
-        this.#stopEngine();
-        this.#engine = this.#startEngine(Buffer.from(preamble));
+      const fits = (candidate: Engine | null): candidate is Engine =>
+        candidate !== null && !candidate.stale && candidate.preamble.equals(preamble);
+      if (fits(this.#next) && (this.#next.isReady || !fits(this.#engine))) {
+        // The background engine has the newer .aux: use it once it is ready.
+        if (await this.#next.ready) this.#promoteNext();
       }
-      engine = (await this.#engine.ready) ? this.#engine : null;
+      if (!fits(this.#engine)) {
+        this.#stopEngine(this.#engine);
+        this.#stopEngine(this.#next);
+        this.#next = null;
+        this.#engine = await this.#startEngine(Buffer.from(preamble));
+      }
+      engine = this.#engine && (await this.#engine.ready) ? this.#engine : null;
     }
     if (this.#closing) return;
 
@@ -222,11 +248,29 @@ class PdftexSession implements LivePreviewSession {
       status = await this.#fullRun(out);
     }
     if (this.#closing) return;
-    // The next run reads this run's .aux, so references settle over edits.
+    // References: the .aux is read at \begin{document}, which the engine has
+    // already passed. When a run writes a different .aux, an engine that reads
+    // it starts in the background and replaces the current one when ready.
     if (status === 0) {
-      await copyFile(join(out, `${this.#job}.aux`), join(this.#srcDir, `${this.#job}.aux`)).catch(
-        () => {},
-      );
+      const aux = await readFile(join(out, `${this.#job}.aux`)).catch(() => null);
+      if (aux && !(engine?.aux?.equals(aux) ?? false)) {
+        await writeFile(join(this.#srcDir, `${this.#job}.aux`), aux);
+        if (engine && !(this.#next?.aux?.equals(aux) ?? false)) {
+          this.#stopEngine(this.#next);
+          const next = await this.#startEngine(engine.preamble);
+          this.#next = next;
+          void next.ready.then((ready) => {
+            if (!ready || this.#next !== next || this.#closing) return;
+            if (!this.#running) this.#promoteNext();
+            // Run once more on the new .aux so references settle without an
+            // edit, as latexmk reruns; bounded in case the .aux never settles.
+            if (this.#settleRuns < MAX_SETTLE_RUNS) {
+              this.#settleRuns++;
+              this.#schedule();
+            }
+          });
+        }
+      }
     }
     const log = await readFile(join(out, `${this.#job}.log`), 'latin1').catch(() => '');
     const pages = /Output written on .*?\((\d+) pages?/s.exec(log);
@@ -278,7 +322,7 @@ class PdftexSession implements LivePreviewSession {
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-    return { ...process.env, TEXMFCNF: this.#options.texmfcnf, ...extra };
+    return { ...process.env, ...this.#options.kpathsea, ...extra };
   }
 
   #args(): string[] {
@@ -290,8 +334,21 @@ class PdftexSession implements LivePreviewSession {
     ];
   }
 
-  #startEngine(preamble: Buffer): Engine {
-    const child = spawn(this.#options.command, this.#args(), {
+  /** Makes the background engine the current one. */
+  #promoteNext(): void {
+    if (!this.#next) return;
+    this.#stopEngine(this.#engine);
+    this.#engine = this.#next;
+    this.#next = null;
+  }
+
+  async #startEngine(preamble: Buffer): Promise<Engine> {
+    const dir = join(this.#dir, 'engines', String(++this.#engines));
+    await mkdir(dir, { recursive: true });
+    const aux = await readFile(join(this.#srcDir, `${this.#job}.aux`)).catch(() => null);
+    // Its own output directory: the engine opens the .aux for writing at
+    // \begin{document}, which must not truncate the one in src/.
+    const child = spawn(this.#options.command, [`-output-directory=${dir}`, ...this.#args()], {
       cwd: this.#srcDir,
       env: this.#env({
         MYLEAF_PDFTEX_HOOKS: '1',
@@ -309,12 +366,25 @@ class PdftexSession implements LivePreviewSession {
     const waiting = new Map<string, (status: number | null) => void>();
     let markReady: (ready: boolean) => void = () => {};
     const ready = new Promise<boolean>((resolveReady) => (markReady = resolveReady));
+    const engine: Engine = {
+      process: child,
+      dir,
+      aux,
+      control,
+      preamble,
+      inputs,
+      ready,
+      isReady: false,
+      waiting,
+      stale: false,
+    };
     createInterface({ input: control }).on('line', (line) => {
       const [kind, first, second] = line.split('\t');
       if (kind === 'input' && first !== undefined) {
         const path = this.#projectPath(first);
         if (path !== null) inputs.add(path);
       } else if (kind === 'ready') {
+        engine.isReady = true;
         markReady(true);
       } else if (kind === 'done' && first !== undefined) {
         waiting.get(first)?.(Number(second));
@@ -332,9 +402,10 @@ class PdftexSession implements LivePreviewSession {
       markReady(false);
       for (const resolveRun of waiting.values()) resolveRun(null);
       waiting.clear();
-      if (this.#engine?.process === child) this.#engine = null;
+      if (this.#engine === engine) this.#engine = null;
+      if (this.#next === engine) this.#next = null;
     });
-    return { process: child, control, preamble, inputs, ready, waiting, stale: false };
+    return engine;
   }
 
   /** The project path of a file the engine read, or `null` outside the project. */
@@ -354,10 +425,12 @@ class PdftexSession implements LivePreviewSession {
     return code;
   }
 
-  #stopEngine(): void {
-    const engine = this.#engine;
-    this.#engine = null;
-    if (!engine?.process.pid) return;
+  #stopEngine(engine: Engine | null): void {
+    if (!engine) return;
+    if (this.#engine === engine) this.#engine = null;
+    if (this.#next === engine) this.#next = null;
+    void rm(engine.dir, { recursive: true, force: true });
+    if (!engine.process.pid) return;
     // Closing the control connection ends a paused engine and its children;
     // the group kill also ends one that is still in the preamble.
     engine.control.end();

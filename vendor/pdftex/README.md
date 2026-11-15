@@ -6,13 +6,14 @@ work (`docs/spikes/pdflatex-live-preview.md`). Live preview uses it with
 `MYLEAF_LIVE_ENGINE=pdftex` (`packages/live-pdftex`); the default is still
 TeXpresso (ADR 0012).
 
-| File                  | Purpose                                                                                             |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                             |
-| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)          |
-| `warm-fork.patch`     | Level 2: pauses before `\begin{document}` and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
-| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks   |
-| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                      |
+| File                        | Purpose                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `build.sh`                  | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                              |
+| `stream-hooks.patch`        | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)           |
+| `warm-fork.patch`           | Level 2: pauses at a line of the main file and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
+| `macos-target-os-mac.patch` | Lets the bundled zlib and libpng compile with current macOS SDKs                                     |
+| `check-hooks.sh`            | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks    |
+| `fixtures/images.tex`       | PNG, JPEG and PDF images, for `check-hooks.sh`                                                       |
 
 ## Source
 
@@ -54,8 +55,10 @@ the spike notes.
 `warm-fork.patch` applies on top of `stream-hooks.patch`. With
 `MYLEAF_PDFTEX_HOOKS`, `MYLEAF_PDFTEX_PAUSE_OFFSET=<n>` and
 `MYLEAF_PDFTEX_CONTROL_FD=<fd>`, pdfTeX runs the preamble, and when it is
-about to read byte `<n>` of the main file (the start of the
-`\begin{document}` line) it stops and serves commands on `<fd>`. Each
+about to read byte `<n>` of the main file it stops and serves commands on
+`<fd>`. `<n>` must be the start of a line; live preview uses the line after
+`\begin{document}`, so the engine has also run `\begin{document}` (and read
+the `.aux`). Each
 `run` forks a child that reads the rest of the main file from a new file
 and writes all output (including a copy of the log so far) to its own
 directory. Messages are lines of tab-separated fields:
@@ -63,7 +66,7 @@ directory. Messages are lines of tab-separated fields:
 | Direction       | Message                             | Meaning                                                        |
 | --------------- | ----------------------------------- | -------------------------------------------------------------- |
 | engine → driver | `input <path>`                      | A file read before the pause (preamble dependencies)           |
-| engine → driver | `ready`                             | Paused before `\begin{document}`                               |
+| engine → driver | `ready`                             | Paused before byte `<n>`                                       |
 | driver → engine | `run <id> <main-file> <output-dir>` | Fork a child; its bytes before `<n>` must equal the original's |
 | driver → engine | `cancel <id>`                       | Kill that child                                                |
 | engine → driver | `done <id> <status>`                | The child exited (exit status, or minus the signal)            |
@@ -76,11 +79,15 @@ its children.
 
 ## Running
 
-The binary has no `texmf.cnf` next to it. Point kpathsea at the installed
-TeX Live's and make a format with the patched binary:
+The binary is not installed with TeX Live, so kpathsea cannot find TeX
+Live's files from the binary's location (TeX Live's own `texmf.cnf`, as on
+MacTeX, derives its trees from `$SELFAUTOPARENT` and friends). Take
+`TEXMFCNF`, `TEXMFROOT` and `TEXMFLOCAL` from the installed TeX Live, as
+live preview does (`kpathseaEnv` in `packages/live-pdftex`), and make a
+format with the patched binary:
 
 ```bash
-export TEXMFCNF="$(kpsewhich -var-value TEXMFCNF)"
+for v in TEXMFCNF TEXMFROOT TEXMFLOCAL; do export "$v=$(kpsewhich -var-value "$v")"; done
 vendor/pdftex/build/bin/pdftex -ini -jobname=pdflatex -progname=pdflatex -etex pdflatex.ini
 MYLEAF_PDFTEX_HOOKS=1 vendor/pdftex/build/bin/pdftex -fmt=pdflatex -progname=pdflatex main.tex
 ```
@@ -108,9 +115,18 @@ use) is needed to run it, and `strace` for `check-hooks.sh`.
 
 ## Build dependencies (macOS)
 
-Not tested. The build needs Xcode's command line tools and `makeinfo`
-(`brew install texinfo`); the `funopen` branch of the patch has not been
-compiled.
+The build needs Xcode's command line tools and `makeinfo`
+(`brew install texinfo`); live preview also needs MuPDF's `mutool` on the
+`PATH`. TeX Live 2023's bundled zlib 1.2.13 and libpng 1.6.39 take
+`TARGET_OS_MAC`, which current macOS SDKs always define, to mean classic
+Mac OS (zlib defines `fdopen` as `NULL`, libpng includes `<fp.h>`);
+`macos-target-os-mac.patch` removes those two checks, as zlib 1.3 and
+libpng 1.6.40 did upstream. It changes nothing on Linux.
+
+Built and run on the owner's Mac against MacTeX 2025 (2026-11-15): the
+format builds and a test document gives the same PDF with the hooks off and
+on (the `funopen` branch). The warm fork (live preview) has not been run on
+macOS yet.
 
 ## Updating
 
