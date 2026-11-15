@@ -3,7 +3,7 @@ import type { EditorState, Extension, Range as DecorationRange } from '@codemirr
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { DecorationSet } from '@codemirror/view';
 import { macroDefinitions, parseLatex } from '@myleaf/latex-syntax';
-import type { LatexDocument, MacroDefinitions } from '@myleaf/latex-syntax';
+import type { AuxReferences, LatexDocument, MacroDefinitions } from '@myleaf/latex-syntax';
 import { planVisual } from './plan.js';
 import type { TextStyle, VisualSpan, WidgetSpec } from './plan.js';
 import { macrosKey, renderMath } from './render-math.js';
@@ -17,6 +17,11 @@ const projectMacros = Facet.define<MacroDefinitions, MacroDefinitions>({
 export type ImageLoader = (path: string) => Promise<string | null>;
 
 const imageLoader = Facet.define<ImageLoader, ImageLoader | null>({
+  combine: (values) => values.at(-1) ?? null,
+});
+
+/** Numbers from the last compile, for reference and citation chips. */
+const compiledReferences = Facet.define<AuxReferences, AuxReferences | null>({
   combine: (values) => values.at(-1) ?? null,
 });
 
@@ -225,7 +230,10 @@ function widgetFor(
     case 'marker':
       return new LabelWidget(spec.label, spec.term ? 'cm-visual-term' : 'cm-visual-marker');
     case 'chip':
-      return new LabelWidget(spec.text, `cm-visual-chip cm-visual-chip-${spec.chip}`);
+      return new LabelWidget(
+        spec.text,
+        `cm-visual-chip cm-visual-chip-${spec.chip}${spec.missing ? ' cm-visual-chip-missing' : ''}`,
+      );
     case 'image':
       return new ImageWidget(spec.path, images.get(spec.path), load);
   }
@@ -288,7 +296,12 @@ function build(state: EditorState): DecorationSet {
   const key = macrosKey(macros);
   const load = state.facet(imageLoader);
   const images = state.field(loadedImages);
-  const spans = planVisual(state.doc.toString(), document, state.selection.ranges);
+  const spans = planVisual(
+    state.doc.toString(),
+    document,
+    state.selection.ranges,
+    state.facet(compiledReferences),
+  );
   return Decoration.set(
     spans
       .map((span) => toDecoration(span, macros, key, load, images))
@@ -305,6 +318,8 @@ const decorations = StateField.define<DecorationSet>({
     transaction.selection !== undefined ||
     transaction.startState.facet(projectMacros) !== transaction.state.facet(projectMacros) ||
     transaction.startState.facet(imageLoader) !== transaction.state.facet(imageLoader) ||
+    transaction.startState.facet(compiledReferences) !==
+      transaction.state.facet(compiledReferences) ||
     transaction.effects.some((effect) => effect.is(imageLoaded))
       ? build(transaction.state)
       : value,
@@ -352,6 +367,7 @@ const theme = EditorView.baseTheme({
   '.cm-visual-chip-cite': { color: '#2a7d4f' },
   '.cm-visual-chip-ref': { color: '#2b5fa8' },
   '.cm-visual-chip-label': { opacity: '0.6' },
+  '.cm-visual-chip-missing': { color: '#c0392b', borderColor: '#c0392b' },
   '.cm-visual-image img': {
     display: 'block',
     width: 'auto',
@@ -379,6 +395,8 @@ export interface VisualModeOptions {
   readonly macros?: MacroDefinitions;
   /** Loads `\includegraphics` images; without it, figures show their path. */
   readonly images?: ImageLoader;
+  /** Numbers from the last compile; without them, chips show keys. */
+  readonly references?: AuxReferences;
 }
 
 /**
@@ -391,6 +409,7 @@ export function visualMode(options: VisualModeOptions = {}): Extension {
   return [
     projectMacros.of(options.macros ?? {}),
     ...(options.images === undefined ? [] : [imageLoader.of(options.images)]),
+    ...(options.references === undefined ? [] : [compiledReferences.of(options.references)]),
     EditorView.editorAttributes.of({ class: 'cm-visual' }),
     parsed,
     loadedImages,

@@ -8,6 +8,7 @@ import type {
   InverseSearchResponse,
   LivePreviewInfo,
   ProjectDto,
+  ReferencesResponse,
   UpdateProjectRequest,
 } from '@myleaf/api';
 import type { PdfPoint, SourceLocation } from '@myleaf/compile';
@@ -88,6 +89,10 @@ export class ApiClient {
 
   inverseSearch(id: ProjectId, point: PdfPoint): Promise<InverseSearchResponse> {
     return this.#json('POST', apiRoutes.inverseSearch(id), point);
+  }
+
+  references(id: ProjectId): Promise<ReferencesResponse> {
+    return this.#json('GET', apiRoutes.references(id));
   }
 
   livePreviewInfo(): Promise<LivePreviewInfo> {

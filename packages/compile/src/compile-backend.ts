@@ -1,4 +1,5 @@
 import type { ProjectId } from '@myleaf/doc-model';
+import type { AuxReferences } from '@myleaf/latex-syntax';
 import type { ProjectFile, ProjectPath } from '@myleaf/project';
 import type { Diagnostic } from './diagnostics.js';
 
@@ -94,6 +95,12 @@ export interface CompileBackend {
    * Lets engines that do not run BibTeX, such as live preview, show citations.
    */
   readBibliography(projectId: ProjectId): Promise<ProjectFile | null>;
+
+  /**
+   * Label and citation numbers the latest compile recorded (its `.aux` files),
+   * for showing them outside the PDF (visual mode); null before the first compile.
+   */
+  readReferences(projectId: ProjectId): Promise<AuxReferences | null>;
 
   /** PDF boxes produced by a source location (empty if none). */
   forwardSearch(projectId: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]>;

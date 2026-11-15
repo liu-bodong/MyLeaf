@@ -26,8 +26,8 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
-import type { ImageLoader } from '@myleaf/editor-visual';
-import type { MacroDefinitions } from '@myleaf/latex-syntax';
+import type { ImageLoader, VisualModeOptions } from '@myleaf/editor-visual';
+import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
@@ -65,10 +65,25 @@ interface LatexEditorProps {
   readonly macros?: MacroDefinitions;
   /** Loads `\includegraphics` images for visual mode. */
   readonly images?: ImageLoader;
+  /** Numbers from the last compile, for chips in visual mode. */
+  readonly references?: AuxReferences | null;
   readonly ref?: Ref<LatexEditorHandle>;
 }
 
 const NO_MACROS: MacroDefinitions = {};
+
+/** Visual mode options without undefined values (exactOptionalPropertyTypes). */
+function visualOptions(
+  macros: MacroDefinitions,
+  images: ImageLoader | undefined,
+  references: AuxReferences | null,
+): VisualModeOptions {
+  return {
+    macros,
+    ...(images === undefined ? {} : { images }),
+    ...(references === null ? {} : { references }),
+  };
+}
 
 /** Runs a command and returns focus to the editor, e.g. after a toolbar click. */
 function runCommand(view: EditorView | null, command: (view: EditorView) => boolean) {
@@ -87,14 +102,13 @@ export function LatexEditor({
   visual = false,
   macros = NO_MACROS,
   images,
+  references = null,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
-  const visualRef = useRef(
-    visual ? visualMode(images === undefined ? { macros } : { macros, images }) : [],
-  );
+  const visualRef = useRef(visual ? visualMode(visualOptions(macros, images, references)) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -155,11 +169,9 @@ export function LatexEditor({
   }, [documentId]);
 
   useEffect(() => {
-    visualRef.current = visual
-      ? visualMode(images === undefined ? { macros } : { macros, images })
-      : [];
+    visualRef.current = visual ? visualMode(visualOptions(macros, images, references)) : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
-  }, [images, macros, mode, visual]);
+  }, [images, macros, mode, references, visual]);
 
   useImperativeHandle(
     ref,

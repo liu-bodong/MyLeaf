@@ -153,3 +153,34 @@ test('visual mode shows lists, reference chips and figures', async ({ page }) =>
   await page.locator('.cm-visual-chip-cite').click();
   await expect(editor).toContainText(String.raw`\citep{knuth84,lamport94}`);
 });
+
+test('visual mode shows the numbers of the last compile', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('New project name').fill('Visual numbers');
+  await page.getByRole('button', { name: 'Create' }).click();
+  await expect(page.locator('.cm-content')).toContainText('Start writing here.');
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.insertText(
+    [
+      String.raw`\documentclass{article}`,
+      String.raw`\usepackage{amsmath,cleveref}`,
+      String.raw`\begin{document}`,
+      String.raw`\section{A}\label{sec:a}`,
+      String.raw`\section{B}\label{sec:b}`,
+      String.raw`See \cref{sec:b}, \eqref{eq:e} and \ref{missing}.`,
+      String.raw`\begin{equation}x = 1\label{eq:e}\end{equation}`,
+      String.raw`\end{document}`,
+    ].join('\n'),
+  );
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.getByRole('radio', { name: 'Visual' }).click();
+  // Before a compile, chips show keys.
+  await expect(page.locator('.cm-visual-chip-ref').first()).toHaveText('sec:b');
+
+  await page.getByRole('button', { name: 'Recompile', exact: true }).click();
+  await expect(page.locator('.cm-visual-chip-ref')).toHaveText(['section 2', '(1)', '??']);
+  await expect(page.locator('.cm-visual-chip-missing')).toHaveText('??');
+  // The labelled equation shows its compiled number.
+  await expect(page.locator('.cm-visual-math-display .katex-tag')).toContainText('(1)');
+});

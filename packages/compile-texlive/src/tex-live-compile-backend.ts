@@ -1,6 +1,8 @@
 import { mkdir, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parseTexLog } from '@myleaf/compile';
+import { parseAux } from '@myleaf/latex-syntax';
+import type { AuxReferences, CitationReference, LabelReference } from '@myleaf/latex-syntax';
 import type {
   CompileBackend,
   CompileRequest,
@@ -115,6 +117,30 @@ export class TexLiveCompileBackend implements CompileBackend {
     const content = await readOptional(join(this.#outDir(projectId), name));
     // TeX reads \jobname.bbl from its working directory: the project root.
     return content === null ? null : { path: parseProjectPath(name), content };
+  }
+
+  async readReferences(projectId: ProjectId): Promise<AuxReferences | null> {
+    const labels: Record<string, LabelReference> = {};
+    const citations: Record<string, CitationReference> = {};
+    const state = await this.#readState(projectId);
+    if (state === null) return null;
+    const outDir = this.#outDir(projectId);
+    // The root's .aux and those it reads (\include'd chapters), at most 200.
+    const pending = [`${state.jobName}.aux`];
+    const seen = new Set<string>();
+    while (pending.length > 0 && seen.size < 200) {
+      const name = pending.shift()!;
+      const path = resolve(outDir, name);
+      if (seen.has(path) || !path.startsWith(outDir + sep)) continue;
+      seen.add(path);
+      const content = await readOptional(path);
+      if (content === null) continue;
+      const aux = parseAux(new TextDecoder().decode(content));
+      Object.assign(labels, aux.labels);
+      Object.assign(citations, aux.citations);
+      pending.push(...aux.inputs);
+    }
+    return { labels, citations };
   }
 
   async forwardSearch(projectId: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]> {

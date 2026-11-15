@@ -16,6 +16,7 @@ import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
 import { useImageLoader } from '../editor/use-image-loader.js';
 import { useProjectMacros } from '../editor/use-project-macros.js';
+import { useReferences } from '../editor/use-references.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
 import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
 import { Dialog } from '../ui/Dialog.js';
@@ -116,6 +117,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     layout.editorMode === 'visual',
   );
   const imageLoader = useImageLoader(projectId, files);
+  const references = useReferences(projectId, pdfVersion, layout.editorMode === 'visual');
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -683,6 +685,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     visual={layout.editorMode === 'visual'}
                     macros={projectMacros}
                     images={imageLoader}
+                    references={references}
                   />
                 )}
                 {document?.kind === 'binary' && (

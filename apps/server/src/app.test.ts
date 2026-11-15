@@ -207,6 +207,20 @@ describe('server API', () => {
       expect(second.json()).toMatchObject({ preamble: 'disabled' });
     });
 
+    it('returns the references of the latest compile', async () => {
+      const url = `/api/projects/${project.id}/references`;
+      expect((await app.inject({ method: 'GET', url })).json()).toBeNull();
+      compiler.references = {
+        labels: { 'sec:a': { number: '1', page: '1', type: 'section' } },
+        citations: {},
+      };
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/projects/${project.id}/references`,
+      });
+      expect(response.json()).toEqual(compiler.references);
+    });
+
     it('passes single-pass requests to the compiler (default: full)', async () => {
       const url = `/api/projects/${project.id}/compile`;
       await app.inject({ method: 'POST', url });

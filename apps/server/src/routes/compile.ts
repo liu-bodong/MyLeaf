@@ -6,6 +6,7 @@ import type {
   ForwardSearchResponse,
   InverseSearchRequest,
   InverseSearchResponse,
+  ReferencesResponse,
 } from '@myleaf/api';
 import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
@@ -66,6 +67,11 @@ export function registerCompileRoutes(
       }
       return result;
     },
+  );
+
+  app.get<{ Params: IdParams }>(
+    '/api/projects/:id/references',
+    (request): Promise<ReferencesResponse> => compiler.readReferences(ProjectId(request.params.id)),
   );
 
   app.get<{ Params: IdParams }>('/api/projects/:id/output.pdf', async (request, reply) => {

@@ -7,6 +7,7 @@ import type {
   SourceLocation,
 } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
+import type { AuxReferences } from '@myleaf/latex-syntax';
 import type { ProjectFile } from '@myleaf/project';
 
 /**
@@ -19,6 +20,8 @@ export class FakeCompileBackend implements CompileBackend {
   pdf: Uint8Array | null = null;
   /** Returned by `readBibliography`. */
   bibliography: ProjectFile | null = null;
+  /** Returned by `readReferences`. */
+  references: AuxReferences | null = null;
   readonly rect: PdfRect = { page: 1, x: 10, y: 20, width: 30, height: 5 };
 
   compile(request: CompileRequest): Promise<CompileResult> {
@@ -38,6 +41,9 @@ export class FakeCompileBackend implements CompileBackend {
   }
   readBibliography(): Promise<ProjectFile | null> {
     return Promise.resolve(this.bibliography);
+  }
+  readReferences(): Promise<AuxReferences | null> {
+    return Promise.resolve(this.references);
   }
   forwardSearch(_id: ProjectId, location: SourceLocation): Promise<readonly PdfRect[]> {
     return Promise.resolve(location.line === 1 ? [this.rect] : []);

@@ -2,6 +2,7 @@
  * HTTP API contract shared by the server and its clients. JSON bodies use the
  * domain types directly; they contain only JSON-compatible values.
  */
+import type { AuxReferences } from '@myleaf/latex-syntax';
 import type { CompileResult, PdfPoint, PdfRect, SourceLocation, TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type {
@@ -37,6 +38,9 @@ export interface CompileRequestBody {
 }
 
 export type CompileResponse = CompileResult;
+
+/** `GET /api/projects/:id/references`: numbers recorded by the latest compile; null before one. */
+export type ReferencesResponse = AuxReferences | null;
 
 export type ForwardSearchRequest = SourceLocation;
 
@@ -104,6 +108,7 @@ export const apiRoutes = {
   pdf: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/output.pdf`,
   forwardSearch: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/synctex/forward`,
   inverseSearch: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/synctex/inverse`,
+  references: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/references`,
   livePreviewInfo: () => '/api/live-preview',
   /** WebSocket. */
   livePreview: (id: ProjectId) => `/api/projects/${encodeURIComponent(id)}/live`,

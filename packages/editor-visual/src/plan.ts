@@ -1,10 +1,12 @@
 import type {
   ArgumentNode,
+  AuxReferences,
   CommandNode,
   LatexDocument,
   LatexNode,
   Range,
 } from '@myleaf/latex-syntax';
+import { citationText, referenceText, tagLabels } from './references.js';
 
 export type TextStyle =
   | 'bold'
@@ -73,7 +75,13 @@ export type WidgetSpec =
   /** A list item's marker: `•`, `1.`, or a description term (`term: true`). */
   | { readonly type: 'marker'; readonly label: string; readonly term: boolean }
   /** A reference, citation or label, showing its keys (numbers come later). */
-  | { readonly type: 'chip'; readonly chip: 'cite' | 'ref' | 'label'; readonly text: string }
+  | {
+      readonly type: 'chip';
+      readonly chip: 'cite' | 'ref' | 'label';
+      readonly text: string;
+      /** A key the last compile did not record (shown as `??` or `?`). */
+      readonly missing: boolean;
+    }
   /** `\includegraphics`: the image at `path`, as written in the source. */
   | { readonly type: 'image'; readonly path: string };
 
@@ -86,15 +94,7 @@ const CITATIONS = new Set([
   'citeyear',
   'nocite',
 ]);
-/** Reference commands and how their keys are shown. */
-const REFERENCES: Readonly<Record<string, (key: string) => string>> = {
-  ref: (key) => key,
-  autoref: (key) => key,
-  cref: (key) => key,
-  Cref: (key) => key,
-  eqref: (key) => `(${key})`,
-  pageref: (key) => `p. ${key}`,
-};
+const REFERENCES = new Set(['ref', 'autoref', 'cref', 'Cref', 'eqref', 'pageref']);
 const LISTS = new Set(['itemize', 'enumerate', 'description']);
 /** Environments whose \begin and \end lines are hidden; their content is shown. */
 const FRAMES = new Set([...LISTS, 'figure', 'figure*', 'center']);
@@ -149,6 +149,8 @@ export function planVisual(
   text: string,
   document: LatexDocument,
   selection: readonly Range[],
+  /** Numbers from the last compile; null shows keys. */
+  references: AuxReferences | null = null,
 ): VisualSpan[] {
   const spans: VisualSpan[] = [];
   const fold = preambleFold(text, document, selection);
@@ -162,7 +164,7 @@ export function planVisual(
           spans.push({ kind: 'style', from: node.from, to: node.to, style: 'comment' });
           break;
         case 'command': {
-          if (!command(text, node, list, selection, spans)) {
+          if (!command(text, node, list, selection, references, spans)) {
             for (const arg of node.args) visit(arg.children, list);
           }
           break;
@@ -182,7 +184,7 @@ export function planVisual(
           } else if (node.math) {
             if (node.end !== null && !touches(node, selection)) {
               // The whole environment, so KaTeX lays out align, gather, etc.
-              const tex = unnumbered(withoutLabels(text.slice(node.from, node.to)));
+              const tex = tagLabels(unnumbered(text.slice(node.from, node.to)), references);
               spans.push({ kind: 'math', from: node.from, to: node.to, tex, display: true });
             }
           } else {
@@ -236,6 +238,7 @@ function command(
   node: CommandNode,
   list: ListContext | null,
   selection: readonly Range[],
+  references: AuxReferences | null,
   spans: VisualSpan[],
 ): boolean {
   const style = TEXT_STYLES[node.name] ?? HEADINGS[node.name];
@@ -261,20 +264,15 @@ function command(
     return true;
   }
   const keys = content?.closed === true ? text.slice(content.contentFrom, content.contentTo) : null;
-  const reference = REFERENCES[node.name];
   let widget: WidgetSpec | null = null;
   if (keys === null || keys.trim() === '') {
     widget = null;
   } else if (CITATIONS.has(node.name)) {
-    const list = keys
-      .split(',')
-      .map((key) => key.trim())
-      .filter(Boolean);
-    widget = { type: 'chip', chip: 'cite', text: `[${list.join(', ')}]` };
-  } else if (reference !== undefined) {
-    widget = { type: 'chip', chip: 'ref', text: reference(keys.trim()) };
+    widget = { type: 'chip', chip: 'cite', ...citationText(node.name, keys, references) };
+  } else if (REFERENCES.has(node.name)) {
+    widget = { type: 'chip', chip: 'ref', ...referenceText(node.name, keys, references) };
   } else if (node.name === 'label') {
-    widget = { type: 'chip', chip: 'label', text: keys.trim() };
+    widget = { type: 'chip', chip: 'label', text: keys.trim(), missing: false };
   } else if (node.name === 'includegraphics') {
     widget = { type: 'image', path: keys.trim() };
   }

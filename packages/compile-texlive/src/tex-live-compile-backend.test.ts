@@ -299,6 +299,38 @@ See \cite{knuth}.
     expect(await backend.readBibliography(withoutBib.projectId)).toBeNull();
   });
 
+  it('reports the labels and citations of the latest compile', async () => {
+    const main = String.raw`\documentclass{article}
+\usepackage{natbib}
+\usepackage{cleveref}
+\begin{document}
+\section{One}\label{sec:one}
+See \cref{sec:one}, \cref{sec:two} and \citet{knuth}.
+\include{chapter}
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}
+`;
+    const chapter = String.raw`\section{Two}\label{sec:two}`;
+    const refs = '@book{knuth, author = {Donald Knuth}, title = {The TeXbook}, year = {1984}}\n';
+    const req = request([
+      file('main.tex', main),
+      file('chapter.tex', chapter),
+      file('refs.bib', refs),
+    ]);
+    expect(await backend.readReferences(req.projectId)).toBeNull();
+    await backend.compile(req);
+    const references = await backend.readReferences(req.projectId);
+    expect(references?.labels).toEqual({
+      'sec:one': { number: '1', page: '1', type: 'section' },
+      // From chapter.aux, read through \@input.
+      'sec:two': { number: '2', page: '2', type: 'section' },
+    });
+    expect(references?.citations).toEqual({
+      knuth: { number: '1', year: '1984', authors: 'Knuth' },
+    });
+  });
+
   it('has no output before the first compile and after discard', async () => {
     const req = request([file('main.tex', MAIN), file('chapters/one.tex', CHAPTER)]);
     expect(await backend.readPdf(req.projectId)).toBeNull();

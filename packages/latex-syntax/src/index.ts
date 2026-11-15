@@ -13,3 +13,5 @@ export type {
 } from './parse.js';
 export { macroDefinitions } from './macros.js';
 export type { MacroDefinitions } from './macros.js';
+export { parseAux } from './aux.js';
+export type { AuxFile, AuxReferences, CitationReference, LabelReference } from './aux.js';

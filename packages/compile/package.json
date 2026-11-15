@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@myleaf/doc-model": "workspace:*",
+    "@myleaf/latex-syntax": "workspace:*",
     "@myleaf/project": "workspace:*"
   },
   "devDependencies": {

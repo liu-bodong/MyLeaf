@@ -188,4 +188,15 @@ describe('planVisual', () => {
       String.raw`Results \emph{so far}.`,
     ]);
   });
+
+  it('shows numbers from the last compile, and tags numbered equations', () => {
+    const references = {
+      labels: { 'eq:x': { number: '4', page: '2', type: 'equation' } },
+      citations: { k: { number: '1', year: '1999', authors: 'Kay' } },
+    };
+    const text = String.raw`\eqref{eq:x} \cite{k} \ref{gone} \begin{equation}x \label{eq:x}\end{equation}`;
+    expect(shown(text, planVisual(text, parseLatex(text), [], references))).toBe(
+      String.raw`«ref:(4)» «cite:(Kay, 1999)» «ref:??» ⟨\begin{equation*}x \tag{4}\end{equation*}⟩`,
+    );
+  });
 });

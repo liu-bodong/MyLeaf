@@ -121,6 +121,19 @@ a marker.
   Images load outside the editor state and arrive as a transaction with
   their natural size, so the editor measures the new line height (a size
   change inside a drawn widget left the line numbers misaligned).
+- Numbers (milestone 4a): `CompileBackend.readReferences` returns the
+  labels and citations of the latest compile from its `.aux` files
+  (`\newlabel` incl. hyperref and cleveref types, `\bibcite` plain and
+  natbib, `\@input` for `\include`d chapters); null before the first
+  compile, when chips show keys. `GET /api/projects/:id/references`; the web
+  app refetches after each compile. References show `\ref`'s number,
+  `\pageref`'s page, `(n)` for `\eqref` and cleveref's default names for
+  `\cref`/`\Cref` (e.g. "section 2.3", "Fig. 1"); citations natbib's
+  author-year form when recorded, else numbers; `\cite` in parentheses
+  (ICML's and numeric styles; natbib's own `\cite` is textual). Unknown keys
+  show `??`/`?`, marked. Labelled display equations show their number
+  through KaTeX's `\tag`; unlabelled ones stay unnumbered. Numbers are those
+  of the last compile, so they lag behind edits until the next one.
 
 ## Consequences
 
