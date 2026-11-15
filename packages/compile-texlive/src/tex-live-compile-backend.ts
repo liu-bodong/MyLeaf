@@ -189,8 +189,7 @@ export class TexLiveCompileBackend implements CompileBackend {
     // 8.3 short names and junctions): compare both with links resolved.
     const srcDir = await realpath(this.#srcDir(projectId));
     const input = record?.get('Input') ?? '';
-    const inputPath =
-      input === '' ? '' : await realpath(resolve(srcDir, input)).catch(() => input);
+    const inputPath = input === '' ? '' : await realpath(resolve(srcDir, input)).catch(() => input);
     const file = this.#toProjectPath(projectId, inputPath, srcDir);
     const line = Number(record?.get('Line'));
     const column = Number(record?.get('Column'));
