@@ -49,6 +49,8 @@ type CompileKind = 'full' | 'single';
 
 /** Pause in editing after which auto-compile starts. */
 const AUTO_COMPILE_DELAY_MS = 1000;
+/** How long a forward-search highlight stays in the PDF; keep in sync with `pdf-highlight-fade`. */
+const HIGHLIGHT_MS = 1000;
 
 type OpenDocument =
   | { readonly kind: 'text'; readonly path: ProjectPath; readonly text: string }
@@ -118,6 +120,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   );
   const imageLoader = useImageLoader(projectId, files);
   const references = useReferences(projectId, pdfVersion, layout.editorMode === 'visual');
+
+  // Forward-search highlights fade out in CSS and are removed afterwards.
+  useEffect(() => {
+    if (highlights.length === 0) return;
+    const timer = setTimeout(() => setHighlights([]), HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [highlights]);
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -282,6 +291,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const showInPdf = useCallback(async () => {
     if (document?.kind !== 'text') return;
     const line = editorRef.current?.cursorLine() ?? 1;
+    // Unmount the previous boxes so a repeated search restarts the fade.
+    setHighlights([]);
     const { rects } = await api.forwardSearch(projectId, {
       file: document.path,
       line,
