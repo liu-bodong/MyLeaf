@@ -43,6 +43,9 @@ Verified from its repository:
    | L2    | Instant in-editor rendering of the edited paragraph/equation (shared with visual mode)                       |
    | L3    | Checkpoint/resume incremental compilation (TeXpresso technique)                                              |
 
+   L1 as built is in ADR 0011, which rejected the persistent warm worker
+   and `\includeonly`. L3 as built (TeXpresso) is in ADRs 0012 and 0014.
+
 4. **L3 path:** first integrate TeXpresso as a preview backend on
    Linux/macOS hosts. Its rendering output must be adapted to deliver pages to
    the browser. Later, evaluate porting its checkpoint technique to pdfTeX.

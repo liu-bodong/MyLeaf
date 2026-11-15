@@ -82,6 +82,27 @@ about 280–330 ms, heading edit 697 → about 290–310 ms. Its `No change` row
 is not comparable: after single-pass edits, the next full compile catches up
 on the reruns they skipped.
 
+Where a single-pass edit's time goes (same paper, later measurement):
+
+| Run                                    | Time        |
+| -------------------------------------- | ----------- |
+| latexmk with the precompiled preamble  | ~380 ms     |
+| pdfLaTeX directly, same preamble       | ~255–320 ms |
+| pdfLaTeX, same preamble, one-line body | ~190 ms     |
+| Plain `article`, one line, no packages | ~125 ms     |
+
+About 190 ms is fixed per run (start-up, loading the format, package setup
+at `\begin{document}`, fonts, writing the PDF); typesetting the 8 pages
+takes about 70–80 ms. Only engine work (a pdfTeX kept warm after the
+preamble; `docs/spikes/pdflatex-live-preview.md`) removes the fixed part,
+so compiles stay at about 300 ms; live preview is about 130–145 ms from
+keystroke to screen (ADR 0012).
+
+Deferred: stopping pdfLaTeX after the viewed page. It saved little on the
+8-page paper (about 200 ms stopping after page 1, about 270 ms for all 8)
+and writes a truncated PDF, which the viewer would have to merge with the
+last full PDF. It may pay off on long documents when editing early pages.
+
 ## Consequences
 
 - About 7.5 MB of disk per project for the format (for this preamble).
