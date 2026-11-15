@@ -10,18 +10,36 @@ interface SidebarProps {
   readonly max: number;
   readonly onWidthChange: (width: number) => void;
   readonly children: ReactNode;
+  /** Edge of the workspace the sidebar is on; the resizer is on its inner edge. */
+  readonly side?: 'start' | 'end';
+  /** Accessible name of the sidebar. */
+  readonly label?: string;
+  /** Accessible name of the resizer. */
+  readonly resizeLabel?: string;
+  /** Width a double-click on the resizer resets to. */
+  readonly defaultWidth?: number;
 }
 
 const KEY_STEP = 8;
 const SHIFT_KEY_STEP = 40;
 
 /**
- * File-tree sidebar with a draggable right edge. The new width is reported
+ * Sidebar with a draggable inner edge (the file tree on the left, the outline
+ * on the right). The new width is reported
  * when a drag ends or the handle is moved with the keyboard; double-click the
  * handle to reset. The resizer is hidden on narrow layouts, where the sidebar
  * stacks above the panes.
  */
-export function Sidebar({ open, width, min, max, onWidthChange, children }: SidebarProps) {
+export function Sidebar(props: SidebarProps) {
+  const { open, width, min, max, onWidthChange, children } = props;
+  const {
+    side = 'start',
+    label = 'Files',
+    resizeLabel = 'Resize file tree',
+    defaultWidth = SIDEBAR_DEFAULT,
+  } = props;
+  /** +1 if moving the pointer right widens the sidebar, −1 if it narrows it. */
+  const direction = side === 'start' ? 1 : -1;
   const [dragged, setDragged] = useState<number | null>(null);
   const shown = Math.round(dragged ?? width);
   const clamp = (value: number) => Math.min(max, Math.max(min, value));
@@ -43,7 +61,7 @@ export function Sidebar({ open, width, min, max, onWidthChange, children }: Side
   };
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (start.current === null) return;
-    moveTo(clamp(start.current.width + (event.clientX - start.current.x)));
+    moveTo(clamp(start.current.width + direction * (event.clientX - start.current.x)));
   };
   const endDrag = () => {
     const final = drag.current;
@@ -57,8 +75,8 @@ export function Sidebar({ open, width, min, max, onWidthChange, children }: Side
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.shiftKey ? SHIFT_KEY_STEP : KEY_STEP;
     const next = {
-      ArrowLeft: width - step,
-      ArrowRight: width + step,
+      ArrowLeft: width - direction * step,
+      ArrowRight: width + direction * step,
       Home: min,
       End: max,
     }[event.key];
@@ -67,30 +85,41 @@ export function Sidebar({ open, width, min, max, onWidthChange, children }: Side
     onWidthChange(clamp(Math.round(next)));
   };
 
-  return (
+  const aside = (
+    <aside className={`sidebar ${side}`} aria-label={label} hidden={!open} style={{ width: shown }}>
+      {children}
+    </aside>
+  );
+  const resizer = (
+    <div
+      className={`sidebar-resizer ${side}`}
+      hidden={!open}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={resizeLabel}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={shown}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={() => {
+        if (width !== defaultWidth) onWidthChange(defaultWidth);
+      }}
+      onKeyDown={onKeyDown}
+    />
+  );
+  return side === 'start' ? (
     <>
-      <aside className="sidebar" aria-label="Files" hidden={!open} style={{ width: shown }}>
-        {children}
-      </aside>
-      <div
-        className="sidebar-resizer"
-        hidden={!open}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize file tree"
-        aria-valuemin={min}
-        aria-valuemax={max}
-        aria-valuenow={shown}
-        tabIndex={0}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onDoubleClick={() => {
-          if (width !== SIDEBAR_DEFAULT) onWidthChange(SIDEBAR_DEFAULT);
-        }}
-        onKeyDown={onKeyDown}
-      />
+      {aside}
+      {resizer}
+    </>
+  ) : (
+    <>
+      {resizer}
+      {aside}
     </>
   );
 }

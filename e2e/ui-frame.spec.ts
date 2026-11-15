@@ -134,7 +134,7 @@ test('the file tree sidebar can be resized', async ({ page }) => {
   await expect(page.locator('.cm-content')).toContainText('Start writing here.');
 
   const resizer = page.getByRole('separator', { name: 'Resize file tree' });
-  const sidebar = page.locator('.sidebar');
+  const sidebar = page.getByRole('complementary', { name: 'Files' });
   await expect(resizer).toHaveAttribute('aria-valuenow', '240');
 
   // The keyboard resizes it and the rendered width follows.
