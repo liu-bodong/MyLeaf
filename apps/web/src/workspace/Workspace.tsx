@@ -1,6 +1,6 @@
 import type { FileEntryDto, ProjectDto } from '@myleaf/api';
 import type { ProjectSettings } from '@myleaf/project';
-import type { CompileResult, Diagnostic, PdfPoint, PdfRect } from '@myleaf/compile';
+import type { CompileResult, Diagnostic, PdfPoint, PdfRect, TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type { OutlineEntry } from '@myleaf/latex-syntax';
 import { parseProjectPath } from '@myleaf/project';
@@ -91,7 +91,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [editHistory, setEditHistory] = useState<EditHistory | null>(null);
   const [pdfView, setPdfView] = useState<PdfViewState>({ page: 0, pages: 0, zoom: null });
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [liveAvailable, setLiveAvailable] = useState(false);
+  /** The server's live-preview engine, or `null` without live preview. */
+  const [liveEngine, setLiveEngine] = useState<TexEngine | null>(null);
   const [liveChannel] = useState(() => new LiveChannel());
   /** Output shown while live preview is on; the PDF stays reachable. */
   const [outputView, setOutputView] = useState<'live' | 'pdf'>('live');
@@ -203,7 +204,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       if (cancelled) return;
       setProject(loaded);
       setFiles(entries);
-      setLiveAvailable((await api.livePreviewInfo()).available);
+      setLiveEngine((await api.livePreviewInfo()).engine);
       if (entries.some((entry) => entry.path === loaded.rootFile)) {
         const text = decodeText(await api.readFile(projectId, loaded.rootFile));
         if (!cancelled && text !== null) {
@@ -294,7 +295,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     }
   }, [document, liveChannel]);
 
-  const showLive = liveAvailable && project?.settings.livePreview === true;
+  const showLive = liveEngine !== null && project?.settings.livePreview === true;
 
   /** Applies a settings change immediately and reverts it if saving fails. */
   const updateSettings = async (settings: Partial<ProjectSettings>) => {
@@ -768,7 +769,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 compileSettings={
                   <CompileSettings
                     settings={project.settings}
-                    liveAvailable={liveAvailable}
+                    liveEngine={liveEngine}
                     livePreviewOn={showLive}
                     onChange={(settings) => {
                       if (settings.livePreview === true) setOutputView('live');
@@ -804,12 +805,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onZoom={(zoom) => updateLayout({ zoom })}
               />
               {/* The live pane stays mounted while the PDF is shown, keeping its session. */}
-              {showLive && (
+              {showLive && liveEngine && (
                 <div className="output-view" hidden={outputView !== 'live'}>
                   <LivePreviewPane
                     key={liveAttempt}
                     projectId={projectId}
                     channel={liveChannel}
+                    engine={liveEngine}
                     onReady={sendOpenDocumentToLive}
                     onShowPdf={() => setOutputView('pdf')}
                     onRetry={() => setLiveAttempt((attempt) => attempt + 1)}

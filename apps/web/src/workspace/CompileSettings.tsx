@@ -1,8 +1,11 @@
+import type { TexEngine } from '@myleaf/compile';
 import type { ProjectSettings } from '@myleaf/project';
+import { engineName } from '../live/engine-name.js';
 
 interface CompileSettingsProps {
   readonly settings: ProjectSettings;
-  readonly liveAvailable: boolean;
+  /** The server's live-preview engine, or `null` without live preview. */
+  readonly liveEngine: TexEngine | null;
   /** Live preview is on and available. */
   readonly livePreviewOn: boolean;
   readonly onChange: (settings: Partial<ProjectSettings>) => void;
@@ -11,7 +14,7 @@ interface CompileSettingsProps {
 /** Checkboxes in the Recompile dropdown. */
 export function CompileSettings({
   settings,
-  liveAvailable,
+  liveEngine,
   livePreviewOn,
   onChange,
 }: CompileSettingsProps) {
@@ -39,19 +42,21 @@ export function CompileSettings({
           <small>Faster pdfLaTeX compiles; turn off if a package misbehaves</small>
         </span>
       </label>
-      <label title={liveAvailable ? undefined : 'Not enabled on this server'}>
+      <label title={liveEngine ? undefined : 'Not enabled on this server'}>
         <input
           type="checkbox"
-          disabled={!liveAvailable}
+          disabled={!liveEngine}
           checked={livePreviewOn}
           onChange={(event) => onChange({ livePreview: event.target.checked })}
         />
         <span>
-          Live preview (XeLaTeX)
+          {liveEngine ? `Live preview (${engineName(liveEngine)})` : 'Live preview'}
           <small>
-            {liveAvailable
-              ? 'Pages update as you type; may differ from the pdfLaTeX PDF'
-              : 'Not enabled on this server'}
+            {liveEngine === null
+              ? 'Not enabled on this server'
+              : liveEngine === 'pdflatex'
+                ? 'Pages update as you type'
+                : 'Pages update as you type; may differ from the pdfLaTeX PDF'}
           </small>
         </span>
       </label>

@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
 
 test('live preview updates the page while typing', async ({ page, request }) => {
-  const { available } = (await (await request.get('/api/live-preview')).json()) as {
+  const { available, engine } = (await (await request.get('/api/live-preview')).json()) as {
     available: boolean;
+    engine: 'pdflatex' | 'xelatex' | null;
   };
-  test.skip(!available, 'Live preview needs MYLEAF_TEXPRESSO (vendor/texpresso/build.sh)');
+  test.skip(!available, 'Live preview needs vendor/texpresso/build.sh or vendor/pdftex/build.sh');
 
   await page.goto('/');
   await page.getByLabel('New project name').fill('Live');
@@ -12,11 +13,13 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await expect(page.locator('.cm-content')).toContainText('Start writing here.');
 
   await page.getByRole('button', { name: 'Compile settings' }).click();
-  await page.getByRole('checkbox', { name: /Live preview/ }).check();
+  const name = engine === 'pdflatex' ? 'pdfLaTeX' : 'XeLaTeX';
+  await page.getByRole('checkbox', { name: `Live preview (${name})` }).check();
   await page.getByRole('button', { name: 'Compile settings' }).click();
 
   const image = page.getByTestId('live-preview').locator('img').first();
   await expect(image).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('live-preview')).toContainText(`Live · ${name}`);
   const before = await image.getAttribute('src');
 
   // Typing (without saving or compiling) re-renders the page.

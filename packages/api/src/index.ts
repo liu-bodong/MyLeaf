@@ -65,6 +65,8 @@ export interface InverseSearchResponse {
 /** `GET /api/live-preview`: whether this server offers live preview (ADR 0012). */
 export interface LivePreviewInfo {
   readonly available: boolean;
+  /** The engine that typesets live pages, or `null` when not available. */
+  readonly engine: TexEngine | null;
 }
 
 /** Messages the browser sends on a project's live-preview WebSocket. */

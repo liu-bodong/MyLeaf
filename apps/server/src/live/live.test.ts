@@ -37,6 +37,7 @@ class FakeLiveSession implements LivePreviewSession {
 }
 
 class FakeLivePreview implements LivePreviewBackend {
+  readonly engine = 'pdflatex';
   readonly sessions: FakeLiveSession[] = [];
   open(request: LivePreviewRequest, onEvent: (e: LivePreviewEvent) => void) {
     const session = new FakeLiveSession(request, onEvent);
@@ -169,6 +170,7 @@ describe('live preview routes', () => {
     await start({ enabled: false });
     expect((await app.inject({ method: 'GET', url: '/api/live-preview' })).json()).toEqual({
       available: false,
+      engine: null,
     });
     const { messages } = await connect();
     await until(() => messages.find((m) => m.type === 'status'), 'status');
@@ -179,6 +181,7 @@ describe('live preview routes', () => {
     await start();
     expect((await app.inject({ method: 'GET', url: '/api/live-preview' })).json()).toEqual({
       available: true,
+      engine: 'pdflatex',
     });
     const { socket, messages } = await connect();
     await until(

@@ -42,6 +42,7 @@ export interface PdftexLivePreviewOptions {
  *   <workRoot>/<project-id>/<session>/runs/ one directory per child
  */
 export class PdftexLivePreview implements LivePreviewBackend {
+  readonly engine = 'pdflatex';
   readonly #options: Required<PdftexLivePreviewOptions>;
   #format: Promise<string> | null = null;
 

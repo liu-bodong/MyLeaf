@@ -65,6 +65,8 @@ exit "$status"
  * rolls back to its latest snapshot before the first changed byte.
  */
 export class TexpressoLivePreview implements LivePreviewBackend {
+  /** TeXpresso is built on XeTeX. */
+  readonly engine = 'xelatex';
   readonly #command: string;
   readonly #workRoot: string;
   readonly #ownerPid: number;
