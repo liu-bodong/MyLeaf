@@ -1,3 +1,4 @@
+import { autocompletion } from '@codemirror/autocomplete';
 import {
   defaultKeymap,
   history,
@@ -31,6 +32,8 @@ import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
+import { NO_COMPLETION_DATA, latexCompletion } from './latex-completion.js';
+import type { CompletionData } from './latex-completion.js';
 
 export interface LatexEditorHandle {
   /** Moves the cursor to the start of a 1-based line and scrolls it into view. */
@@ -67,6 +70,8 @@ interface LatexEditorProps {
   readonly images?: ImageLoader;
   /** Numbers from the last compile, for chips in visual mode. */
   readonly references?: AuxReferences | null;
+  /** Labels, citation keys, commands and environments from the project's other files. */
+  readonly completion?: CompletionData;
   readonly ref?: Ref<LatexEditorHandle>;
 }
 
@@ -103,6 +108,7 @@ export function LatexEditor({
   macros = NO_MACROS,
   images,
   references = null,
+  completion = NO_COMPLETION_DATA,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -110,9 +116,9 @@ export function LatexEditor({
   const [mode] = useState(() => new Compartment());
   const visualRef = useRef(visual ? visualMode(visualOptions(macros, images, references)) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
-  const callbacks = useRef({ onChange, onCompile, onHistoryChange });
+  const callbacks = useRef({ onChange, onCompile, onHistoryChange, completion });
   useLayoutEffect(() => {
-    callbacks.current = { onChange, onCompile, onHistoryChange };
+    callbacks.current = { onChange, onCompile, onHistoryChange, completion };
   });
 
   useEffect(() => {
@@ -141,6 +147,10 @@ export function LatexEditor({
           syntaxHighlighting(defaultHighlightStyle),
           EditorView.lineWrapping,
           mode.of(visualRef.current),
+          autocompletion({
+            override: [latexCompletion(() => callbacks.current.completion)],
+            icons: false,
+          }),
           keymap.of([
             { key: 'Mod-s', run: compile, preventDefault: true },
             { key: 'Mod-Enter', run: compile, preventDefault: true },

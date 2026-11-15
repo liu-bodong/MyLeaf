@@ -15,3 +15,11 @@ export { macroDefinitions } from './macros.js';
 export type { MacroDefinitions } from './macros.js';
 export { parseAux } from './aux-file.js';
 export type { AuxFile, AuxReferences, CitationReference, LabelReference } from './aux-file.js';
+export {
+  bibEntries,
+  bibitemKeys,
+  environmentNames,
+  labelNames,
+  stripComments,
+} from './completion-keys.js';
+export type { BibEntry } from './completion-keys.js';

@@ -285,6 +285,35 @@ a {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+/* Completion popup, in the app's colours. */
+.editor .cm-tooltip.cm-tooltip-autocomplete {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  max-height: 16em;
+}
+
+.editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.editor .cm-completionDetail {
+  color: var(--fg-muted);
+}
+
+.editor .cm-tooltip.cm-completionInfo {
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
 .output {
   height: 100%;
   display: flex;
