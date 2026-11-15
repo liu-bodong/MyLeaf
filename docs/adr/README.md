@@ -21,7 +21,7 @@ Status values: `Proposed`, `Accepted`, `Superseded by NNNN`.
 | [0012](0012-live-preview-with-texpresso.md)             | Live preview with a patched TeXpresso                    | Accepted |
 | [0013](0013-workspace-ui-frame.md)                      | Workspace UI frame                                       | Accepted |
 | [0014](0014-live-preview-pages-references-citations.md) | Live preview: continuous pages, references and citations | Accepted |
-| [0015](0015-comments-and-suggestions-integration.md)    | Comments and suggestions: storage, sync, API and editor  | Proposed |
+| [0015](0015-comments-and-suggestions-integration.md)    | Comments and suggestions: storage, sync, API and editor  | Accepted |
 | [0016](0016-visual-mode.md)                             | Visual mode: rendering in place over the source          | Accepted |
 
 Template: copy [0000-template.md](0000-template.md).

@@ -1,6 +1,6 @@
 # 0015. Comments and suggestions: storage, sync, API and editor
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-14
 - Refines: ADR 0004 (sync), ADR 0005 (model), ADR 0007 (agents)
 
@@ -29,7 +29,7 @@ So the server has to hold the documents.
 - The plain file on disk becomes a **projection** of the document, written
   shortly after each change, so compile, live preview, upload and download
   keep working unchanged. Projection: all pending suggestions applied
-  (suggested insertions in, suggested deletions out). See question 2.
+  (suggested insertions in, suggested deletions out).
 - Replacing a text file from outside (upload, `PUT`) updates the document
   with a minimal diff, so anchors outside the changed region survive.
 
@@ -55,8 +55,8 @@ So the server has to hold the documents.
 
 - A server-wide list of people (name, colour) in the data directory. The
   browser asks "who are you?" once and remembers it; @mentions pick from the
-  list. No passwords: same trust model as today (trusted network only). See
-  question 1. Accounts come with Phase 2 and replace the picker.
+  list. No passwords: same trust model as today (trusted network only).
+  Accounts come with Phase 2 and replace the picker.
 
 ### Editor
 
@@ -81,17 +81,13 @@ So the server has to hold the documents.
 3. **Suggestions:** suggest mode, accept / reject, conflict warning.
 4. **Mentions inbox:** threads that mention you, in the app (no e-mail).
 
-## Questions for the owner
+## Owner decisions (2026-11-14)
 
-1. **People without accounts:** is a name picker (no passwords, trusted
-   network) acceptable until Phase 2?
-2. **What compiles:** pending suggestions applied (proposed; what you see
-   minus struck-through text), or accepted text only, or a switch?
-3. **Where the suggest-mode switch goes:** the editor toolbar has only
-   undo/redo and Code/Visual by your choice. Proposed: in the review panel's
-   header.
-4. **Order:** milestones 1→4 as listed, or comments without suggestions
-   first and stop there for feedback?
+1. People without accounts: a name picker (no passwords, trusted network)
+   until Phase 2.
+2. What compiles: pending suggestions applied.
+3. The suggest-mode switch goes in the review panel's header.
+4. Order: milestones 1 and 2, then stop for feedback before suggestions.
 
 ## Consequences
 
