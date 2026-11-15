@@ -2,6 +2,7 @@ import type { ProjectDto } from '@myleaf/api';
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { api } from '../api/client.js';
+import { SettingsButton } from '../settings/SettingsButton.js';
 
 export function ProjectList() {
   const [projects, setProjects] = useState<readonly ProjectDto[] | null>(null);
@@ -50,7 +51,10 @@ export function ProjectList() {
 
   return (
     <div className="project-list">
-      <h1>Projects</h1>
+      <header className="project-list-header">
+        <h1>Projects</h1>
+        <SettingsButton />
+      </header>
       <form onSubmit={(event) => void create(event)}>
         <input
           aria-label="New project name"

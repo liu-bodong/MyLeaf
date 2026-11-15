@@ -1,3 +1,4 @@
+import { SettingsButton } from '../settings/SettingsButton.js';
 import { Dropdown, MenuBar, NOT_AVAILABLE } from '../ui/Menu.js';
 import type { MenuDefinition, MenuItem } from '../ui/Menu.js';
 import { Icon } from '../ui/icons.js';
@@ -61,6 +62,7 @@ export function TopBar({ projectName, saveState, menus, projectItems, layoutItem
           <Icon name="share" />
           Share
         </button>
+        <SettingsButton />
       </div>
     </header>
   );
