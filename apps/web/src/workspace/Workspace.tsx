@@ -2,6 +2,7 @@ import type { FileEntryDto, ProjectDto } from '@myleaf/api';
 import type { ProjectSettings } from '@myleaf/project';
 import type { CompileResult, Diagnostic, PdfPoint, PdfRect } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
+import type { OutlineEntry } from '@myleaf/latex-syntax';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectPath } from '@myleaf/project';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
 import { useImageLoader } from '../editor/use-image-loader.js';
+import { useOutline } from '../editor/use-outline.js';
 import { useProjectMacros } from '../editor/use-project-macros.js';
 import { useReferences } from '../editor/use-references.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
@@ -28,8 +30,10 @@ import { Diagnostics } from './Diagnostics.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { FileTree } from './FileTree.js';
 import { KeyboardShortcuts } from './KeyboardShortcuts.js';
+import { OutlinePanel } from './OutlinePanel.js';
 import { Sidebar } from './Sidebar.js';
 import {
+  OUTLINE_DEFAULT,
   SIDEBAR_MAX,
   SIDEBAR_MIN,
   SPLIT_MAX,
@@ -118,6 +122,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   );
   const imageLoader = useImageLoader(projectId, files);
   const references = useReferences(projectId, pdfVersion, layout.editorMode === 'visual');
+  const { entries: outlineEntries, noteEdit: noteOutlineEdit } = useOutline(
+    projectId,
+    files,
+    project?.rootFile ?? null,
+    document?.kind === 'text' ? document : null,
+    layout.outline,
+  );
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -248,12 +259,21 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       };
       setSaveState('unsaved');
       liveChannel.publish({ path: document.path, text });
+      noteOutlineEdit(text);
       if (project?.settings.autoCompile) {
         if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
         autoCompileTimer.current = setTimeout(() => void compile('single'), AUTO_COMPILE_DELAY_MS);
       }
     },
-    [compile, document, flushSave, liveChannel, project?.settings.autoCompile, report],
+    [
+      compile,
+      document,
+      flushSave,
+      liveChannel,
+      noteOutlineEdit,
+      project?.settings.autoCompile,
+      report,
+    ],
   );
 
   /** A new live session starts from saved files: send the open document's unsaved text. */
@@ -436,6 +456,20 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     void showInSource().catch(report);
   };
 
+  /** Forward search to an outline heading; makes the PDF visible first. */
+  const goToHeading = (entry: OutlineEntry) => {
+    if (layout.view === 'editor') updateLayout({ view: 'split' });
+    setOutputView('pdf');
+    void (async () => {
+      const { rects } = await api.forwardSearch(projectId, {
+        file: parseProjectPath(entry.file),
+        line: entry.line,
+        column: null,
+      });
+      setHighlights(rects);
+    })().catch(report);
+  };
+
   const viewItems = (
     [
       ['split', 'Editor & PDF'],
@@ -505,6 +539,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
           checkbox: true,
           checked: layout.fileTree,
           onSelect: () => updateLayout({ fileTree: !layout.fileTree }),
+        },
+        {
+          label: 'Outline',
+          checkbox: true,
+          checked: layout.outline,
+          onSelect: () => updateLayout({ outline: !layout.outline }),
         },
         { kind: 'separator' },
         { label: 'Show in PDF', onSelect: goToPdf, disabled: !canShowInPdf },
@@ -777,6 +817,37 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
             </section>
           }
         />
+        {!layout.outline && (
+          <div className="outline-rail">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Show outline"
+              title="Show outline"
+              onClick={() => updateLayout({ outline: true })}
+            >
+              <Icon name="outline" />
+            </button>
+          </div>
+        )}
+        <Sidebar
+          side="end"
+          label="Outline"
+          resizeLabel="Resize outline"
+          defaultWidth={OUTLINE_DEFAULT}
+          open={layout.outline}
+          width={layout.outlineWidth}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          onWidthChange={(outlineWidth) => updateLayout({ outlineWidth })}
+        >
+          <OutlinePanel
+            entries={outlineEntries}
+            canNavigate={hasPdf}
+            onSelect={goToHeading}
+            onClose={() => updateLayout({ outline: false })}
+          />
+        </Sidebar>
       </div>
       {shortcutsOpen && (
         <Dialog title="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)}>

@@ -20,6 +20,10 @@ export interface Layout {
   /** Whether the file-tree sidebar is shown. */
   readonly fileTree: boolean;
   readonly editorMode: EditorMode;
+  /** Whether the outline sidebar on the right is shown. */
+  readonly outline: boolean;
+  /** Width of the outline sidebar in CSS pixels. */
+  readonly outlineWidth: number;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -27,6 +31,7 @@ export const SPLIT_MAX = 0.8;
 export const SIDEBAR_MIN = 160;
 export const SIDEBAR_MAX = 480;
 export const SIDEBAR_DEFAULT = 240;
+export const OUTLINE_DEFAULT = 220;
 export const DEFAULT_LAYOUT: Layout = {
   view: 'split',
   split: 0.5,
@@ -35,6 +40,8 @@ export const DEFAULT_LAYOUT: Layout = {
   logs: false,
   fileTree: true,
   editorMode: 'code',
+  outline: false,
+  outlineWidth: OUTLINE_DEFAULT,
 };
 
 const STORAGE_KEY = 'myleaf.layout';
@@ -85,6 +92,11 @@ export function parseLayout(raw: string | null): Layout {
     logs: typeof saved.logs === 'boolean' ? saved.logs : DEFAULT_LAYOUT.logs,
     fileTree: typeof saved.fileTree === 'boolean' ? saved.fileTree : DEFAULT_LAYOUT.fileTree,
     editorMode: EDITOR_MODES.find((mode) => mode === saved.editorMode) ?? DEFAULT_LAYOUT.editorMode,
+    outline: typeof saved.outline === 'boolean' ? saved.outline : DEFAULT_LAYOUT.outline,
+    outlineWidth:
+      typeof saved.outlineWidth === 'number' && Number.isFinite(saved.outlineWidth)
+        ? clampSidebar(saved.outlineWidth)
+        : DEFAULT_LAYOUT.outlineWidth,
   };
 }
 
