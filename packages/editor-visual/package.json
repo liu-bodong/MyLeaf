@@ -22,7 +22,8 @@
   "dependencies": {
     "@codemirror/state": "catalog:",
     "@codemirror/view": "catalog:",
-    "@myleaf/latex-syntax": "workspace:*"
+    "@myleaf/latex-syntax": "workspace:*",
+    "katex": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

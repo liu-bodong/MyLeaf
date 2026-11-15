@@ -37,6 +37,14 @@ export type VisualSpan =
       readonly from: number;
       readonly to: number;
       readonly label: string;
+    }
+  /** Math to typeset in place of its source; `tex` is what the renderer receives. */
+  | {
+      readonly kind: 'math';
+      readonly from: number;
+      readonly to: number;
+      readonly tex: string;
+      readonly display: boolean;
     };
 
 const TEXT_STYLES: Readonly<Record<string, TextStyle>> = {
@@ -68,7 +76,7 @@ const touches = (node: Range, selection: readonly Range[]) =>
 /**
  * Decides how visual mode shows `text` (ADR 0016). A construct the selection
  * touches is shown as source; constructs not recognised are always source.
- * Spans are sorted by `from`; `hide` and `fold` spans never overlap.
+ * Spans are sorted by `from`; `hide`, `fold` and `math` spans never overlap.
  */
 export function planVisual(
   text: string,
@@ -99,15 +107,52 @@ export function planVisual(
           visit(node.children);
           break;
         case 'environment':
-          visit(node.children);
+          if (node.math) {
+            if (node.end !== null && !touches(node, selection)) {
+              // The whole environment, so KaTeX lays out align, gather, etc.
+              const tex = unnumbered(withoutLabels(text.slice(node.from, node.to)));
+              spans.push({ kind: 'math', from: node.from, to: node.to, tex, display: true });
+            }
+          } else {
+            visit(node.children);
+          }
           break;
         case 'math':
+          if (node.closed && !touches(node, selection)) {
+            const tex = withoutLabels(text.slice(node.contentFrom, node.contentTo));
+            if (tex.trim() !== '') {
+              spans.push({
+                kind: 'math',
+                from: node.from,
+                to: node.to,
+                tex,
+                display: node.display,
+              });
+            }
+          }
           break;
       }
     }
   };
   visit(document.nodes);
   return spans.sort((a, b) => a.from - b.from || a.to - b.to);
+}
+
+/**
+ * KaTeX numbers each formula on its own, so every equation would be (1).
+ * Until numbers come from the last compile (ADR 0016, milestone 4), numbered
+ * environments are typeset unnumbered.
+ */
+function unnumbered(tex: string): string {
+  return tex.replace(
+    /\\(begin|end)\{(equation|align|alignat|gather|multline|flalign|eqnarray)\}/g,
+    '\\$1{$2*}',
+  );
+}
+
+/** KaTeX does not support `\label`; labels are not part of the typeset math. */
+function withoutLabels(tex: string): string {
+  return tex.replace(/\\label\s*\{[^{}]*\}/g, '');
 }
 
 function lastMandatory(command: CommandNode): ArgumentNode | undefined {

@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { planVisual } from './plan.js';
 import type { VisualSpan } from './plan.js';
 
-/** The text as visual mode shows it: hidden spans removed, folds as `[label]`. */
+/** The text as visual mode shows it: hidden spans removed, folds as `[label]`, math as `⟨tex⟩`. */
 function shown(text: string, spans: readonly VisualSpan[]): string {
   let out = '';
   let at = 0;
   for (const span of spans.filter((s) => s.kind !== 'style')) {
-    out += text.slice(at, span.from) + (span.kind === 'fold' ? `[${span.label}]` : '');
+    const replacement =
+      span.kind === 'fold' ? `[${span.label}]` : span.kind === 'math' ? `⟨${span.tex}⟩` : '';
+    out += text.slice(at, span.from) + replacement;
     at = span.to;
   }
   return out + text.slice(at);
@@ -49,9 +51,36 @@ describe('planVisual', () => {
     expect(styled(text, spans)).toEqual([['heading-3', text]]);
   });
 
-  it('leaves unknown commands, unclosed arguments and math as source', () => {
+  it('leaves unknown commands and unclosed arguments as source', () => {
     const text = String.raw`\foo{x} \textbf{open $a$`;
-    expect(shown(text, plan(text))).toBe(text);
+    expect(shown(text, plan(text))).toBe(String.raw`\foo{x} \textbf{open ⟨a⟩`);
+  });
+
+  it('typesets math unless the cursor touches it', () => {
+    const text = String.raw`Let $x^2$ and \(y\) be \[z\label{eq}\] or $$w$$.`;
+    expect(shown(text, plan(text))).toBe('Let ⟨x^2⟩ and ⟨y⟩ be ⟨z⟩ or ⟨w⟩.');
+    expect(plan(text).flatMap((s) => (s.kind === 'math' ? [s.display] : []))).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+    // Right after the closing $ counts as touching.
+    expect(shown(text, plan(text, text.indexOf(' and')))).toBe('Let $x^2$ and ⟨y⟩ be ⟨z⟩ or ⟨w⟩.');
+  });
+
+  it('typesets whole math environments and leaves unclosed or empty math as source', () => {
+    const text = String.raw`\begin{align*}a &= b \label{x}\end{align*} $ $ $open`;
+    expect(shown(text, plan(text))).toBe(String.raw`⟨\begin{align*}a &= b \end{align*}⟩ $ $ $open`);
+    const numbered = String.raw`\begin{equation}x\end{equation}`;
+    expect(shown(numbered, plan(numbered))).toBe(String.raw`⟨\begin{equation*}x\end{equation*}⟩`);
+    const unclosed = String.raw`\begin{equation}a`;
+    expect(shown(unclosed, plan(unclosed))).toBe(unclosed);
+  });
+
+  it('typesets math inside styled text and headings', () => {
+    const text = String.raw`\section{On $\alpha$} \textbf{a $b$}`;
+    expect(shown(text, plan(text))).toBe('On ⟨\\alpha⟩ a ⟨b⟩');
   });
 
   it('dims comments but keeps them', () => {

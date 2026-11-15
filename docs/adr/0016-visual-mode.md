@@ -98,6 +98,18 @@ a marker.
 - A newly opened document has its cursor at offset 0, inside the preamble.
   The preamble fold therefore opens only for a selection beyond offset 0;
   clicking the fold puts the cursor at the end of the preamble.
+- Math (milestone 2): KaTeX 0.19 with `throwOnError`; math it cannot
+  render stays as source with a wavy underline and KaTeX's message as the
+  tooltip. Numbered environments are typeset unnumbered (KaTeX would number
+  every formula (1)) until milestone 4 brings the compile's numbers.
+  `\label` is removed before typesetting. KaTeX's hidden MathML copy is
+  kept for screen readers.
+- Macros: the open file's definitions are read live; other `.tex`/`.sty`
+  files of the project are read as saved, when visual mode is on and when
+  the file list or the open file changes. Definitions with an optional
+  argument default are skipped.
+- Visual mode shows prose in the interface's proportional font; Code mode
+  keeps the monospace font.
 
 ## Consequences
 

@@ -11,3 +11,5 @@ export type {
   Range,
   Signatures,
 } from './parse.js';
+export { macroDefinitions } from './macros.js';
+export type { MacroDefinitions } from './macros.js';

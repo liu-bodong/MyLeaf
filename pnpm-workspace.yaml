@@ -23,6 +23,7 @@ catalog:
   eslint-plugin-react-hooks: ^7.1.1
   fastify: ^5.12.8
   globals: ^17.14.0
+  katex: ^0.19.1
   pdfjs-dist: ^6.5.438
   prettier: ^3.10.1
   react: ^19.3.1

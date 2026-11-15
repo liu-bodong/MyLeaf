@@ -22,7 +22,9 @@
     "@myleaf/compile": "workspace:*",
     "@myleaf/doc-model": "workspace:*",
     "@myleaf/editor-visual": "workspace:*",
+    "@myleaf/latex-syntax": "workspace:*",
     "@myleaf/project": "workspace:*",
+    "katex": "catalog:",
     "pdfjs-dist": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"

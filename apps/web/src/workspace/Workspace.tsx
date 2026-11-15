@@ -14,6 +14,7 @@ import { LivePreviewPane } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
+import { useProjectMacros } from '../editor/use-project-macros.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
 import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
 import { Dialog } from '../ui/Dialog.js';
@@ -107,6 +108,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const autoCompileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const report = useCallback((reason: unknown) => setError(errorMessage(reason)), []);
+  const projectMacros = useProjectMacros(
+    projectId,
+    files,
+    document?.path ?? null,
+    layout.editorMode === 'visual',
+  );
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -672,6 +679,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onCompile={() => void compile()}
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
+                    macros={projectMacros}
                   />
                 )}
                 {document?.kind === 'binary' && (

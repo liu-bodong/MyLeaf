@@ -26,6 +26,8 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
+import type { MacroDefinitions } from '@myleaf/latex-syntax';
+import 'katex/dist/katex.min.css';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
 
@@ -58,8 +60,12 @@ interface LatexEditorProps {
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
+  /** Macros from the project's other files, for math in visual mode. */
+  readonly macros?: MacroDefinitions;
   readonly ref?: Ref<LatexEditorHandle>;
 }
+
+const NO_MACROS: MacroDefinitions = {};
 
 /** Runs a command and returns focus to the editor, e.g. after a toolbar click. */
 function runCommand(view: EditorView | null, command: (view: EditorView) => boolean) {
@@ -76,12 +82,13 @@ export function LatexEditor({
   onCompile,
   onHistoryChange,
   visual = false,
+  macros = NO_MACROS,
   ref,
 }: LatexEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
-  const visualRef = useRef(visual);
+  const visualRef = useRef(visual ? visualMode({ macros }) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -113,7 +120,7 @@ export function LatexEditor({
           StreamLanguage.define(stex),
           syntaxHighlighting(defaultHighlightStyle),
           EditorView.lineWrapping,
-          mode.of(visualRef.current ? visualMode() : []),
+          mode.of(visualRef.current),
           keymap.of([
             { key: 'Mod-s', run: compile, preventDefault: true },
             { key: 'Mod-Enter', run: compile, preventDefault: true },
@@ -142,9 +149,9 @@ export function LatexEditor({
   }, [documentId]);
 
   useEffect(() => {
-    visualRef.current = visual;
-    viewRef.current?.dispatch({ effects: mode.reconfigure(visual ? visualMode() : []) });
-  }, [mode, visual]);
+    visualRef.current = visual ? visualMode({ macros }) : [];
+    viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
+  }, [macros, mode, visual]);
 
   useImperativeHandle(
     ref,
