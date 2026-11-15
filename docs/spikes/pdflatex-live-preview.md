@@ -165,8 +165,10 @@ about 16 differences are math-extraction noise, not layout.
 
 ## Open risks
 
-- Building pdfTeX on macOS (the `funopen` branch is written but not
-  compiled; Linux builds and runs, finding 5).
+- pdfTeX on macOS: it builds with `vendor/pdftex/macos-target-os-mac.patch`
+  and the stream hooks (`funopen`) gave identical PDFs on the owner's Mac
+  with MacTeX 2025; the warm fork has not been run there yet. MacTeX is
+  TeX Live 2025, newer than the pinned pdfTeX 1.40.25 (TeX Live 2023).
 - Where pdfTeX must fork for snapshots (TeXpresso's XeTeX forks while
   reading input) and whether all state survives a fork (open `FILE*`s,
   kpathsea caches, pdfTeX's PDF object state).

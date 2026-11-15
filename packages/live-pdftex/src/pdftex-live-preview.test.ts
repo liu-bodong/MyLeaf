@@ -8,6 +8,7 @@ import type { LivePreviewEvent, LivePreviewSession } from '@myleaf/live-preview'
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { kpathseaEnv } from './kpathsea-env.js';
 import { pauseOffset } from './pause-offset.js';
 import { PdftexLivePreview } from './pdftex-live-preview.js';
 
@@ -50,11 +51,11 @@ const tool = (name: string, args: string[]) => {
     return null;
   }
 };
-const texmfcnf = tool('kpsewhich', ['-var-value', 'TEXMFCNF']);
+const kpathsea = await kpathseaEnv();
 const available =
   process.platform !== 'win32' &&
   existsSync(command) &&
-  texmfcnf !== null &&
+  kpathsea !== null &&
   tool('mutool', ['-v']) !== null;
 
 const main = (preamble: string, firstPage: string) =>
@@ -85,7 +86,7 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
 
   const open = async (files: ProjectFile[]) => {
     events = [];
-    const backend = new PdftexLivePreview({ command, workRoot, texmfcnf: texmfcnf ?? '' });
+    const backend = new PdftexLivePreview({ command, workRoot, kpathsea: kpathsea ?? {} });
     session = await backend.open(
       { projectId: ProjectId('p'), rootFile: parseProjectPath('main.tex'), files },
       (event) => events.push(event),
@@ -173,7 +174,7 @@ describe.skipIf(process.platform === 'win32')('PdftexLivePreview with a missing 
     const backend = new PdftexLivePreview({
       command: join(workRoot, 'no-such-pdftex'),
       workRoot,
-      texmfcnf: '',
+      kpathsea: {},
     });
     const session = await backend.open(
       {

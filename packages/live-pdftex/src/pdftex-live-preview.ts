@@ -24,8 +24,11 @@ export interface PdftexLivePreviewOptions {
   readonly command: string;
   /** Directory holding the format and per-session workspaces. */
   readonly workRoot: string;
-  /** kpathsea configuration path for the patched binary (`kpsewhich -var-value TEXMFCNF`). */
-  readonly texmfcnf: string;
+  /**
+   * kpathsea variables that point the patched binary at the installed TeX
+   * Live (`kpathseaEnv()`).
+   */
+  readonly kpathsea: Readonly<Record<string, string>>;
   /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
   readonly mutool?: string;
 }
@@ -74,7 +77,7 @@ export class PdftexLivePreview implements LivePreviewBackend {
       await run(
         this.#options.command,
         ['-ini', '-jobname=pdflatex', '-progname=pdflatex', '-etex', 'pdflatex.ini'],
-        { cwd: dir, env: { ...process.env, TEXMFCNF: this.#options.texmfcnf } },
+        { cwd: dir, env: { ...process.env, ...this.#options.kpathsea } },
       );
       return join(dir, 'pdflatex.fmt');
     })();
@@ -319,7 +322,7 @@ class PdftexSession implements LivePreviewSession {
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-    return { ...process.env, TEXMFCNF: this.#options.texmfcnf, ...extra };
+    return { ...process.env, ...this.#options.kpathsea, ...extra };
   }
 
   #args(): string[] {

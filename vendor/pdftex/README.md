@@ -6,13 +6,14 @@ work (`docs/spikes/pdflatex-live-preview.md`). Live preview uses it with
 `MYLEAF_LIVE_ENGINE=pdftex` (`packages/live-pdftex`); the default is still
 TeXpresso (ADR 0012).
 
-| File                  | Purpose                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                              |
-| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)           |
-| `warm-fork.patch`     | Level 2: pauses at a line of the main file and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
-| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks    |
-| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                       |
+| File                        | Purpose                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `build.sh`                  | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                              |
+| `stream-hooks.patch`        | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)           |
+| `warm-fork.patch`           | Level 2: pauses at a line of the main file and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
+| `macos-target-os-mac.patch` | Lets the bundled zlib and libpng compile with current macOS SDKs                                     |
+| `check-hooks.sh`            | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks    |
+| `fixtures/images.tex`       | PNG, JPEG and PDF images, for `check-hooks.sh`                                                       |
 
 ## Source
 
@@ -78,11 +79,15 @@ its children.
 
 ## Running
 
-The binary has no `texmf.cnf` next to it. Point kpathsea at the installed
-TeX Live's and make a format with the patched binary:
+The binary is not installed with TeX Live, so kpathsea cannot find TeX
+Live's files from the binary's location (TeX Live's own `texmf.cnf`, as on
+MacTeX, derives its trees from `$SELFAUTOPARENT` and friends). Take
+`TEXMFCNF`, `TEXMFROOT` and `TEXMFLOCAL` from the installed TeX Live, as
+live preview does (`kpathseaEnv` in `packages/live-pdftex`), and make a
+format with the patched binary:
 
 ```bash
-export TEXMFCNF="$(kpsewhich -var-value TEXMFCNF)"
+for v in TEXMFCNF TEXMFROOT TEXMFLOCAL; do export "$v=$(kpsewhich -var-value "$v")"; done
 vendor/pdftex/build/bin/pdftex -ini -jobname=pdflatex -progname=pdflatex -etex pdflatex.ini
 MYLEAF_PDFTEX_HOOKS=1 vendor/pdftex/build/bin/pdftex -fmt=pdflatex -progname=pdflatex main.tex
 ```
@@ -110,9 +115,18 @@ use) is needed to run it, and `strace` for `check-hooks.sh`.
 
 ## Build dependencies (macOS)
 
-Not tested. The build needs Xcode's command line tools and `makeinfo`
-(`brew install texinfo`); the `funopen` branch of the patch has not been
-compiled.
+The build needs Xcode's command line tools and `makeinfo`
+(`brew install texinfo`); live preview also needs MuPDF's `mutool` on the
+`PATH`. TeX Live 2023's bundled zlib 1.2.13 and libpng 1.6.39 take
+`TARGET_OS_MAC`, which current macOS SDKs always define, to mean classic
+Mac OS (zlib defines `fdopen` as `NULL`, libpng includes `<fp.h>`);
+`macos-target-os-mac.patch` removes those two checks, as zlib 1.3 and
+libpng 1.6.40 did upstream. It changes nothing on Linux.
+
+Built and run on the owner's Mac against MacTeX 2025 (2026-11-15): the
+format builds and a test document gives the same PDF with the hooks off and
+on (the `funopen` branch). The warm fork (live preview) has not been run on
+macOS yet.
 
 ## Updating
 

@@ -5,7 +5,7 @@ import type { PdftexHost } from './pdftex-command.js';
 const bundled = '/repo/vendor/pdftex/build/bin/pdftex';
 const host = (paths: string[], overrides: Partial<PdftexHost> = {}): PdftexHost => ({
   executable: (path) => Promise.resolve(paths.includes(path)),
-  texmfcnf: () => Promise.resolve('/etc/texmf/web2c'),
+  kpathsea: () => Promise.resolve({ TEXMFCNF: '/etc/texmf/web2c' }),
   mutool: () => Promise.resolve(true),
   ...overrides,
 });
@@ -15,7 +15,7 @@ describe('choosePdftex', () => {
     expect(await choosePdftex(undefined, bundled, host([bundled]))).toEqual({
       kind: 'enabled',
       command: bundled,
-      texmfcnf: '/etc/texmf/web2c',
+      kpathsea: { TEXMFCNF: '/etc/texmf/web2c' },
     });
     expect(await choosePdftex(undefined, bundled, host([]))).toMatchObject({
       kind: 'disabled',
@@ -35,7 +35,7 @@ describe('choosePdftex', () => {
   });
 
   it('needs TeX Live and mutool', async () => {
-    const noTexLive = host([bundled], { texmfcnf: () => Promise.resolve(null) });
+    const noTexLive = host([bundled], { kpathsea: () => Promise.resolve(null) });
     expect(await choosePdftex(undefined, bundled, noTexLive)).toMatchObject({
       kind: 'disabled',
       reason: expect.stringContaining('kpsewhich') as string,

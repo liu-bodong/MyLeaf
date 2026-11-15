@@ -59,7 +59,7 @@ if (liveEngine === 'pdftex') {
   if (pdftex.kind === 'enabled') {
     liveBackend = new PdftexLivePreview({
       command: pdftex.command,
-      texmfcnf: pdftex.texmfcnf,
+      kpathsea: pdftex.kpathsea,
       workRoot: liveRoot,
     });
     liveStatus = { level: 'info', message: `Live preview: enabled, pdfTeX (${pdftex.command})` };

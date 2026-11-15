@@ -2,17 +2,23 @@ import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import { kpathseaEnv } from '@myleaf/live-pdftex';
 
 export type PdftexChoice =
-  | { readonly kind: 'enabled'; readonly command: string; readonly texmfcnf: string }
+  | {
+      readonly kind: 'enabled';
+      readonly command: string;
+      /** kpathsea variables of the installed TeX Live (`kpathseaEnv`). */
+      readonly kpathsea: Readonly<Record<string, string>>;
+    }
   /** `warn`: configured but unusable. `info`: not built. */
   | { readonly kind: 'disabled'; readonly level: 'warn' | 'info'; readonly reason: string };
 
 export interface PdftexHost {
   /** Whether `path` is an executable file. */
   readonly executable: (path: string) => Promise<boolean>;
-  /** The installed TeX Live's TEXMFCNF, or `null` without one. */
-  readonly texmfcnf: () => Promise<string | null>;
+  /** The installed TeX Live's kpathsea variables, or `null` without TeX Live. */
+  readonly kpathsea: () => Promise<Readonly<Record<string, string>> | null>;
   /** Whether MuPDF's `mutool`, which renders the pages, can be run. */
   readonly mutool: () => Promise<boolean>;
 }
@@ -29,7 +35,7 @@ const host: PdftexHost = {
       () => true,
       () => false,
     ),
-  texmfcnf: async () => (await output('kpsewhich', ['-var-value', 'TEXMFCNF'])) || null,
+  kpathsea: () => kpathseaEnv(),
   mutool: async () => (await output('mutool', ['-v'])) !== null,
 };
 
@@ -41,7 +47,7 @@ const host: PdftexHost = {
 export async function choosePdftex(
   configured: string | undefined,
   bundledPath: string,
-  { executable, texmfcnf, mutool }: PdftexHost = host,
+  { executable, kpathsea, mutool }: PdftexHost = host,
 ): Promise<PdftexChoice> {
   const command = configured !== undefined && configured !== '' ? configured : bundledPath;
   if (!(await executable(command))) {
@@ -57,12 +63,12 @@ export async function choosePdftex(
           reason: `MYLEAF_PDFTEX (${command}) is not an executable file; build it with vendor/pdftex/build.sh`,
         };
   }
-  const cnf = await texmfcnf();
-  if (cnf === null) {
+  const env = await kpathsea();
+  if (env === null) {
     return { kind: 'disabled', level: 'warn', reason: 'kpsewhich (TeX Live) was not found' };
   }
   if (!(await mutool())) {
     return { kind: 'disabled', level: 'warn', reason: 'mutool (MuPDF) was not found' };
   }
-  return { kind: 'enabled', command, texmfcnf: cnf };
+  return { kind: 'enabled', command, kpathsea: env };
 }
