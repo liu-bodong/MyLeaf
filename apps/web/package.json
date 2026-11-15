@@ -18,6 +18,7 @@
     "@codemirror/search": "catalog:",
     "@codemirror/state": "catalog:",
     "@codemirror/view": "catalog:",
+    "@lezer/highlight": "catalog:",
     "@myleaf/api": "workspace:*",
     "@myleaf/compile": "workspace:*",
     "@myleaf/doc-model": "workspace:*",

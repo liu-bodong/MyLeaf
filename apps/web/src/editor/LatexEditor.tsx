@@ -8,23 +8,11 @@ import {
   undo,
   undoDepth,
 } from '@codemirror/commands';
-import {
-  StreamLanguage,
-  bracketMatching,
-  defaultHighlightStyle,
-  syntaxHighlighting,
-} from '@codemirror/language';
+import { StreamLanguage, bracketMatching } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState } from '@codemirror/state';
-import {
-  EditorView,
-  drawSelection,
-  highlightActiveLine,
-  highlightActiveLineGutter,
-  keymap,
-  lineNumbers,
-} from '@codemirror/view';
+import { EditorView, drawSelection, keymap } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
 import { Vim, vim as vimBindings } from '@replit/codemirror-vim';
 import type { CodeMirror as VimEditor } from '@replit/codemirror-vim';
@@ -33,6 +21,8 @@ import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { Ref } from 'react';
+import { useSettings } from '../settings/use-settings.js';
+import { editorAppearance } from './editor-appearance.js';
 
 export interface LatexEditorHandle {
   /** Moves the cursor to the start of a 1-based line and scrolls it into view. */
@@ -148,6 +138,9 @@ export function LatexEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
+  const [appearance] = useState(() => new Compartment());
+  const { settings, theme } = useSettings();
+  const appearanceRef = useRef(editorAppearance(theme, settings));
   const visualRef = useRef(
     visual ? visualMode(visualOptions(macros, images, references, clean)) : [],
   );
@@ -176,16 +169,12 @@ export function LatexEditor({
         extensions: [
           // Before the other keymaps, so Vim sees keys first (per @replit/codemirror-vim).
           keys.of(vimRef.current),
-          lineNumbers(),
-          highlightActiveLineGutter(),
-          highlightActiveLine(),
+          appearance.of(appearanceRef.current),
           drawSelection(),
           history(),
           bracketMatching(),
           highlightSelectionMatches(),
           StreamLanguage.define(stex),
-          syntaxHighlighting(defaultHighlightStyle),
-          EditorView.lineWrapping,
           mode.of(visualRef.current),
           keymap.of([
             { key: 'Mod-s', run: compile, preventDefault: true },
@@ -219,6 +208,11 @@ export function LatexEditor({
     visualRef.current = visual ? visualMode(visualOptions(macros, images, references, clean)) : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
   }, [clean, images, macros, mode, references, visual]);
+
+  useEffect(() => {
+    appearanceRef.current = editorAppearance(theme, settings);
+    viewRef.current?.dispatch({ effects: appearance.reconfigure(appearanceRef.current) });
+  }, [appearance, settings, theme]);
 
   useEffect(() => {
     vimRef.current = vim ? vimBindings({ status: true }) : [];
