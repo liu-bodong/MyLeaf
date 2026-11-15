@@ -5,6 +5,13 @@
   "description": "MyLeaf HTTP/WebSocket server (composition root).",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "exports": {
+    ".": {
+      "@myleaf/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -30,6 +37,7 @@
     "@types/node": "catalog:",
     "@types/ws": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "ws": "catalog:"
   }
 }

@@ -17,6 +17,18 @@ export interface AppDependencies {
   readonly livePreview?: LiveSessionPool | null;
 }
 
+/**
+ * WebSocket compression (permessage-deflate) for live preview. A page is an
+ * SVG of about 300 KB that deflate shrinks about 7-fold. Level 1 gets most of
+ * that for a third of the CPU of zlib's default level 6; small messages
+ * (status, page counts) stay uncompressed. Measured with
+ * `pnpm bench:live-compression`.
+ */
+export const liveSocketCompression = {
+  zlibDeflateOptions: { level: 1 },
+  threshold: 1024,
+} as const;
+
 export function buildApp(
   { store, compiler, livePreview = null }: AppDependencies,
   options: FastifyServerOptions = {},
@@ -31,7 +43,7 @@ export function buildApp(
   registerProjectRoutes(app, store, compiler);
   registerFileRoutes(app, store, livePreview);
   registerCompileRoutes(app, store, compiler, livePreview);
-  void app.register(websocket);
+  void app.register(websocket, { options: { perMessageDeflate: liveSocketCompression } });
   void app.register((scoped, _options, done) => {
     registerLiveRoutes(scoped, store, compiler, livePreview);
     done();

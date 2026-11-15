@@ -40,4 +40,5 @@ catalog:
   typescript-eslint: ^8.72.2
   vite: ^8.3.8
   vitest: ^5.1.0
+  ws: ^8.23.0
   yjs: ^13.6.33

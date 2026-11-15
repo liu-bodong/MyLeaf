@@ -220,6 +220,26 @@ describe('live preview routes', () => {
     await until(() => (session.closed ? true : undefined), 'session close');
   });
 
+  it('compresses pages when the browser supports it', async () => {
+    await start();
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    // Node's WebSocket, like browsers, offers permessage-deflate.
+    const browser = new WebSocket(
+      `${address.replace('http', 'ws')}/api/projects/${project.id}/live`,
+    );
+    const messages: LiveServerMessage[] = [];
+    browser.addEventListener('message', (event) =>
+      messages.push(JSON.parse(String(event.data)) as LiveServerMessage),
+    );
+    const session = await until(() => backend.sessions[0], 'session');
+    const svg = `<svg>${'<path d="M 1 2 L 3 4"/>'.repeat(1_000)}</svg>`;
+    session.emit({ type: 'page', page: 1, svg });
+    const page = await until(() => messages.find((m) => m.type === 'page'), 'page');
+    expect(browser.extensions).toBe('permessage-deflate');
+    expect(page).toEqual({ type: 'page', page: 1, svg });
+    browser.close();
+  });
+
   it('passes saved files and uploads to open sessions', async () => {
     await start();
     const { messages } = await connect();
