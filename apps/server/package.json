@@ -21,7 +21,8 @@
     "@myleaf/live-texpresso": "workspace:*",
     "@myleaf/project": "workspace:*",
     "@myleaf/storage-fs": "workspace:*",
-    "fastify": "catalog:"
+    "fastify": "catalog:",
+    "fflate": "catalog:"
   },
   "devDependencies": {
     "@myleaf/testing": "workspace:*",
