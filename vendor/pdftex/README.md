@@ -125,8 +125,13 @@ libpng 1.6.40 did upstream. It changes nothing on Linux.
 
 Built and run on the owner's Mac against MacTeX 2025 (2026-11-15): the
 format builds and a test document gives the same PDF with the hooks off and
-on (the `funopen` branch). The warm fork (live preview) has not been run on
-macOS yet.
+on (the `funopen` branch), and the live-pdftex tests pass with the warm
+fork.
+
+The warm fork forks inside a stdio read of the main file, which holds that
+stream's lock. On macOS the child's thread cannot release a lock taken by
+the parent's thread, so without care the child blocks on its next read;
+`warm-fork.patch` releases the lock across `fork()`.
 
 ## Updating
 
