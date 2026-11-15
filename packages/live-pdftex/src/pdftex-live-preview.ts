@@ -49,6 +49,11 @@ export interface PdftexLivePreviewOptions {
    * `ceil(pages / max)` pages. Default: `DEFAULT_MAX_SNAPSHOTS`.
    */
   readonly maxSnapshots?: number;
+  /**
+   * Receives a line per event (edits, runs, messages to and from pdfTeX,
+   * pages), for diagnosis (`MYLEAF_LIVE_TRACE` in the server).
+   */
+  readonly trace?: (line: string) => void;
 }
 
 /**
@@ -74,6 +79,7 @@ export class PdftexLivePreview implements LivePreviewBackend {
     this.#options = {
       mutool: 'mutool',
       maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
+      trace: () => {},
       ...options,
       workRoot: resolve(options.workRoot),
     };
@@ -228,6 +234,8 @@ class PdftexSession implements LivePreviewSession {
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
   #inFlight: InFlightRun | null = null;
+  /** Writes a trace line, prefixed with this session (`trace` option). */
+  readonly #trace: (line: string) => void;
   /** Most snapshots kept: the request's, at most the backend's. */
   #maxSnapshots: number;
 
@@ -243,6 +251,8 @@ class PdftexSession implements LivePreviewSession {
     this.#dir = dir;
     this.#srcDir = join(dir, 'src');
     this.#onEvent = onEvent;
+    const tag = basename(dir).slice(0, 8);
+    this.#trace = (line) => options.trace(`${tag} ${line}`);
     this.#maxSnapshots = Math.min(
       request.maxSnapshots ?? options.maxSnapshots,
       options.maxSnapshots,
@@ -286,6 +296,7 @@ class PdftexSession implements LivePreviewSession {
 
   updateFile(file: ProjectFile): void {
     if (this.#closing) return;
+    this.#trace(`edit ${file.path} ${file.content.length} bytes`);
     this.#files.set(file.path, file.content);
     this.#dirty.add(file.path);
     this.#settleRuns = 0;
@@ -357,6 +368,8 @@ class PdftexSession implements LivePreviewSession {
 
     const id = String(++this.#runs);
     const out = join(this.#dir, 'runs', id);
+    const started = performance.now();
+    this.#trace(`run ${id}: ${engine ? `engine ${engine.process.pid}` : 'full run'}`);
     await mkdir(out);
     // The child reads the root file from a copy, so later edits cannot change it mid-run.
     const main = `${out}.tex`;
@@ -386,7 +399,9 @@ class PdftexSession implements LivePreviewSession {
         engine.pages.set(id, (page, pageDir) => {
           void this.#renderFinished(inFlight, page, join(pageDir, `${this.#job}.pdf`));
         });
-        engine.control.write(`run\t${id}\t${main}\t${out}\t${first}\t${last}\t${every}\t${more}\n`);
+        const command = `run\t${id}\t${main}\t${out}\t${first}\t${last}\t${every}\t${more}`;
+        this.#trace(`> ${engine.process.pid} ${command}`);
+        engine.control.write(`${command}\n`);
       });
       this.#inFlight = null;
     } else {
@@ -420,6 +435,9 @@ class PdftexSession implements LivePreviewSession {
     }
     const log = await readFile(join(out, `${this.#job}.log`), 'latin1').catch(() => '');
     const pages = /Output written on .*?\((\d+) pages?/s.exec(log);
+    this.#trace(
+      `run ${id} done: status ${status}, ${pages?.[1] ?? 'no'} pages, ${Math.round(performance.now() - started)} ms`,
+    );
     // Without a PDF (fatal error, or no pages), the last one stays on screen.
     const previous = pages ? this.#pdf : { path: join(out, `${this.#job}.pdf`), pages: 0 };
     if (pages) {
@@ -469,8 +487,12 @@ class PdftexSession implements LivePreviewSession {
     this.#pageRuns.set(page, run);
     const svg = sanitizeSvg(raw);
     const hash = createHash('sha1').update(svg).digest('base64');
-    if (this.#emitted.get(page) === hash) return;
+    if (this.#emitted.get(page) === hash) {
+      this.#trace(`page ${page} of run ${run}: unchanged`);
+      return;
+    }
     this.#emitted.set(page, hash);
+    this.#trace(`page ${page} of run ${run}: emitted, ${svg.length} chars`);
     this.#onEvent({ type: 'page', page, svg });
   }
 
@@ -506,6 +528,7 @@ class PdftexSession implements LivePreviewSession {
 
   /** Kills the running child: its parent in the chain then reads commands again. */
   #cancel(run: InFlightRun): void {
+    this.#trace(`cancel run ${run.id} (pid ${run.engine.leaf ?? 'none'})`);
     if (run.engine.leaf !== null) kill(run.engine.leaf);
   }
 
@@ -520,6 +543,9 @@ class PdftexSession implements LivePreviewSession {
     while (kept < limit && this.#holds(engine.snapshots[kept]!, files)) kept++;
     const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
     if (target === undefined) return false;
+    this.#trace(
+      `resume from ${kept > 0 ? `snapshot after page ${engine.snapshots[kept - 1]!.page}` : 'the engine'} (pid ${target}), ${kept} of ${engine.snapshots.length} snapshots kept`,
+    );
     if (engine.reader === target) return true;
     const resumed = new Promise<boolean>((resolveResumed) => {
       engine.resumed.set(target, resolveResumed);
@@ -642,7 +668,9 @@ class PdftexSession implements LivePreviewSession {
       reads: new Map(),
       resumed: new Map(),
     };
+    this.#trace(`engine ${child.pid ?? '?'} started`);
     createInterface({ input: control }).on('line', (line) => {
+      if (!line.startsWith('read\t')) this.#trace(`< ${child.pid ?? '?'} ${line}`);
       const fields = line.split('\t');
       const [kind, first, second, third] = fields;
       if (kind === 'input' && first !== undefined) {
@@ -701,7 +729,8 @@ class PdftexSession implements LivePreviewSession {
         this.#onEvent({ type: 'stopped', reason: `pdfTeX could not be started: ${error.message}` });
       }
     });
-    child.on('exit', () => {
+    child.on('exit', (code, signal) => {
+      this.#trace(`engine ${child.pid ?? '?'} exited: ${signal ?? code}`);
       markReady(false);
       for (const resolveRun of waiting.values()) resolveRun(null);
       waiting.clear();
@@ -736,6 +765,7 @@ class PdftexSession implements LivePreviewSession {
 
   #stopEngine(engine: Engine | null): void {
     if (!engine) return;
+    this.#trace(`engine ${engine.process.pid ?? '?'} stopped`);
     if (this.#engine === engine) this.#engine = null;
     if (this.#next === engine) this.#next = null;
     void rm(engine.dir, { recursive: true, force: true });
