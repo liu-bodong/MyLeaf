@@ -2,8 +2,9 @@
 
 pdfTeX from TeX Live's sources, built from a pinned commit with the patches
 in this directory applied. It is the engine for the pdfLaTeX live-preview
-work (`docs/spikes/pdflatex-live-preview.md`). Nothing in MyLeaf uses it yet;
-live preview still runs on TeXpresso (ADR 0012).
+work (`docs/spikes/pdflatex-live-preview.md`). Live preview uses it with
+`MYLEAF_LIVE_ENGINE=pdftex` (`packages/live-pdftex`); the default is still
+TeXpresso (ADR 0012).
 
 | File                  | Purpose                                                                                             |
 | --------------------- | --------------------------------------------------------------------------------------------------- |
@@ -97,10 +98,11 @@ hooks' overhead, and `pnpm bench:pdftex-warm` the level 2 engine.
 ## Build dependencies (Ubuntu 24.04)
 
 ```bash
-sudo apt-get install build-essential texinfo
+sudo apt-get install build-essential texinfo mupdf-tools
 ```
 
-`texinfo` provides `makeinfo`, which the TeX Live build runs for its manuals.
+`texinfo` provides `makeinfo`, which the TeX Live build runs for its manuals;
+`mupdf-tools` provides `mutool`, which live preview uses to render pages.
 A TeX Live installation (`texlive-latex-base` and the packages the documents
 use) is needed to run it, and `strace` for `check-hooks.sh`.
 

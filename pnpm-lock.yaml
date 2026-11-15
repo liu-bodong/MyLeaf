@@ -325,6 +325,9 @@ importers:
       '@myleaf/doc-model':
         specifier: workspace:*
         version: link:../../packages/doc-model
+      '@myleaf/live-pdftex':
+        specifier: workspace:*
+        version: link:../../packages/live-pdftex
       '@myleaf/live-preview':
         specifier: workspace:*
         version: link:../../packages/live-preview
@@ -559,6 +562,28 @@ importers:
         version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
 
   packages/latex-syntax:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
+
+  packages/live-pdftex:
+    dependencies:
+      '@myleaf/doc-model':
+        specifier: workspace:*
+        version: link:../doc-model
+      '@myleaf/live-preview':
+        specifier: workspace:*
+        version: link:../live-preview
+      '@myleaf/project':
+        specifier: workspace:*
+        version: link:../project
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

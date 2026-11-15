@@ -21,7 +21,8 @@ const DOMAIN_PACKAGES = [
 ];
 
 export default defineConfig(
-  { ignores: ['**/dist/**', '**/coverage/**'] },
+  // vendor/*/build holds upstream sources fetched by the build scripts.
+  { ignores: ['**/dist/**', '**/coverage/**', 'vendor/*/build/**'] },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {

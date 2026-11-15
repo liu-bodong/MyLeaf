@@ -1,8 +1,8 @@
 # Spike: live preview with pdfLaTeX
 
-Status: in progress. pdfTeX builds from source with pass-through stream
-hooks (finding 5); the level 2 engine works and is measured (finding 6).
-The owner approved level 2; level 3 is not started.
+Status: level 2 done. pdfTeX builds from source with pass-through stream
+hooks (finding 5); the level 2 engine (finding 6) runs live preview with
+`MYLEAF_LIVE_ENGINE=pdftex`. Level 3 is not started; the owner decides.
 Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
@@ -143,21 +143,46 @@ about 16 differences are math-extraction noise, not layout.
 Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011). The
 owner approved level 2 on 2026-11-15; level 3 is not decided.
 
-| Level                                                                                   | Work                                  | Server time per edit (8 pages)                                        | Keystroke to screen                         |
-| --------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
-| 1. Single pass without latexmk                                                          | Done                                  | ~280–330 ms (measured)                                                | ~300–450 ms (estimate)                      |
-| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Engine done (finding 6); adapter next | 181–188 ms, against 222 ms for level 1 on the same machine (measured) | ~250–350 ms (estimate, not measured)        |
-| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                       | Comparable to TeXpresso (estimate)                                    | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+| Level                                                                                   | Work                                     | Server time per edit (8 pages)                                        | Keystroke to screen                         |
+| --------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
+| 1. Single pass without latexmk                                                          | Done                                     | ~280–330 ms (measured)                                                | ~300–450 ms (estimate)                      |
+| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Done (finding 6, `packages/live-pdftex`) | 181–188 ms, against 222 ms for level 1 on the same machine (measured) | 231–320 ms, median 272 ms (measured)        |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                          | Comparable to TeXpresso (estimate)                                    | TeXpresso: ~130–145 ms (measured, ADR 0012) |
 
 Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
 output), so it can be a first step towards it.
 
+## Live preview on the level 2 engine
+
+`packages/live-pdftex` (`PdftexLivePreview`) implements the
+`LivePreviewBackend` port; the server uses it with
+`MYLEAF_LIVE_ENGINE=pdftex` (default: TeXpresso). Server routes, WebSocket
+messages and UI are unchanged.
+
+- Per session: an engine for the root file's preamble. Each edit runs one
+  child (one at a time; edits during a run are coalesced into one more run).
+  A new engine starts when the preamble or a project file read before the
+  pause changes. Without `\begin{document}` in the root file, each run is a
+  full pdfTeX run.
+- Pages: the child's PDF pages in the requested range are rendered to SVG
+  with `mutool draw` (about 10 ms per page) and emitted when they changed.
+  MuPDF names glyph outlines after their index in pdfTeX's font subset,
+  which changes when other pages use new glyphs; the adapter renumbers them
+  in order of use, so unchanged pages are not re-sent.
+- References: after a successful run its `.aux` is used by the next one, so
+  they settle over edits (single pass per edit, as in ADR 0014). Citations
+  come from the `.bbl` the server adds (ADR 0014).
+- Keystroke to updated page on screen, measured in Chromium against the dev
+  server (benchmark paper, page 1, 12 edits): median 272 ms (231–320 ms).
+  For comparison, ADR 0012 measured 130–145 ms for TeXpresso on another
+  machine; not measured side by side here.
+
 ## Next step
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
-(finding 6).
+(finding 6); the live-preview adapter.
 
-Next: a `LivePreviewBackend` adapter for the level 2 engine (start the
-engine per preamble, run a child per edit, render the child's PDF pages to
-SVG), selected by the server instead of TeXpresso by configuration, with
-TeXpresso kept as the default until a replacement is accepted.
+Level 3 (snapshots inside the document, page-by-page output) is not
+started; the owner decides. Finding 6 shows where its gains would come
+from: the ~42 ms of `\begin{document}` and the ~70 ms of finishing the
+document that every level 2 run repeats.

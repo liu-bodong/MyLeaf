@@ -30,8 +30,14 @@ export default defineConfig({
       env: {
         PORT: String(API_PORT),
         MYLEAF_DATA_DIR: dataDir,
-        // Live preview tests run when the patched TeXpresso is available.
-        ...(process.env.MYLEAF_TEXPRESSO ? { MYLEAF_TEXPRESSO: process.env.MYLEAF_TEXPRESSO } : {}),
+        // Live preview tests run when the patched TeXpresso is available, or the
+        // patched pdfTeX with MYLEAF_LIVE_ENGINE=pdftex.
+        ...Object.fromEntries(
+          ['MYLEAF_TEXPRESSO', 'MYLEAF_LIVE_ENGINE', 'MYLEAF_PDFTEX'].flatMap((name) => {
+            const value = process.env[name];
+            return value ? [[name, value]] : [];
+          }),
+        ),
       },
       url: `http://127.0.0.1:${API_PORT}/health`,
       reuseExistingServer: false,

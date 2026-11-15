@@ -1,0 +1,32 @@
+{
+  "name": "@myleaf/live-pdftex",
+  "version": "0.0.0",
+  "private": true,
+  "description": "pdfTeX (vendor/pdftex) adapter implementing the LivePreviewBackend port: level 2 of pdfLaTeX speed.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@myleaf/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@myleaf/doc-model": "workspace:*",
+    "@myleaf/live-preview": "workspace:*",
+    "@myleaf/project": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
