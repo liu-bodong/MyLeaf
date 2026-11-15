@@ -50,7 +50,7 @@ The pass-through is the place where a later step connects a driver
 (TeXpresso-style I/O). Which files do not go through these hooks is listed in
 the spike notes.
 
-## Warm fork (level 2)
+## Warm fork (levels 2 and 3)
 
 `warm-fork.patch` applies on top of `stream-hooks.patch`. With
 `MYLEAF_PDFTEX_HOOKS`, `MYLEAF_PDFTEX_PAUSE_OFFSET=<n>` and
@@ -63,14 +63,16 @@ the `.aux`). Each
 and writes all output (including a copy of the log so far) to its own
 directory. Messages are lines of tab-separated fields:
 
-| Direction       | Message                                              | Meaning                                                          |
-| --------------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
-| engine → driver | `input <path>`                                       | A file read before the pause (preamble dependencies)             |
-| engine → driver | `ready`                                              | Paused before byte `<n>`                                         |
-| driver → engine | `run <id> <main-file> <output-dir> [<first> <last>]` | Fork a child; its bytes before `<n>` must equal the original's   |
-| engine → driver | `page <id> <n> <dir>`                                | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3) |
-| driver → engine | `cancel <id>`                                        | Kill that child                                                  |
-| engine → driver | `done <id> <status>`                                 | The child exited (exit status, or minus the signal)              |
+| Direction       | Message                                              | Meaning                                                            |
+| --------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| engine → driver | `input <path>`                                       | A file read before the pause (preamble dependencies)               |
+| engine → driver | `ready`                                              | Paused before byte `<n>`                                           |
+| driver → engine | `run <id> <main-file> <output-dir> [<first> <last>]` | Fork a child; its bytes before the pause must equal the original's |
+| engine → driver | `started <id> <pid>`                                 | The child's process (to cancel the run, the driver kills it)       |
+| engine → driver | `page <id> <n> <dir>`                                | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3)   |
+| engine → driver | `snapshot <id> <n> <pos> <pid> <child-pid>`          | A snapshot after page `<n>` and `<pos>` bytes (level 3)            |
+| engine → driver | `done <id> <status>`                                 | The child exited (exit status, or minus the signal)                |
+| engine → driver | `resumed <pid>`                                      | That process (engine or snapshot) reads commands again             |
 
 With `<first>` and `<last>` (level 3, page-by-page output), each time the
 child ships out a page in that range it forks a finisher: a copy that closes
@@ -80,11 +82,25 @@ the PDF right there (pages 1 to `<n>`, as pdfTeX's end of job writes it) in
 child, so a `page` line can come after the run's `done`, and out of order.
 The hook is in pdfTeX's `ship_out` (`pdftex.web`).
 
+With `MYLEAF_PDFTEX_SNAPSHOTS` as well (level 3), the first time the child
+reads the main file after a shipout (it reads in blocks of 512 bytes), it
+forks: the new process goes on typesetting, and the old one stays paused as
+a snapshot of the state after `<pos>` bytes of the main file. A `run` sent
+to a snapshot resumes from there; the new content's first `<pos>` bytes must
+equal the old one's, and other files must be unchanged. The engine and its
+snapshots form a chain, and only the last paused process reads `<fd>`: each
+waits for its child to exit, then says `done` (for its child's run) and
+`resumed`. To run from snapshot _k_, the driver kills the snapshots after it
+(and a running child) and waits for `resumed` with _k_'s pid; the processes
+after a killed one exit too. Outputs are copied from their descriptors (they
+are opened for reading as well), so a snapshot still works after the driver
+deleted its run's directory.
+
 The child's terminal output goes to `<output-dir>/terminal.txt`. Files the
 child reads (`.aux`, included files, images) come from disk: the driver
 writes them before `run`. When the preamble or a file in an `input` line
-changes, the driver starts a new engine. Closing `<fd>` stops the engine and
-its children.
+changes, the driver starts a new engine. Closing `<fd>` stops the process
+that reads it; the driver kills the engine's process group to stop the rest.
 
 ## Running
 
@@ -109,7 +125,7 @@ vendor/pdftex/check-hooks.sh /tmp/hooks packages/compile-texlive/bench/paper.tex
 ```
 
 `pnpm bench:pdftex-hooks` measures the
-hooks' overhead, and `pnpm bench:pdftex-warm` the level 2 engine.
+hooks' overhead, and `pnpm bench:pdftex-warm` the level 2 and 3 engine.
 
 ## Build dependencies (Ubuntu 24.04)
 

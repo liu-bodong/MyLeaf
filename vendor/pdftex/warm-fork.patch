@@ -12,17 +12,19 @@ index 4d50db2c..79f3821f 100644
  extern void close_file (FILE *);
  extern void recorder_change_filename (string);
 diff --git a/texk/web2c/lib/openclose.c b/texk/web2c/lib/openclose.c
-index 6f57dd66..08144a0c 100644
+index 6f57dd66..9aaf3f2a 100644
 --- a/texk/web2c/lib/openclose.c
 +++ b/texk/web2c/lib/openclose.c
-@@ -96,27 +96,72 @@ int texinputtype;
+@@ -96,27 +96,92 @@ int texinputtype;
  #if defined(__linux__) || defined(__APPLE__)
  #define MYLEAF_HOOKS 1
  #include <stdarg.h>
 +#include <errno.h>
 +#include <fcntl.h>
-+#include <poll.h>
 +#include <signal.h>
++#ifdef __linux__
++#include <sys/prctl.h>
++#endif
 +#include <sys/stat.h>
 +#include <sys/wait.h>
 +#include <unistd.h>
@@ -33,6 +35,9 @@ index 6f57dd66..08144a0c 100644
    char *name;
    unsigned long long nread, nwritten;
 +  unsigned long long pos;      /* bytes read so far (input is not seeked) */
++  /* Output: position and size.  pdfTeX seeks back in the PDF to fill in
++     stream lengths, so bytes written are not the size.  */
++  unsigned long long wpos, size;
 +  boolean is_output, is_main;
 +  struct myleaf_stream *prev, *next; /* open streams */
  };
@@ -41,29 +46,43 @@ index 6f57dd66..08144a0c 100644
  static FILE *myleaf_log;
 +static struct myleaf_stream *myleaf_streams;
 +
-+/* MyLeaf warm fork (level 2, docs/spikes/pdflatex-live-preview.md).  With
-+   MYLEAF_PDFTEX_PAUSE_OFFSET=<n> and MYLEAF_PDFTEX_CONTROL_FD=<fd> as well,
-+   pdfTeX stops when it is about to read byte <n> of the main file (the line
-+   holding \begin{document}), says "ready" on the control descriptor, and
-+   forks a child for each "run" command.  The child reads the rest of the
-+   main file from the new content and writes its output to its own
-+   directory.  Messages are lines of tab-separated fields:
++/* MyLeaf warm fork (levels 2 and 3, docs/spikes/pdflatex-live-preview.md).
++   With MYLEAF_PDFTEX_PAUSE_OFFSET=<n> and MYLEAF_PDFTEX_CONTROL_FD=<fd> as
++   well, pdfTeX stops when it is about to read byte <n> of the main file,
++   says "ready" on the control descriptor, and forks a child for a "run"
++   command.  The child reads the rest of the main file from the new content
++   and writes its output to its own directory.  Messages are lines of
++   tab-separated fields:
 +     engine -> driver:  input <path>        (file read before the pause)
 +                        ready
++                        started <id> <pid>  (the run's child)
 +                        done <id> <status>  (child exited; status, or -signal)
++                        resumed <pid>       (that process reads commands)
 +     driver -> engine:  run <id> <main-file> <output-dir> [<first> <last>]
-+                        cancel <id>
 +   With <first> and <last> (level 3, page-by-page output), each time the
 +   child ships out a page in that range it forks a finisher that closes the
 +   PDF there (pages 1 to that page) in <output-dir>/page-<n> and says
 +                        page <id> <n> <dir>
-+   The engine exits when the control descriptor is closed.  */
++   With MYLEAF_PDFTEX_SNAPSHOTS (level 3), at the first read of the main
++   file after each shipout the child forks: the new process goes on, and
++   this one stays as a snapshot of the state after <pos> bytes of the main
++   file.  It says
++                        snapshot <id> <n> <pos> <pid> <child-pid>
++   Paused processes form a chain (engine, snapshots, the running child):
++   one reads commands only while it has no child.  To cancel a run, the
++   driver kills its child; to run from a snapshot (bytes before <pos>
++   unchanged), it kills the snapshots after it and waits for "resumed".
++   The process reading commands exits when the descriptor is closed.  */
 +static long long myleaf_pause_offset = -1;
 +static int myleaf_control_fd = -1;
 +static boolean myleaf_main_seen;
 +/* In a child: its run, its output directory and the pages to finish.  */
 +static char *myleaf_run_id, *myleaf_run_dir;
 +static int myleaf_first_page = 1, myleaf_last_page = 0;
++/* With MYLEAF_PDFTEX_SNAPSHOTS: in a run child, the page after whose
++   shipout a snapshot is due (0: none).  */
++static boolean myleaf_snapshots;
++static int myleaf_snapshot_page;
 +/* In a finisher: the page it finishes and its directory.  */
 +static int myleaf_finisher_page;
 +static char *myleaf_finisher_dir;
@@ -84,11 +103,12 @@ index 6f57dd66..08144a0c 100644
 +    if (myleaf_hooks_state && offset && *offset && control && *control) {
 +      myleaf_pause_offset = atoll (offset);
 +      myleaf_control_fd = atoi (control);
++      myleaf_snapshots = getenv ("MYLEAF_PDFTEX_SNAPSHOTS") != NULL;
 +    }
    }
    return myleaf_hooks_state == 1;
  }
-@@ -132,14 +177,327 @@ myleaf_logf (const char *fmt, ...)
+@@ -132,14 +197,358 @@ myleaf_logf (const char *fmt, ...)
    va_end (ap);
  }
  
@@ -116,57 +136,25 @@ index 6f57dd66..08144a0c 100644
 +  }
 +}
 +
-+struct myleaf_child {
-+  pid_t pid;
-+  char *id;
-+};
-+static struct myleaf_child *myleaf_children;
-+static size_t myleaf_nchildren;
-+static int myleaf_sigchld_pipe[2] = { -1, -1 };
-+
++/* Copies the first SIZE bytes of the file open as FROM into the stream TO.
++   Reads with pread: the descriptor's offset can be shared with processes
++   forked from this one (snapshots), which wrote further.  */
 +static void
-+myleaf_on_sigchld (int sig)
-+{
-+  int saved = errno;
-+  (void) sig;
-+  if (write (myleaf_sigchld_pipe[1], "x", 1) < 0) {
-+    /* The pipe is full: a wake-up is already pending.  */
-+  }
-+  errno = saved;
-+}
-+
-+static void
-+myleaf_reap (void)
-+{
-+  int status;
-+  pid_t pid;
-+  size_t i;
-+  while ((pid = waitpid (-1, &status, WNOHANG)) > 0) {
-+    for (i = 0; i < myleaf_nchildren; i++) {
-+      if (myleaf_children[i].pid != pid)
-+        continue;
-+      myleaf_send ("done\t%s\t%d\n", myleaf_children[i].id,
-+                   WIFEXITED (status) ? WEXITSTATUS (status)
-+                                      : -WTERMSIG (status));
-+      free (myleaf_children[i].id);
-+      myleaf_children[i] = myleaf_children[--myleaf_nchildren];
-+      break;
-+    }
-+  }
-+}
-+
-+/* Copies the file at FROM into the stream TO.  */
-+static void
-+myleaf_copy_file (const char *from, FILE *to)
++myleaf_copy_prefix (FILE *from, unsigned long long size, FILE *to)
 +{
 +  char buf[65536];
-+  size_t n;
-+  FILE *f = fopen (from, "rb");
-+  if (!f)
-+    return;
-+  while ((n = fread (buf, 1, sizeof buf, f)) > 0)
-+    fwrite (buf, 1, n, to);
-+  fclose (f);
++  unsigned long long done = 0;
++  int fd = fileno (from);
++  while (done < size) {
++    size_t want = size - done < sizeof buf ? (size_t) (size - done) : sizeof buf;
++    ssize_t n = pread (fd, buf, want, (off_t) done);
++    if (n < 0 && errno == EINTR)
++      continue;
++    if (n <= 0)
++      break;
++    fwrite (buf, 1, (size_t) n, to);
++    done += (unsigned long long) n;
++  }
 +}
 +
 +/* Writes output files to OUTDIR from now on, including those already open
@@ -200,7 +188,8 @@ index 6f57dd66..08144a0c 100644
 +    path = concat3 (outdir, DIR_SEP_STRING, base);
 +    f = fopen (path, "w+b");
 +    if (f) {
-+      myleaf_copy_file (s->name, f);
++      myleaf_copy_prefix (s->file, s->size, f);
++      fseeko (f, (off_t) s->wpos, SEEK_SET);
 +      fclose (s->file);
 +      s->file = f;
 +      free (s->name);
@@ -219,11 +208,9 @@ index 6f57dd66..08144a0c 100644
 +                     const char *main_file, const char *outdir)
 +{
 +  FILE *f;
-+  signal (SIGCHLD, SIG_DFL);
-+  close (myleaf_sigchld_pipe[0]);
-+  close (myleaf_sigchld_pipe[1]);
 +  myleaf_pause_offset = -1;
-+  myleaf_nchildren = 0;
++  free (myleaf_run_id);
++  free (myleaf_run_dir);
 +  myleaf_run_id = xstrdup (id);
 +  myleaf_run_dir = xstrdup (outdir);
 +
@@ -247,7 +234,11 @@ index 6f57dd66..08144a0c 100644
 +  pid_t pid;
 +  string dir;
 +  char name[32];
-+  if (!myleaf_run_id || page < myleaf_first_page || page > myleaf_last_page)
++  if (!myleaf_run_id)
++    return false;
++  if (myleaf_snapshots)
++    myleaf_snapshot_page = page;
++  if (page < myleaf_first_page || page > myleaf_last_page)
 +    return false;
 +  /* Collect finishers that are done.  */
 +  while (waitpid (-1, NULL, WNOHANG) > 0)
@@ -279,121 +270,177 @@ index 6f57dd66..08144a0c 100644
 +  _exit (0);
 +}
 +
-+/* Handles one command line.  Returns true in a new child.  */
-+static boolean
-+myleaf_command (char *line, struct myleaf_stream *main_stream)
++/* In a process of the chain after the engine: its parent there.  When the
++   driver kills a snapshot, the processes after it must end too (on Linux
++   the kernel does it; elsewhere they check at each read of the main file
++   and before serving).  */
++static pid_t myleaf_parent;
++static void myleaf_check_parent (void);
++
++static void
++myleaf_follow_parent (pid_t parent)
 +{
-+  char *fields[6];
-+  int n = 0;
-+  char *p = line;
-+  while (n < 6) {
-+    fields[n++] = p;
-+    p = strchr (p, '\t');
-+    if (!p)
-+      break;
-+    *p++ = 0;
-+  }
-+  if ((n == 4 || n == 6) && STREQ (fields[0], "run")) {
-+    pid_t pid;
-+    /* We are inside a stdio read of the main stream, which holds its lock.
-+       On macOS the child's thread cannot release a lock taken by the
-+       parent's thread, so the child would block on its next read.  Release
-+       the lock across the fork; each process takes it again.  */
-+    funlockfile (main_stream->wrapped);
-+    pid = fork ();
-+    flockfile (main_stream->wrapped);
-+    if (pid == 0) {
-+      myleaf_become_child (main_stream, fields[1], fields[2], fields[3]);
-+      if (n == 6) {
-+        myleaf_first_page = atoi (fields[4]);
-+        myleaf_last_page = atoi (fields[5]);
-+      }
-+      return true;
-+    }
-+    if (pid < 0) {
-+      myleaf_send ("done\t%s\t%d\n", fields[1], -255);
-+      return false;
-+    }
-+    myleaf_children = xrealloc (myleaf_children,
-+                                (myleaf_nchildren + 1) * sizeof *myleaf_children);
-+    myleaf_children[myleaf_nchildren].pid = pid;
-+    myleaf_children[myleaf_nchildren].id = xstrdup (fields[1]);
-+    myleaf_nchildren++;
-+  } else if (n == 2 && STREQ (fields[0], "cancel")) {
-+    size_t i;
-+    for (i = 0; i < myleaf_nchildren; i++)
-+      if (STREQ (myleaf_children[i].id, fields[1]))
-+        kill (myleaf_children[i].pid, SIGKILL);
-+  }
-+  return false;
++  myleaf_parent = parent;
++#ifdef __linux__
++  prctl (PR_SET_PDEATHSIG, SIGKILL);
++#endif
++  myleaf_check_parent ();
 +}
 +
-+/* The pause: serves commands until one forks a child, and returns in the
-+   child.  The engine process itself never returns from here.  */
++static void
++myleaf_check_parent (void)
++{
++  if (myleaf_parent && getppid () != myleaf_parent)
++    _exit (0);
++}
++
++/* Waits for CHILD, collecting finishers on the way; returns its status
++   (exit status, or minus the signal).  */
++static int
++myleaf_wait (pid_t child)
++{
++  int status;
++  for (;;) {
++    pid_t pid = waitpid (-1, &status, 0);
++    if (pid < 0 && errno == EINTR)
++      continue;
++    if (pid < 0)
++      return -255;
++    if (pid == child)
++      return WIFEXITED (status) ? WEXITSTATUS (status) : -WTERMSIG (status);
++  }
++}
++
++/* Forks for a "run" command.  Returns the child's pid in the parent, 0 in
++   the child (which reads the rest of MAIN_STREAM from MAIN_FILE).  */
++static pid_t
++myleaf_fork_run (struct myleaf_stream *main_stream, char **fields, int n)
++{
++  pid_t pid;
++  /* We are inside a stdio read of the main stream, which holds its lock.
++     On macOS the child's thread cannot release a lock taken by the
++     parent's thread, so the child would block on its next read.  Release
++     the lock across the fork; each process takes it again.  */
++  pid_t parent = getpid ();
++  funlockfile (main_stream->wrapped);
++  pid = fork ();
++  flockfile (main_stream->wrapped);
++  if (pid == 0) {
++    if (myleaf_run_id)
++      myleaf_follow_parent (parent); /* run from a snapshot */
++    myleaf_become_child (main_stream, fields[1], fields[2], fields[3]);
++    myleaf_first_page = 1;
++    myleaf_last_page = 0;
++    if (n == 6) {
++      myleaf_first_page = atoi (fields[4]);
++      myleaf_last_page = atoi (fields[5]);
++    }
++  }
++  return pid;
++}
++
++/* Serves the driver from a paused process: the engine at the pause, or a
++   snapshot.  Processes form a chain (engine, snapshots, the running child),
++   and only the last paused one reads commands: each first waits for its
++   child CHILD (of run RUN_ID), if any, to exit, says "done" for that run and
++   "resumed" with its pid, then reads commands.  The driver goes back to a
++   snapshot by killing the processes after it.  Returns in a new child.  */
++static void
++myleaf_serve (struct myleaf_stream *main_stream, pid_t child, char *run_id)
++{
++  static char buf[8192];
++  static size_t used;
++  for (;;) {
++    char *start, *nl;
++    ssize_t n;
++    if (child > 0) {
++      int status = myleaf_wait (child);
++      myleaf_check_parent ();
++      myleaf_send ("done\t%s\t%d\n", run_id, status);
++      myleaf_send ("resumed\t%ld\n", (long) getpid ());
++      free (run_id);
++      child = 0;
++    }
++    /* Lines read before the last fork.  */
++    start = buf;
++    buf[used] = 0;
++    while (child == 0 && (nl = strchr (start, '\n')) != NULL) {
++      char *fields[6];
++      int nf = 0;
++      char *p = start;
++      *nl = 0;
++      start = nl + 1;
++      while (nf < 6) {
++        fields[nf++] = p;
++        p = strchr (p, '\t');
++        if (!p)
++          break;
++        *p++ = 0;
++      }
++      if ((nf == 4 || nf == 6) && STREQ (fields[0], "run")) {
++        pid_t pid = myleaf_fork_run (main_stream, fields, nf);
++        if (pid == 0) {
++          used = 0;
++          return;
++        }
++        if (pid < 0) {
++          myleaf_send ("done\t%s\t%d\n", fields[1], -255);
++          continue;
++        }
++        myleaf_send ("started\t%s\t%ld\n", fields[1], (long) pid);
++        child = pid;
++        run_id = xstrdup (fields[1]);
++      }
++    }
++    used -= (size_t) (start - buf);
++    memmove (buf, start, used);
++    if (child > 0)
++      continue;
++    if (used == sizeof buf - 1)
++      used = 0; /* an overlong line: drop it */
++    n = read (myleaf_control_fd, buf + used, sizeof buf - used - 1);
++    if (n < 0 && errno == EINTR)
++      continue;
++    if (n <= 0)
++      _exit (0); /* the driver is gone */
++    used += (size_t) n;
++  }
++}
++
++/* The pause: the engine serves commands until one forks a child, and
++   returns in the child.  The engine process itself never returns.  */
 +static void
 +myleaf_pause (struct myleaf_stream *main_stream)
 +{
-+  char buf[8192];
-+  size_t used = 0;
-+  size_t i;
-+
 +  /* Cookie streams write into their real files, so flush twice.  */
 +  fflush (NULL);
 +  fflush (NULL);
-+  if (pipe (myleaf_sigchld_pipe) != 0) {
-+    perror ("myleaf: pipe");
-+    _exit (3);
-+  }
-+  fcntl (myleaf_sigchld_pipe[0], F_SETFL, O_NONBLOCK);
-+  fcntl (myleaf_sigchld_pipe[1], F_SETFL, O_NONBLOCK);
-+  signal (SIGCHLD, myleaf_on_sigchld);
 +  myleaf_send ("ready\n");
++  myleaf_serve (main_stream, 0, NULL);
++}
 +
-+  for (;;) {
-+    struct pollfd fds[2];
-+    fds[0].fd = myleaf_control_fd;
-+    fds[0].events = POLLIN;
-+    fds[1].fd = myleaf_sigchld_pipe[0];
-+    fds[1].events = POLLIN;
-+    if (poll (fds, 2, -1) < 0) {
-+      if (errno == EINTR)
-+        continue;
-+      perror ("myleaf: poll");
-+      _exit (3);
-+    }
-+    if (fds[1].revents & POLLIN) {
-+      char drain[64];
-+      while (read (myleaf_sigchld_pipe[0], drain, sizeof drain) > 0)
-+        ;
-+      myleaf_reap ();
-+    }
-+    if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-+      ssize_t n = read (myleaf_control_fd, buf + used, sizeof buf - used - 1);
-+      char *start, *nl;
-+      if (n < 0 && errno == EINTR)
-+        continue;
-+      if (n <= 0) {
-+        /* The driver is gone: stop the children and exit without TeX's
-+           end-of-job processing.  */
-+        for (i = 0; i < myleaf_nchildren; i++)
-+          kill (myleaf_children[i].pid, SIGKILL);
-+        _exit (0);
-+      }
-+      used += (size_t) n;
-+      buf[used] = 0;
-+      start = buf;
-+      while ((nl = strchr (start, '\n')) != NULL) {
-+        *nl = 0;
-+        if (myleaf_command (start, main_stream))
-+          return;
-+        start = nl + 1;
-+      }
-+      used -= (size_t) (start - buf);
-+      memmove (buf, start, used);
-+      if (used == sizeof buf - 1)
-+        used = 0; /* an overlong line: drop it */
-+    }
-+  }
++/* In a run child, at the first read of the main file after a shipout (all
++   bytes before MAIN_STREAM's position have been consumed): forks.  The
++   child goes on typesetting; this process becomes a snapshot that the
++   driver can resume from with an edit after that position.  */
++static void
++myleaf_snapshot (struct myleaf_stream *main_stream)
++{
++  pid_t pid, parent = getpid ();
++  int page = myleaf_snapshot_page;
++  myleaf_snapshot_page = 0;
++  fflush (NULL);
++  fflush (NULL);
++  funlockfile (main_stream->wrapped);
++  pid = fork ();
++  flockfile (main_stream->wrapped);
++  if (pid == 0)
++    myleaf_follow_parent (parent);
++  if (pid <= 0)
++    return; /* the child, or no snapshot */
++  myleaf_send ("snapshot\t%s\t%d\t%llu\t%ld\t%ld\n", myleaf_run_id, page,
++               main_stream->pos, (long) getpid (), (long) pid);
++  myleaf_serve (main_stream, pid, xstrdup (myleaf_run_id));
 +}
 +
  static long
@@ -402,6 +449,10 @@ index 6f57dd66..08144a0c 100644
    struct myleaf_stream *s = cookie;
 -  size_t n = fread (buf, 1, size, s->file);
 +  size_t n;
++  if (s->is_main)
++    myleaf_check_parent ();
++  if (s->is_main && myleaf_snapshot_page > 0)
++    myleaf_snapshot (s); /* returns in the child, or in a new run child */
 +  if (s->is_main && myleaf_pause_offset >= 0) {
 +    unsigned long long pause = (unsigned long long) myleaf_pause_offset;
 +    if (s->pos >= pause)
@@ -417,7 +468,25 @@ index 6f57dd66..08144a0c 100644
    return (long) n;
  }
  
-@@ -170,6 +528,12 @@ myleaf_close_impl (void *cookie)
+@@ -151,6 +560,9 @@ myleaf_write_impl (void *cookie, const char *buf, size_t size)
+   if (n < size && ferror (s->file))
+     return n ? (long) n : -1;
+   s->nwritten += n;
++  s->wpos += n;
++  if (s->wpos > s->size)
++    s->size = s->wpos;
+   return (long) n;
+ }
+ 
+@@ -161,6 +573,7 @@ myleaf_seek_impl (void *cookie, off_t *offset, int whence)
+   if (fseeko (s->file, *offset, whence) != 0)
+     return -1;
+   *offset = ftello (s->file);
++  s->wpos = (unsigned long long) *offset;
+   return 0;
+ }
+ 
+@@ -170,6 +583,12 @@ myleaf_close_impl (void *cookie)
    struct myleaf_stream *s = cookie;
    int ret = fclose (s->file);
    myleaf_logf ("close\t%s\t%llu\t%llu\n", s->name, s->nread, s->nwritten);
@@ -430,12 +499,23 @@ index 6f57dd66..08144a0c 100644
    free (s->name);
    free (s);
    return ret;
-@@ -218,7 +582,11 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
+@@ -215,10 +634,22 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
+   FILE *wrapped;
+   if (!f || !myleaf_hooks_enabled ())
+     return f;
++  /* After a fork, outputs are copied from their descriptor
++     (myleaf_copy_prefix), so it must also be open for reading.  */
++  if (myleaf_control_fd >= 0 && STREQ (direction, "out") && mode[0] == 'w'
++      && !strchr (mode, '+')) {
++    f = freopen (name, "w+b", f);
++    if (!f)
++      return NULL;
++  }
    s = xmalloc (sizeof *s);
    s->file = f;
    s->name = xstrdup (name);
 -  s->nread = s->nwritten = 0;
-+  s->nread = s->nwritten = s->pos = 0;
++  s->nread = s->nwritten = s->pos = s->wpos = s->size = 0;
 +  s->is_output = STREQ (direction, "out");
 +  s->is_main = !s->is_output && filefmt == kpse_tex_format && !myleaf_main_seen;
 +  if (s->is_main)
@@ -443,11 +523,16 @@ index 6f57dd66..08144a0c 100644
  #ifdef __linux__
    {
      cookie_io_functions_t io = { myleaf_read, myleaf_write, myleaf_seek,
-@@ -234,7 +602,17 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
+@@ -234,7 +665,22 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
      free (s);
      return f;
    }
 +  s->wrapped = wrapped;
++  /* A snapshot is taken when the main file's buffer is refilled: a small
++     buffer puts it close to the shipout.  (glibc ignores the size without
++     a buffer; there is one main file, which stays open.)  */
++  if (s->is_main && myleaf_snapshots)
++    setvbuf (wrapped, xmalloc (512), _IOFBF, 512);
 +  s->prev = NULL;
 +  s->next = myleaf_streams;
 +  if (myleaf_streams)
