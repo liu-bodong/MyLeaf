@@ -727,6 +727,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onModeChange={(editorMode) => updateLayout({ editorMode })}
                 clean={layout.cleanVisual}
                 onToggleClean={() => updateLayout({ cleanVisual: !layout.cleanVisual })}
+                vim={layout.vim}
+                onToggleVim={() => updateLayout({ vim: !layout.vim })}
               />
               <main className="source">
                 {document?.kind === 'text' && (
@@ -736,9 +738,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     initialText={document.text}
                     onChange={handleChange}
                     onCompile={() => void compile()}
+                    onSave={() => void flushSave().catch(report)}
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
                     clean={layout.cleanVisual}
+                    vim={layout.vim}
                     macros={projectMacros}
                     images={imageLoader}
                     references={references}

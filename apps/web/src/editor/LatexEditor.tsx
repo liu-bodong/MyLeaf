@@ -15,6 +15,8 @@ import { highlightSelectionMatches, openSearchPanel, searchKeymap } from '@codem
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, drawSelection, keymap } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
+import { Vim, vim as vimBindings } from '@replit/codemirror-vim';
+import type { CodeMirror as VimEditor } from '@replit/codemirror-vim';
 import type { ImageLoader, VisualModeOptions } from '@myleaf/editor-visual';
 import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
@@ -51,11 +53,15 @@ interface LatexEditorProps {
   readonly onChange: (text: string) => void;
   /** Mod-S / Mod-Enter. */
   readonly onCompile: () => void;
+  /** Vim `:w`: writes unsaved edits now instead of after the autosave delay. */
+  readonly onSave?: () => void;
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
   /** Clean visual mode (only with `visual`). */
   readonly clean?: boolean;
+  /** Vim key bindings, with a status line showing the Vim mode. */
+  readonly vim?: boolean;
   /** Macros from the project's other files, for math in visual mode. */
   readonly macros?: MacroDefinitions;
   /** Loads `\includegraphics` images for visual mode. */
@@ -68,6 +74,33 @@ interface LatexEditorProps {
 }
 
 const NO_MACROS: MacroDefinitions = {};
+
+/** `:w` handler of each editor; Vim ex commands are registered globally. */
+const saveHandlers = new WeakMap<EditorView, () => void>();
+
+function vimMessage(cm: VimEditor, text: string) {
+  const message = document.createElement('span');
+  message.className = 'cm-vim-message';
+  message.textContent = text;
+  cm.openNotification(message, { bottom: true, duration: 5000 });
+}
+
+/**
+ * Write commands. There is one file per editor and nothing to quit, so `:wq` and `:x` only
+ * write; writing to another file name is not supported.
+ */
+function vimWrite(cm: VimEditor, params: { readonly argString?: string }) {
+  const argument = params.argString?.trim() ?? '';
+  if (argument !== '' && argument !== '!') {
+    vimMessage(cm, 'Writing to another file is not supported');
+    return;
+  }
+  saveHandlers.get(cm.cm6)?.();
+}
+Vim.defineEx('write', 'w', vimWrite);
+Vim.defineEx('wall', 'wa', vimWrite);
+Vim.defineEx('wq', 'wq', vimWrite);
+Vim.defineEx('xit', 'x', vimWrite);
 
 /** Visual mode options without undefined values (exactOptionalPropertyTypes). */
 function visualOptions(
@@ -97,9 +130,11 @@ export function LatexEditor({
   initialText,
   onChange,
   onCompile,
+  onSave,
   onHistoryChange,
   visual = false,
   clean = false,
+  vim = false,
   macros = NO_MACROS,
   images,
   references = null,
@@ -115,10 +150,12 @@ export function LatexEditor({
   const visualRef = useRef(
     visual ? visualMode(visualOptions(macros, images, references, clean)) : [],
   );
+  const [keys] = useState(() => new Compartment());
+  const vimRef = useRef(vim ? vimBindings({ status: true }) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
-  const callbacks = useRef({ onChange, onCompile, onHistoryChange, completion });
+  const callbacks = useRef({ onChange, onCompile, onSave, onHistoryChange, completion });
   useLayoutEffect(() => {
-    callbacks.current = { onChange, onCompile, onHistoryChange, completion };
+    callbacks.current = { onChange, onCompile, onSave, onHistoryChange, completion };
   });
 
   useEffect(() => {
@@ -136,6 +173,8 @@ export function LatexEditor({
       state: EditorState.create({
         doc: initialText,
         extensions: [
+          // Before the other keymaps, so Vim sees keys first (per @replit/codemirror-vim).
+          keys.of(vimRef.current),
           appearance.of(appearanceRef.current),
           drawSelection(),
           history(),
@@ -165,6 +204,7 @@ export function LatexEditor({
       }),
     });
     viewRef.current = view;
+    saveHandlers.set(view, () => callbacks.current.onSave?.());
     reportHistory(view.state);
     return () => {
       view.destroy();
@@ -183,6 +223,11 @@ export function LatexEditor({
     appearanceRef.current = editorAppearance(theme, settings);
     viewRef.current?.dispatch({ effects: appearance.reconfigure(appearanceRef.current) });
   }, [appearance, settings, theme]);
+
+  useEffect(() => {
+    vimRef.current = vim ? vimBindings({ status: true }) : [];
+    viewRef.current?.dispatch({ effects: keys.reconfigure(vimRef.current) });
+  }, [keys, vim]);
 
   useImperativeHandle(
     ref,

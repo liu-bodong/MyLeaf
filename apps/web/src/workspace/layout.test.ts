@@ -5,7 +5,7 @@ describe('parseLayout', () => {
   it('reads a saved layout', () => {
     expect(
       parseLayout(
-        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","outline":true,"outlineWidth":260,"cleanVisual":true}',
+        '{"view":"pdf","split":0.4,"sidebar":300,"zoom":1.25,"logs":true,"fileTree":false,"editorMode":"visual","outline":true,"outlineWidth":260,"cleanVisual":true,"vim":true}',
       ),
     ).toEqual({
       view: 'pdf',
@@ -18,6 +18,7 @@ describe('parseLayout', () => {
       outline: true,
       outlineWidth: 260,
       cleanVisual: true,
+      vim: true,
     });
     expect(parseLayout('{"view":"editor","split":0.5,"zoom":"fit-page"}').zoom).toBe('fit-page');
   });
@@ -28,7 +29,7 @@ describe('parseLayout', () => {
     expect(parseLayout('[]')).toEqual({ ...DEFAULT_LAYOUT });
     expect(
       parseLayout(
-        '{"view":"sideways","split":"wide","zoom":99,"logs":"yes","editorMode":"wysiwyg"}',
+        '{"view":"sideways","split":"wide","zoom":99,"logs":"yes","editorMode":"wysiwyg","vim":"on"}',
       ),
     ).toEqual(DEFAULT_LAYOUT);
   });

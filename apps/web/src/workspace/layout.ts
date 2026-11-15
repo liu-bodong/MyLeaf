@@ -26,6 +26,8 @@ export interface Layout {
   readonly outlineWidth: number;
   /** Clean visual mode: unrendered commands shown as blocks with their name. */
   readonly cleanVisual: boolean;
+  /** Whether the editor uses Vim key bindings. */
+  readonly vim: boolean;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -45,6 +47,7 @@ export const DEFAULT_LAYOUT: Layout = {
   outline: false,
   outlineWidth: OUTLINE_DEFAULT,
   cleanVisual: false,
+  vim: false,
 };
 
 const STORAGE_KEY = 'myleaf.layout';
@@ -102,6 +105,7 @@ export function parseLayout(raw: string | null): Layout {
         : DEFAULT_LAYOUT.outlineWidth,
     cleanVisual:
       typeof saved.cleanVisual === 'boolean' ? saved.cleanVisual : DEFAULT_LAYOUT.cleanVisual,
+    vim: typeof saved.vim === 'boolean' ? saved.vim : DEFAULT_LAYOUT.vim,
   };
 }
 

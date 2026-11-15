@@ -19,6 +19,7 @@ catalog:
   '@lezer/highlight': ^1.2.5
   '@fastify/websocket': ^11.3.7
   '@playwright/test': 1.65.0
+  '@replit/codemirror-vim': ^6.4.0
   '@types/node': ^22.19.0
   '@types/react': ^19.3.0
   '@types/react-dom': ^19.3.0

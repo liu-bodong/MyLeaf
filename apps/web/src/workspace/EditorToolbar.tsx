@@ -15,9 +15,11 @@ interface EditorToolbarProps {
   /** Clean visual mode; the toggle works only in Visual mode. */
   readonly clean: boolean;
   readonly onToggleClean: () => void;
+  readonly vim: boolean;
+  readonly onToggleVim: () => void;
 }
 
-/** Above the editor: file-tree toggle, Code/Visual switch, Clean toggle and undo/redo. */
+/** Above the editor: file-tree toggle, Code/Visual switch, Clean and Vim toggles and undo/redo. */
 export function EditorToolbar(props: EditorToolbarProps) {
   const {
     history,
@@ -29,6 +31,8 @@ export function EditorToolbar(props: EditorToolbarProps) {
     onModeChange,
     clean,
     onToggleClean,
+    vim,
+    onToggleVim,
   } = props;
   return (
     <div className="pane-toolbar editor-toolbar" role="toolbar" aria-label="Editor">
@@ -76,6 +80,15 @@ export function EditorToolbar(props: EditorToolbarProps) {
         onClick={onToggleClean}
       >
         Clean
+      </button>
+      <button
+        type="button"
+        className="toggle-button"
+        aria-pressed={vim}
+        title={vim ? 'Turn off Vim key bindings' : 'Turn on Vim key bindings'}
+        onClick={onToggleVim}
+      >
+        Vim
       </button>
       <span className="toolbar-separator" />
       <button
