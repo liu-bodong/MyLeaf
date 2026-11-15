@@ -1,8 +1,8 @@
 # Spike: live preview with pdfLaTeX
 
-Status: paused (analysis done; pdfTeX build and hook prototype not started).
-The owner decides whether to continue.
-Date: 2026-11-14. Roadmap item: "Live preview with pdfLaTeX".
+Status: in progress. Analysis done; pdfTeX builds from source with
+pass-through stream hooks (finding 5). Levels 2 and 3 wait for the owner.
+Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
 preview matches the final pdfLaTeX PDF?
@@ -43,6 +43,41 @@ about 16 differences are math-extraction noise, not layout.
    renders that page with MuPDF (already a dependency). Output is real
    pdfTeX output, including font expansion and images.
 
+5. **pdfTeX builds from source with stream hooks, and output is unchanged.**
+   `vendor/pdftex/build.sh` builds pdfTeX 1.40.25 from TeX Live's
+   `texlive-2023.0` tag (the release Ubuntu 24.04 ships) in about 4 minutes
+   on 4 cores. `stream-hooks.patch` (173 added lines in `openclose.c`,
+   `lib.h` and `texmfmp.h`) returns every file opened by `open_input` and
+   `open_output` as a `fopencookie` stream that passes through to the real
+   file, when `MYLEAF_PDFTEX_HOOKS` is set. `vendor/pdftex/check-hooks.sh`
+   compiled the benchmark paper (8 pages) and a document with PNG, JPEG and
+   PDF images (`vendor/pdftex/fixtures/images.tex`), hooks off and on:
+   - The PDFs are byte-identical (`SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`).
+   - The paper made 172 opens through the hooks: the main file, classes,
+     packages, `.aux`/`.out`/`.log`/`.pdf`, TFM and virtual fonts, font maps
+     and encodings.
+   - Overhead: none measurable. `pnpm bench:pdftex-hooks` (full compile of
+     the paper with a plain `pdflatex` format, median of 21, cloud container)
+     gave off/on 536/555, 523/525 and 549/550 ms in three runs; run-to-run
+     noise is about ±15 ms.
+   - Format files cannot be hooked as they are: zlib reads and writes them
+     through the file descriptor (`gzdopen(fileno(f))`). They are read once
+     at start-up, so this does not matter for snapshots.
+
+   Opened outside the hooks (traced with `strace`):
+
+   | What                                           | Where in pdfTeX                                                   | Matters for live preview                             |
+   | ---------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
+   | Type 1 fonts (`.pfb`), when written to the PDF | `writet1.c` (`xfopen` of the path found by `mapfile.c`)           | No for TeX Live fonts; yes for project fonts         |
+   | Images (PNG, JPEG, PDF), each opened twice     | `writepng.c`, `writejpg.c`, `writeimg.c` (xpdf)                   | Yes: project images change                           |
+   | `\pdfmdfivesum file`, `\pdffiledump`           | `texmfmp.c` (`getmd5sum`, `getfiledump`)                          | Yes: `rerunfilecheck` (hyperref) hashes `main.out`   |
+   | `\pdffilesize`, `\pdffilemoddate`              | `texmfmp.c` (`stat`)                                              | Yes: maps to TeXpresso's `size` and `mtime` requests |
+   | First line of the main file (`%&` format line) | `texmfmp.c` (`parse_first_line`); off with `-no-parse-first-line` | No                                                   |
+   | `texmf.cnf`, `ls-R`, `texfonts.map`            | kpathsea                                                          | No: TeX Live configuration                           |
+
+   PK and JBIG2 fonts/images (`writet3.c`, `writejbig2.c`) also use `xfopen`
+   but did not occur in these documents.
+
 ## Proposed design (B)
 
 - Engine: TeX Live pdfTeX built with TeXpresso's I/O and snapshot hooks
@@ -56,13 +91,14 @@ about 16 differences are math-extraction noise, not layout.
 
 ## Open risks
 
-- Building pdfTeX from TeX Live sources with the hooks, on Linux and macOS.
+- Building pdfTeX on macOS (the `funopen` branch is written but not
+  compiled; Linux builds and runs, finding 5).
 - Where pdfTeX must fork for snapshots (TeXpresso's XeTeX forks while
   reading input) and whether all state survives a fork (open `FILE*`s,
   kpathsea caches, pdfTeX's PDF object state).
 - Ending a forked child mid-document cleanly (pending floats, `\end` rules).
-- Images and fonts read outside `openclose.c` must also go through the
-  driver for rollback to be correct.
+- Images, fonts and file primitives read outside `openclose.c` (finding 5)
+  must also go through the driver for rollback to be correct.
 
 ## Levels of pdfLaTeX speed
 
@@ -80,5 +116,9 @@ output), so it can be a first step towards it.
 
 ## Next step
 
-Build pdfTeX from TeX Live sources in the container, add the stream
-hooks in `openclose.c`, and check that a document compiles through them.
+Done: build pdfTeX from TeX Live sources, add the stream hooks in
+`openclose.c`, and check that a document compiles through them (finding 5).
+
+Next, if the owner continues (this starts level 2): replace the
+pass-through with a driver connection, route the file reads listed in
+finding 5 through it, and add the snapshot at `\begin{document}`.
