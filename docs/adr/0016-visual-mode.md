@@ -134,6 +134,34 @@ a marker.
   show `??`/`?`, marked. Labelled display equations show their number
   through KaTeX's `\tag`; unlabelled ones stay unnumbered. Numbers are those
   of the last compile, so they lag behind edits until the next one.
+- Clean visual mode (owner's request, 2026-11-15): a "Clean" toggle next
+  to the Code/Visual switch, usable in Visual mode and remembered with the
+  layout. In clean mode:
+  - Hidden, and skipped by the cursor (atomic ranges): the preamble, `%`
+    comments (a comment-only line whole, a trailing comment with the spaces
+    before it), `\label`, and the spacing commands `\vskip`, `\vspace`,
+    `\hspace` (with their length), `\newpage`, `\clearpage`, `\maketitle`,
+    `\centering`, `\noindent`, `\bigskip`, `\medskip`, `\smallskip`. Runs of
+    blank lines show as one, except lines the selection touches.
+  - A command visual mode does not render (any letter-named command other
+    than text styles, headings, `\item`, citations, references,
+    `\includegraphics`) that stands on its own line(s) is replaced by a block
+    with its name, together with the `[…]` and `{…}` right after it (unknown
+    commands have no signature, so those are their arguments), e.g.
+    `\twocolumn[…]`. Inside a line it stays source. Control symbols (`\%`,
+    `\\`) are left as they are.
+  - An environment visual mode does not render (not math, lists, `figure`,
+    `center` or `document`) is replaced by a block with its name. Content
+    environments (`abstract`, `quote`, `quotation`, `verse`, `flushleft`,
+    `flushright`, `theorem`, `lemma`, `proposition`, `corollary`,
+    `definition`, `remark`, `example`, `proof`, and starred forms) instead
+    show their content with the `\begin`/`\end` lines hidden, like `figure`
+    (owner's choice).
+  - Like math, a block shows its source when the selection touches it.
+  - Typing at the end of a trailing hidden comment goes before it; Backspace
+    there deletes the character before it; other typing or deleting inside
+    a hidden part is dropped, so hidden parts are never changed unseen. Undo
+    and programmatic changes are not affected.
 
 ## Consequences
 
