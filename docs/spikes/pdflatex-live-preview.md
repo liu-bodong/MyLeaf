@@ -1,7 +1,8 @@
 # Spike: live preview with pdfLaTeX
 
-Status: in progress. Analysis done; pdfTeX builds from source with
-pass-through stream hooks (finding 5). Levels 2 and 3 wait for the owner.
+Status: in progress. pdfTeX builds from source with pass-through stream
+hooks (finding 5); the level 2 engine works and is measured (finding 6).
+The owner approved level 2; level 3 is not started.
 Date: 2026-11-14, updated 2026-11-15. Roadmap item: "Live preview with pdfLaTeX".
 
 Question: can TeXpresso's technique (ADR 0012) run on pdfTeX, so live
@@ -78,6 +79,43 @@ about 16 differences are math-extraction noise, not layout.
    PK and JBIG2 fonts/images (`writet3.c`, `writejbig2.c`) also use `xfopen`
    but did not occur in these documents.
 
+6. **Level 2 engine: pause before `\begin{document}`, fork per edit.**
+   `vendor/pdftex/warm-fork.patch` (on top of the stream hooks, all in
+   `openclose.c`) stops pdfTeX when the main file's stream is about to read
+   the `\begin{document}` line, and forks a child per edit that reads the
+   rest of the main file from the new content and writes to its own
+   directory (protocol in `vendor/pdftex/README.md`). No pdfTeX source
+   (`pdftex.web`) changes were needed: TeX only reads the next line when it
+   needs it, so stopping the stream at a line start pauses TeX between
+   lines.
+   - The child's PDF is identical to a full run of the same source and
+     `.aux`, apart from the `/ID` (a hash that includes the output path).
+   - Files the child reads after the pause come from disk, so the reads
+     outside the hooks (finding 5) do not affect level 2: the driver writes
+     changed project files before forking. Only files read before the pause
+     matter; the engine reports them (`input`), and a change to one of them
+     (or to the preamble) needs a new engine.
+
+   Measured with `pnpm bench:pdftex-warm` (cloud container, median of 11)
+   and `pnpm bench` (single pass) on the same machine:
+
+   | Run (benchmark paper, text edit)                       | Time                  |
+   | ------------------------------------------------------ | --------------------- |
+   | Full run (plain `pdflatex` format)                     | 536–571 ms            |
+   | Level 1: single pass with the precompiled preamble     | 222 ms (`pnpm bench`) |
+   | Level 2: forked child, edit to PDF                     | 181–188 ms            |
+   | Level 2: forked child, one-line body                   | 115–118 ms            |
+   | Level 2: engine start to the pause (once per preamble) | ~350–400 ms           |
+
+   Level 2 saves about 35–40 ms per edit over level 1 on this paper, less
+   than estimated. What is left in the child is fixed work after the pause:
+   `\begin{document}` (about 42 ms, measured with `\pdfelapsedtime`;
+   hyperref, microtype and other `AtBeginDocument` code) and finishing the
+   document (about 70 ms: `\end{document}` code, embedding font subsets,
+   writing the PDF, process exit). Typesetting the 8 pages is about 65 ms.
+   A snapshot after `\begin{document}` would remove the first part; the
+   second part needs level 3's page-by-page output.
+
 ## Proposed design (B)
 
 - Engine: TeX Live pdfTeX built with TeXpresso's I/O and snapshot hooks
@@ -102,23 +140,24 @@ about 16 differences are math-extraction noise, not layout.
 
 ## Levels of pdfLaTeX speed
 
-Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011); the
-owner decides on levels 2 and 3.
+Discussed with the owner on 2026-11-14. Level 1 is done (ADR 0011). The
+owner approved level 2 on 2026-11-15; level 3 is not decided.
 
-| Level                                                                                   | Work                                                | Server time per edit (8 pages)                                             | Keystroke to screen                         |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- |
-| 1. Single pass without latexmk                                                          | Done                                                | ~280–330 ms (measured)                                                     | ~300–450 ms (estimate)                      |
-| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Weeks of C work in pdfTeX (I/O hooks, one snapshot) | ~70–150 ms plus typesetting up to the viewed page (estimate, not measured) | ~150–300 ms (estimate)                      |
-| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                                     | Comparable to TeXpresso (estimate)                                         | TeXpresso: ~130–145 ms (measured, ADR 0012) |
+| Level                                                                                   | Work                                  | Server time per edit (8 pages)                                        | Keystroke to screen                         |
+| --------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
+| 1. Single pass without latexmk                                                          | Done                                  | ~280–330 ms (measured)                                                | ~300–450 ms (estimate)                      |
+| 2. pdfTeX kept warm after the preamble: run to `\begin{document}`, pause, fork per edit | Engine done (finding 6); adapter next | 181–188 ms, against 222 ms for level 1 on the same machine (measured) | ~250–350 ms (estimate, not measured)        |
+| 3. Full TeXpresso-style snapshots (design B above)                                      | Weeks to months                       | Comparable to TeXpresso (estimate)                                    | TeXpresso: ~130–145 ms (measured, ADR 0012) |
 
 Level 2 is a subset of level 3 (same hooks, one snapshot, normal PDF
 output), so it can be a first step towards it.
 
 ## Next step
 
-Done: build pdfTeX from TeX Live sources, add the stream hooks in
-`openclose.c`, and check that a document compiles through them (finding 5).
+Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
+(finding 6).
 
-Next, if the owner continues (this starts level 2): replace the
-pass-through with a driver connection, route the file reads listed in
-finding 5 through it, and add the snapshot at `\begin{document}`.
+Next: a `LivePreviewBackend` adapter for the level 2 engine (start the
+engine per preamble, run a child per edit, render the child's PDF pages to
+SVG), selected by the server instead of TeXpresso by configuration, with
+TeXpresso kept as the default until a replacement is accepted.

@@ -5,12 +5,13 @@ in this directory applied. It is the engine for the pdfLaTeX live-preview
 work (`docs/spikes/pdflatex-live-preview.md`). Nothing in MyLeaf uses it yet;
 live preview still runs on TeXpresso (ADR 0012).
 
-| File                  | Purpose                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                           |
-| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)        |
-| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks |
-| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                    |
+| File                  | Purpose                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                             |
+| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)          |
+| `warm-fork.patch`     | Level 2: pauses before `\begin{document}` and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
+| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks   |
+| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                      |
 
 ## Source
 
@@ -47,6 +48,31 @@ The pass-through is the place where a later step connects a driver
 (TeXpresso-style I/O). Which files do not go through these hooks is listed in
 the spike notes.
 
+## Warm fork (level 2)
+
+`warm-fork.patch` applies on top of `stream-hooks.patch`. With
+`MYLEAF_PDFTEX_HOOKS`, `MYLEAF_PDFTEX_PAUSE_OFFSET=<n>` and
+`MYLEAF_PDFTEX_CONTROL_FD=<fd>`, pdfTeX runs the preamble, and when it is
+about to read byte `<n>` of the main file (the start of the
+`\begin{document}` line) it stops and serves commands on `<fd>`. Each
+`run` forks a child that reads the rest of the main file from a new file
+and writes all output (including a copy of the log so far) to its own
+directory. Messages are lines of tab-separated fields:
+
+| Direction       | Message                             | Meaning                                                        |
+| --------------- | ----------------------------------- | -------------------------------------------------------------- |
+| engine → driver | `input <path>`                      | A file read before the pause (preamble dependencies)           |
+| engine → driver | `ready`                             | Paused before `\begin{document}`                               |
+| driver → engine | `run <id> <main-file> <output-dir>` | Fork a child; its bytes before `<n>` must equal the original's |
+| driver → engine | `cancel <id>`                       | Kill that child                                                |
+| engine → driver | `done <id> <status>`                | The child exited (exit status, or minus the signal)            |
+
+The child's terminal output goes to `<output-dir>/terminal.txt`. Files the
+child reads (`.aux`, included files, images) come from disk: the driver
+writes them before `run`. When the preamble or a file in an `input` line
+changes, the driver starts a new engine. Closing `<fd>` stops the engine and
+its children.
+
 ## Running
 
 The binary has no `texmf.cnf` next to it. Point kpathsea at the installed
@@ -66,7 +92,7 @@ vendor/pdftex/check-hooks.sh /tmp/hooks packages/compile-texlive/bench/paper.tex
 ```
 
 `pnpm bench:pdftex-hooks` measures the
-hooks' overhead.
+hooks' overhead, and `pnpm bench:pdftex-warm` the level 2 engine.
 
 ## Build dependencies (Ubuntu 24.04)
 

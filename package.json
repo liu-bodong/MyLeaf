@@ -18,7 +18,8 @@
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "e2e": "playwright test",
     "bench": "pnpm --filter \"@myleaf/compile-texlive...\" run build && node packages/compile-texlive/bench/compile-bench.ts",
-    "bench:pdftex-hooks": "node packages/compile-texlive/bench/pdftex-hooks-bench.ts"
+    "bench:pdftex-hooks": "node packages/compile-texlive/bench/pdftex-hooks-bench.ts",
+    "bench:pdftex-warm": "node packages/compile-texlive/bench/pdftex-warm-bench.ts"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
