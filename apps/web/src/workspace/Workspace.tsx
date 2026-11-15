@@ -683,6 +683,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     initialText={document.text}
                     onChange={handleChange}
                     onCompile={() => void compile()}
+                    onSave={() => void flushSave().catch(report)}
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
                     vim={layout.vim}

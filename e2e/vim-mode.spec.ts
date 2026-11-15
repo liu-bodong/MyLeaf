@@ -23,6 +23,21 @@ test('vim key bindings turn on from the editor toolbar and persist', async ({ pa
   await page.keyboard.type('dd');
   await expect(content).not.toContainText('vim line');
 
+  // :w writes at once instead of after the autosave delay.
+  await page.keyboard.type('Osaved by w');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('save-state')).toHaveText('unsaved');
+  await page.keyboard.type(':w');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('save-state')).toHaveText('saved', { timeout: 500 });
+
+  // Writing to another file name does not apply.
+  await page.keyboard.type(':w other.tex');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.cm-vim-message')).toHaveText(
+    'Writing to another file is not supported',
+  );
+
   // The setting survives a reload.
   await page.reload();
   await expect(page.getByRole('button', { name: 'Vim', exact: true })).toHaveAttribute(

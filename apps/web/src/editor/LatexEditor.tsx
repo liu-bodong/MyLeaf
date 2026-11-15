@@ -26,7 +26,8 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
-import { vim as vimBindings } from '@replit/codemirror-vim';
+import { Vim, vim as vimBindings } from '@replit/codemirror-vim';
+import type { CodeMirror as VimEditor } from '@replit/codemirror-vim';
 import type { ImageLoader, VisualModeOptions } from '@myleaf/editor-visual';
 import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
@@ -59,6 +60,8 @@ interface LatexEditorProps {
   readonly onChange: (text: string) => void;
   /** Mod-S / Mod-Enter. */
   readonly onCompile: () => void;
+  /** Vim `:w`: writes unsaved edits now instead of after the autosave delay. */
+  readonly onSave?: () => void;
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
@@ -74,6 +77,33 @@ interface LatexEditorProps {
 }
 
 const NO_MACROS: MacroDefinitions = {};
+
+/** `:w` handler of each editor; Vim ex commands are registered globally. */
+const saveHandlers = new WeakMap<EditorView, () => void>();
+
+function vimMessage(cm: VimEditor, text: string) {
+  const message = document.createElement('span');
+  message.className = 'cm-vim-message';
+  message.textContent = text;
+  cm.openNotification(message, { bottom: true, duration: 5000 });
+}
+
+/**
+ * Write commands. There is one file per editor and nothing to quit, so `:wq` and `:x` only
+ * write; writing to another file name is not supported.
+ */
+function vimWrite(cm: VimEditor, params: { readonly argString?: string }) {
+  const argument = params.argString?.trim() ?? '';
+  if (argument !== '' && argument !== '!') {
+    vimMessage(cm, 'Writing to another file is not supported');
+    return;
+  }
+  saveHandlers.get(cm.cm6)?.();
+}
+Vim.defineEx('write', 'w', vimWrite);
+Vim.defineEx('wall', 'wa', vimWrite);
+Vim.defineEx('wq', 'wq', vimWrite);
+Vim.defineEx('xit', 'x', vimWrite);
 
 /** Visual mode options without undefined values (exactOptionalPropertyTypes). */
 function visualOptions(
@@ -101,6 +131,7 @@ export function LatexEditor({
   initialText,
   onChange,
   onCompile,
+  onSave,
   onHistoryChange,
   visual = false,
   vim = false,
@@ -116,9 +147,9 @@ export function LatexEditor({
   const [keys] = useState(() => new Compartment());
   const vimRef = useRef(vim ? vimBindings({ status: true }) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
-  const callbacks = useRef({ onChange, onCompile, onHistoryChange });
+  const callbacks = useRef({ onChange, onCompile, onSave, onHistoryChange });
   useLayoutEffect(() => {
-    callbacks.current = { onChange, onCompile, onHistoryChange };
+    callbacks.current = { onChange, onCompile, onSave, onHistoryChange };
   });
 
   useEffect(() => {
@@ -167,6 +198,7 @@ export function LatexEditor({
       }),
     });
     viewRef.current = view;
+    saveHandlers.set(view, () => callbacks.current.onSave?.());
     reportHistory(view.state);
     return () => {
       view.destroy();
