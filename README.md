@@ -5,7 +5,7 @@ An open-source, self-hostable collaborative LaTeX editor.
 > **Early development.** MyLeaf runs as a single-user editor today;
 > collaboration (real-time sync, comments, suggestions) is on the roadmap.
 
-![MyLeaf in dark mode: the bundled ICML 2027 sample in Visual mode, next to its compiled PDF](docs/images/screenshot.png)
+![MyLeaf in light mode: the bundled ICML 2027 sample in Visual mode, next to its compiled PDF](docs/images/screenshot.png)
 
 ## Features
 
