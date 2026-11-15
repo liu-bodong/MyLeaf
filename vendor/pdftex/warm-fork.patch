@@ -1,8 +1,8 @@
 diff --git a/texk/web2c/lib/openclose.c b/texk/web2c/lib/openclose.c
-index 6f57dd66..ee6f9bd2 100644
+index 6f57dd66..d71717c7 100644
 --- a/texk/web2c/lib/openclose.c
 +++ b/texk/web2c/lib/openclose.c
-@@ -96,27 +96,60 @@ int texinputtype;
+@@ -96,27 +96,61 @@ int texinputtype;
  #if defined(__linux__) || defined(__APPLE__)
  #define MYLEAF_HOOKS 1
  #include <stdarg.h>
@@ -15,6 +15,7 @@ index 6f57dd66..ee6f9bd2 100644
  
  struct myleaf_stream {
    FILE *file;
++  FILE *wrapped;               /* the stream returned to TeX */
    char *name;
    unsigned long long nread, nwritten;
 +  unsigned long long pos;      /* bytes read so far (input is not seeked) */
@@ -63,7 +64,7 @@ index 6f57dd66..ee6f9bd2 100644
    }
    return myleaf_hooks_state == 1;
  }
-@@ -132,14 +165,263 @@ myleaf_logf (const char *fmt, ...)
+@@ -132,14 +166,270 @@ myleaf_logf (const char *fmt, ...)
    va_end (ap);
  }
  
@@ -216,7 +217,14 @@ index 6f57dd66..ee6f9bd2 100644
 +    *p++ = 0;
 +  }
 +  if (n == 4 && STREQ (fields[0], "run")) {
-+    pid_t pid = fork ();
++    pid_t pid;
++    /* We are inside a stdio read of the main stream, which holds its lock.
++       On macOS the child's thread cannot release a lock taken by the
++       parent's thread, so the child would block on its next read.  Release
++       the lock across the fork; each process takes it again.  */
++    funlockfile (main_stream->wrapped);
++    pid = fork ();
++    flockfile (main_stream->wrapped);
 +    if (pid == 0) {
 +      myleaf_become_child (main_stream, fields[2], fields[3]);
 +      return true;
@@ -328,7 +336,7 @@ index 6f57dd66..ee6f9bd2 100644
    return (long) n;
  }
  
-@@ -170,6 +452,12 @@ myleaf_close_impl (void *cookie)
+@@ -170,6 +460,12 @@ myleaf_close_impl (void *cookie)
    struct myleaf_stream *s = cookie;
    int ret = fclose (s->file);
    myleaf_logf ("close\t%s\t%llu\t%llu\n", s->name, s->nread, s->nwritten);
@@ -341,7 +349,7 @@ index 6f57dd66..ee6f9bd2 100644
    free (s->name);
    free (s);
    return ret;
-@@ -218,7 +506,11 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
+@@ -218,7 +514,11 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
    s = xmalloc (sizeof *s);
    s->file = f;
    s->name = xstrdup (name);
@@ -354,10 +362,11 @@ index 6f57dd66..ee6f9bd2 100644
  #ifdef __linux__
    {
      cookie_io_functions_t io = { myleaf_read, myleaf_write, myleaf_seek,
-@@ -234,7 +526,14 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
+@@ -234,7 +534,15 @@ myleaf_hook (FILE *f, const char *direction, int filefmt, const char *name,
      free (s);
      return f;
    }
++  s->wrapped = wrapped;
 +  s->prev = NULL;
 +  s->next = myleaf_streams;
 +  if (myleaf_streams)
