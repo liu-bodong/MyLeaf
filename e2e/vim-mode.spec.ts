@@ -31,6 +31,16 @@ test('vim key bindings turn on from the editor toolbar and persist', async ({ pa
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('save-state')).toHaveText('saved', { timeout: 500 });
 
+  // Completion works in insert mode: Enter accepts the suggestion.
+  await page.keyboard.type('o\\subsec');
+  await expect(page.locator('.cm-tooltip-autocomplete')).toBeVisible();
+  // CodeMirror ignores Enter for 75 ms after the popup opens (interactionDelay).
+  await page.waitForTimeout(100);
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Intro');
+  await page.keyboard.press('Escape');
+  await expect(content).toContainText('\\subsection{Intro}');
+
   // Writing to another file name does not apply.
   await page.keyboard.type(':w other.tex');
   await page.keyboard.press('Enter');
