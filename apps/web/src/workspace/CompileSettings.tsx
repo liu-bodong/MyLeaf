@@ -8,6 +8,8 @@ interface CompileSettingsProps {
   readonly liveEngine: TexEngine | null;
   /** Live preview is on and available. */
   readonly livePreviewOn: boolean;
+  /** The server's most live-preview snapshots per session, or `null` without snapshots. */
+  readonly maxSnapshots: number | null;
   readonly onChange: (settings: Partial<ProjectSettings>) => void;
 }
 
@@ -16,8 +18,20 @@ export function CompileSettings({
   settings,
   liveEngine,
   livePreviewOn,
+  maxSnapshots,
   onChange,
 }: CompileSettingsProps) {
+  /** Saves the field's value: empty for the server's maximum, else clamped to it. */
+  const commitSnapshots = (input: HTMLInputElement) => {
+    if (maxSnapshots === null) return;
+    const value = input.value.trim() === '' ? null : Number(input.value);
+    const liveSnapshots =
+      value === null || !Number.isFinite(value)
+        ? null
+        : Math.min(maxSnapshots, Math.max(0, Math.floor(value)));
+    input.value = liveSnapshots === null ? '' : String(liveSnapshots);
+    if (liveSnapshots !== settings.liveSnapshots) onChange({ liveSnapshots });
+  };
   return (
     <>
       <label>
@@ -60,6 +74,28 @@ export function CompileSettings({
           </small>
         </span>
       </label>
+      {livePreviewOn && maxSnapshots !== null && (
+        <label className="compile-number">
+          <input
+            // Re-created when the saved value changes, so it shows that value.
+            key={String(settings.liveSnapshots)}
+            type="number"
+            min={0}
+            max={maxSnapshots}
+            placeholder={String(maxSnapshots)}
+            defaultValue={settings.liveSnapshots ?? ''}
+            aria-label="Live preview snapshots"
+            onBlur={(event) => commitSnapshots(event.currentTarget)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commitSnapshots(event.currentTarget);
+            }}
+          />
+          <span>
+            Live preview snapshots
+            <small>Faster updates, about 3 MB each; empty for the server's {maxSnapshots}</small>
+          </span>
+        </label>
+      )}
     </>
   );
 }

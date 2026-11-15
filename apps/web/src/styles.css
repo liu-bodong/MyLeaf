@@ -640,6 +640,11 @@ a {
   color: var(--fg-muted);
 }
 
+.compile-menu .compile-number input {
+  width: 56px;
+  flex: none;
+}
+
 /* File tree */
 
 .file-tree-area {

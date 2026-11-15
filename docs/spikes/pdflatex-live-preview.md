@@ -278,8 +278,8 @@ about 16 differences are math-extraction noise, not layout.
 
     Memory (Linux, `smaps_rollup`, after the first runs): the engine and 7
     snapshots of the benchmark paper use 62 MB in total (PSS); each
-    snapshot has about 3 MB of its own (private) memory. Snapshots are
-    still not limited in number (one per page).
+    snapshot has about 3 MB of its own (private) memory. Their number is
+    limited per session (open risks).
 
 ## Proposed design (B)
 
@@ -304,10 +304,13 @@ about 16 differences are math-extraction noise, not layout.
 - Ending a forked child mid-document cleanly (pending floats, `\end` rules).
   Finishers (finding 8) end at a shipout with pdfTeX's end of job, not
   LaTeX's `\end{document}`; pages compared so far were identical.
-- Number of snapshot processes for long documents (one per page, not
-  limited yet; about 3 MB each on Linux, finding 10). The owner chose a
-  server-wide maximum (environment variable) and a per-project setting in
-  compile settings.
+- Number of snapshot processes: at most `MYLEAF_LIVE_MAX_SNAPSHOTS` per
+  session (default 32, about 3 MB each on Linux, finding 10), or fewer as
+  set per project in compile settings. With more pages than that, a run
+  takes a snapshot every `ceil(pages / max)` pages (pages of the last run),
+  so an edit late in a long document resumes up to that many pages before
+  it. Snapshots form a process chain, so one in the middle cannot be
+  removed without the ones after it.
 - Snapshots assume that a project file opened through the hooks is only
   read that way (finding 10); a file that is also read another way (for
   example as an image) would not invalidate them.
@@ -432,5 +435,4 @@ page-by-page output (finding 8) and snapshots (findings 9 and 10).
 
 Keystroke to screen is now 82–114 ms (medians) on the benchmark paper in
 the cloud container. Open: a side-by-side measurement with TeXpresso on a
-machine where it runs (the owner's Mac), and a limit on snapshot processes
-(next).
+machine where it runs (the owner's Mac).

@@ -10,6 +10,7 @@ import { ProjectNotFoundError, parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
 import { MAX_ZIP_BYTES, extractProject } from '../zip-import.js';
+import type { LiveSessionPool } from '../live/live-session-pool.js';
 
 const NEW_PROJECT_ROOT = 'main.tex';
 const NEW_PROJECT_CONTENT = String.raw`\documentclass{article}
@@ -29,6 +30,7 @@ export function registerProjectRoutes(
   app: FastifyInstance,
   store: ProjectStore,
   compiler: CompileBackend,
+  livePreview: LiveSessionPool | null = null,
 ): void {
   app.get('/api/projects', async (): Promise<readonly ProjectDto[]> => {
     const projects = await store.listProjects();
@@ -116,6 +118,7 @@ export function registerProjectRoutes(
                 autoCompile: { type: 'boolean' },
                 precompilePreamble: { type: 'boolean' },
                 livePreview: { type: 'boolean' },
+                liveSnapshots: { type: ['integer', 'null'], minimum: 0 },
               },
               additionalProperties: false,
             },
@@ -126,11 +129,19 @@ export function registerProjectRoutes(
     },
     async (request): Promise<ProjectDto> => {
       const { name, rootFile, settings } = request.body;
-      return store.updateProject(ProjectId(request.params.id), {
+      const id = ProjectId(request.params.id);
+      const project = await store.updateProject(id, {
         ...(name === undefined ? {} : { name }),
         ...(rootFile === undefined ? {} : { rootFile: parseProjectPath(rootFile) }),
         ...(settings === undefined ? {} : { settings }),
       });
+      // Open live previews keep fewer (or more) snapshots from their next run.
+      if (settings?.liveSnapshots !== undefined) {
+        for (const handle of livePreview?.forProject(id) ?? []) {
+          handle.session.setMaxSnapshots?.(project.settings.liveSnapshots);
+        }
+      }
+      return project;
     },
   );
 

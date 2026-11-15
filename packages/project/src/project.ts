@@ -9,12 +9,18 @@ export interface ProjectSettings {
   readonly precompilePreamble: boolean;
   /** Show live-rendered pages while editing, where the server offers it (ADR 0012). */
   readonly livePreview: boolean;
+  /**
+   * Most snapshots a live-preview session keeps for this project, below the
+   * server's maximum; `null` for the server's maximum.
+   */
+  readonly liveSnapshots: number | null;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   autoCompile: false,
   precompilePreamble: true,
   livePreview: false,
+  liveSnapshots: null,
 };
 
 export interface ProjectSummary {

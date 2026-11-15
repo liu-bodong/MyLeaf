@@ -28,6 +28,9 @@ const kill = (pid: number) => {
   }
 };
 
+/** Snapshots a session keeps by default (each is a paused pdfTeX process). */
+export const DEFAULT_MAX_SNAPSHOTS = 32;
+
 export interface PdftexLivePreviewOptions {
   /** Path of the patched `pdftex` binary (vendor/pdftex/build.sh). */
   readonly command: string;
@@ -40,6 +43,12 @@ export interface PdftexLivePreviewOptions {
   readonly kpathsea: Readonly<Record<string, string>>;
   /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
   readonly mutool?: string;
+  /**
+   * Most snapshots a session keeps (a request can ask for fewer). When a
+   * document has more pages, snapshots are spread out: one every
+   * `ceil(pages / max)` pages. Default: `DEFAULT_MAX_SNAPSHOTS`.
+   */
+  readonly maxSnapshots?: number;
 }
 
 /**
@@ -62,7 +71,16 @@ export class PdftexLivePreview implements LivePreviewBackend {
   #format: Promise<string> | null = null;
 
   constructor(options: PdftexLivePreviewOptions) {
-    this.#options = { mutool: 'mutool', ...options, workRoot: resolve(options.workRoot) };
+    this.#options = {
+      mutool: 'mutool',
+      maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
+      ...options,
+      workRoot: resolve(options.workRoot),
+    };
+  }
+
+  get maxSnapshots(): number {
+    return this.#options.maxSnapshots;
   }
 
   async open(
@@ -210,6 +228,8 @@ class PdftexSession implements LivePreviewSession {
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
   #inFlight: InFlightRun | null = null;
+  /** Most snapshots kept: the request's, at most the backend's. */
+  #maxSnapshots: number;
 
   constructor(
     options: Required<PdftexLivePreviewOptions>,
@@ -223,6 +243,10 @@ class PdftexSession implements LivePreviewSession {
     this.#dir = dir;
     this.#srcDir = join(dir, 'src');
     this.#onEvent = onEvent;
+    this.#maxSnapshots = Math.min(
+      request.maxSnapshots ?? options.maxSnapshots,
+      options.maxSnapshots,
+    );
   }
 
   async writeSource(file: ProjectFile): Promise<void> {
@@ -266,6 +290,10 @@ class PdftexSession implements LivePreviewSession {
     this.#dirty.add(file.path);
     this.#settleRuns = 0;
     this.#schedule();
+  }
+
+  setMaxSnapshots(max: number | null): void {
+    this.#maxSnapshots = Math.min(max ?? this.#options.maxSnapshots, this.#options.maxSnapshots);
   }
 
   showPages(first: number, last: number): void {
@@ -348,12 +376,17 @@ class PdftexSession implements LivePreviewSession {
       this.#inFlight = inFlight;
       engine.runs.set(id, files);
       engine.reader = null;
+      // At most #maxSnapshots in the chain, spread over the document's pages
+      // (as of the last run).
+      const pages = this.#pdf?.pages ?? 0;
+      const every = this.#maxSnapshots > 0 ? Math.max(1, Math.ceil(pages / this.#maxSnapshots)) : 1;
+      const more = Math.max(0, this.#maxSnapshots - engine.snapshots.length);
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
         engine.pages.set(id, (page, pageDir) => {
           void this.#renderFinished(inFlight, page, join(pageDir, `${this.#job}.pdf`));
         });
-        engine.control.write(`run\t${id}\t${main}\t${out}\t${first}\t${last}\n`);
+        engine.control.write(`run\t${id}\t${main}\t${out}\t${first}\t${last}\t${every}\t${more}\n`);
       });
       this.#inFlight = null;
     } else {
@@ -483,7 +516,8 @@ class PdftexSession implements LivePreviewSession {
    */
   async #resume(engine: Engine, files: Sources): Promise<boolean> {
     let kept = 0;
-    while (kept < engine.snapshots.length && this.#holds(engine.snapshots[kept]!, files)) kept++;
+    const limit = Math.min(engine.snapshots.length, this.#maxSnapshots);
+    while (kept < limit && this.#holds(engine.snapshots[kept]!, files)) kept++;
     const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
     if (target === undefined) return false;
     if (engine.reader === target) return true;
@@ -677,6 +711,9 @@ class PdftexSession implements LivePreviewSession {
       if (this.#engine === engine) this.#engine = null;
       if (this.#next === engine) this.#next = null;
     });
+    // The session was closed while this engine was being set up: close()
+    // stopped the engines it knew of, not this one.
+    if (this.#closing) this.#stopEngine(engine);
     return engine;
   }
 

@@ -305,8 +305,14 @@ function hasProjectSummaryShape(value: unknown): boolean {
     return false;
   }
   const record = settings as Record<string, unknown>;
-  return ['autoCompile', 'precompilePreamble', 'livePreview'].every(
-    (key) => record[key] === undefined || typeof record[key] === 'boolean',
+  const snapshots = record.liveSnapshots;
+  return (
+    ['autoCompile', 'precompilePreamble', 'livePreview'].every(
+      (key) => record[key] === undefined || typeof record[key] === 'boolean',
+    ) &&
+    (snapshots === undefined ||
+      snapshots === null ||
+      (Number.isInteger(snapshots) && (snapshots as number) >= 0))
   );
 }
 
