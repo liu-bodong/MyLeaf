@@ -16,6 +16,7 @@ import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
 import { useImageLoader } from '../editor/use-image-loader.js';
+import { useCompletionData } from '../editor/use-completion-data.js';
 import { useOutline } from '../editor/use-outline.js';
 import { useProjectMacros } from '../editor/use-project-macros.js';
 import { useReferences } from '../editor/use-references.js';
@@ -123,6 +124,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     layout.editorMode === 'visual',
   );
   const imageLoader = useImageLoader(projectId, files);
+  const completionData = useCompletionData(projectId, files, document?.path ?? null);
   const references = useReferences(projectId, pdfVersion, layout.editorMode === 'visual');
   const { entries: outlineEntries, noteEdit: noteOutlineEdit } = useOutline(
     projectId,
@@ -740,6 +742,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     macros={projectMacros}
                     images={imageLoader}
                     references={references}
+                    completion={completionData}
                   />
                 )}
                 {document?.kind === 'binary' && (
