@@ -4,7 +4,8 @@
  * per edit. Measures the time from sending an edit to the child's PDF on the
  * benchmark paper, against a full run of the same binary, for two pause
  * points: before the `\begin{document}` line, and after it (what
- * packages/live-pdftex uses).
+ * packages/live-pdftex uses), and, after it, the time to a page shown page
+ * by page (level 3).
  * Build first with `vendor/pdftex/build.sh`, then run `pnpm bench:pdftex-warm`.
  * Set PDFTEX to use another binary and BENCH_RUNS to change repetitions.
  */
@@ -18,6 +19,8 @@ import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
 const RUNS = Number(process.env.BENCH_RUNS ?? 11);
+/** Pages shown page by page (level 3); the benchmark paper has 8. */
+const SHOWN_PAGES = [1, 3, 8];
 const pdftex =
   process.env.PDFTEX ??
   fileURLToPath(new URL('../../../vendor/pdftex/build/bin/pdftex', import.meta.url));
@@ -135,6 +138,28 @@ try {
       await stat(join(out, 'main.pdf'));
       return { ms: finished - sent, sent, finished, out };
     };
+    // Level 3: the child forks a finisher when it ships out page `page`,
+    // which closes the PDF there and says `page`; that can come before or
+    // after the child's `done`.
+    const runToPage = async (id: string, source: string, page: number) => {
+      const main = join(work, `${tag}-${id}.tex`);
+      const out = join(work, `out-${tag}-${id}`);
+      await writeFile(main, source);
+      await mkdir(out);
+      const sent = sinceStart();
+      control.write(`run\t${id}\t${main}\t${out}\t${page}\t${page}\n`);
+      let shown: number | null = null;
+      let finished: number | null = null;
+      while (shown === null || finished === null) {
+        const line = await next();
+        if (line === `page\t${id}\t${page}\t${join(out, `page-${page}`)}`)
+          shown = sinceStart() - sent;
+        else if (line === `done\t${id}\t0`) finished = sinceStart() - sent;
+        else throw new Error(`Unexpected reply: ${line}`);
+      }
+      await stat(join(out, `page-${page}`, 'main.pdf'));
+      return { shown, finished };
+    };
     // Where a forked child's time goes, from the T0, T1 and T2 marks (see
     // `base` and `timed`). T0 was written by the engine just before `ready`,
     // which converts its clock to this one.
@@ -153,10 +178,21 @@ try {
     const edits: number[] = [];
     const short: number[] = [];
     const parts: { toBody: number; body: number; afterBody: number }[] = [];
+    const pages = new Map<number, { shown: number[]; finished: number[] }>(
+      SHOWN_PAGES.map((page) => [page, { shown: [], finished: [] }]),
+    );
     for (let i = 1; i <= RUNS; i++) {
       edits.push((await run(`edit-${i}`, base.replace('Lorem ipsum', `Lorem ipsum ${i}`))).ms);
       short.push((await run(`short-${i}`, oneLine)).ms);
-      if (pauseAt === pausePoints[1]?.offset) parts.push(await breakdown(`timed-${i}`));
+      if (pauseAt === pausePoints[1]?.offset) {
+        parts.push(await breakdown(`timed-${i}`));
+        for (const [page, times] of pages) {
+          const edit = base.replace('Lorem ipsum', `Lorem ipsum ${i}`);
+          const { shown, finished } = await runToPage(`page-${page}-${i}`, edit, page);
+          times.shown.push(shown);
+          times.finished.push(finished);
+        }
+      }
     }
     control.end();
     await once(engine, 'exit');
@@ -168,7 +204,15 @@ try {
             body: median(parts.map((part) => part.body)),
             afterBody: median(parts.map((part) => part.afterBody)),
           };
-    return { ready, inputs, edits: median(edits), short: median(short), split };
+    const shownPages =
+      parts.length === 0
+        ? []
+        : [...pages].map(([page, times]) => ({
+            page,
+            shown: median(times.shown),
+            finished: median(times.finished),
+          }));
+    return { ready, inputs, edits: median(edits), short: median(short), split, shownPages };
   };
   const results = [];
   for (const [index, point] of pausePoints.entries()) {
@@ -190,6 +234,15 @@ try {
     console.log(
       `| Forked child (pause ${result.name}), one-line body | ${result.short.toFixed(0)} |`,
     );
+  }
+  for (const { name, shownPages } of results) {
+    if (shownPages.length === 0) continue;
+    console.log(`\nForked child (pause ${name}), text edit, page by page (level 3):\n`);
+    console.log('| Page shown | To its `page` message | To `done` |');
+    console.log('| --- | ---: | ---: |');
+    for (const { page, shown, finished } of shownPages) {
+      console.log(`| ${page} | ${shown.toFixed(0)} | ${finished.toFixed(0)} |`);
+    }
   }
   for (const { name, split } of results) {
     if (split === null) continue;

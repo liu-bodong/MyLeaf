@@ -63,13 +63,22 @@ the `.aux`). Each
 and writes all output (including a copy of the log so far) to its own
 directory. Messages are lines of tab-separated fields:
 
-| Direction       | Message                             | Meaning                                                        |
-| --------------- | ----------------------------------- | -------------------------------------------------------------- |
-| engine → driver | `input <path>`                      | A file read before the pause (preamble dependencies)           |
-| engine → driver | `ready`                             | Paused before byte `<n>`                                       |
-| driver → engine | `run <id> <main-file> <output-dir>` | Fork a child; its bytes before `<n>` must equal the original's |
-| driver → engine | `cancel <id>`                       | Kill that child                                                |
-| engine → driver | `done <id> <status>`                | The child exited (exit status, or minus the signal)            |
+| Direction       | Message                                              | Meaning                                                          |
+| --------------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
+| engine → driver | `input <path>`                                       | A file read before the pause (preamble dependencies)             |
+| engine → driver | `ready`                                              | Paused before byte `<n>`                                         |
+| driver → engine | `run <id> <main-file> <output-dir> [<first> <last>]` | Fork a child; its bytes before `<n>` must equal the original's   |
+| engine → driver | `page <id> <n> <dir>`                                | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3) |
+| driver → engine | `cancel <id>`                                        | Kill that child                                                  |
+| engine → driver | `done <id> <status>`                                 | The child exited (exit status, or minus the signal)              |
+
+With `<first>` and `<last>` (level 3, page-by-page output), each time the
+child ships out a page in that range it forks a finisher: a copy that closes
+the PDF right there (pages 1 to `<n>`, as pdfTeX's end of job writes it) in
+`<output-dir>/page-<n>/`, says `page`, and exits. The driver can show page
+`<n>` before the rest of the document is typeset. Finishers run alongside the
+child, so a `page` line can come after the run's `done`, and out of order.
+The hook is in pdfTeX's `ship_out` (`pdftex.web`).
 
 The child's terminal output goes to `<output-dir>/terminal.txt`. Files the
 child reads (`.aux`, included files, images) come from disk: the driver
