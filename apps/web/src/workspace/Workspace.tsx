@@ -672,6 +672,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onToggleFileTree={() => updateLayout({ fileTree: !layout.fileTree })}
                 mode={layout.editorMode}
                 onModeChange={(editorMode) => updateLayout({ editorMode })}
+                vim={layout.vim}
+                onToggleVim={() => updateLayout({ vim: !layout.vim })}
               />
               <main className="source">
                 {document?.kind === 'text' && (
@@ -683,6 +685,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onCompile={() => void compile()}
                     onHistoryChange={setEditHistory}
                     visual={layout.editorMode === 'visual'}
+                    vim={layout.vim}
                     macros={projectMacros}
                     images={imageLoader}
                     references={references}

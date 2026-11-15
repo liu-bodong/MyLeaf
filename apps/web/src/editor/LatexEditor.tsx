@@ -26,6 +26,7 @@ import {
   lineNumbers,
 } from '@codemirror/view';
 import { visualMode } from '@myleaf/editor-visual';
+import { vim as vimBindings } from '@replit/codemirror-vim';
 import type { ImageLoader, VisualModeOptions } from '@myleaf/editor-visual';
 import type { AuxReferences, MacroDefinitions } from '@myleaf/latex-syntax';
 import 'katex/dist/katex.min.css';
@@ -61,6 +62,8 @@ interface LatexEditorProps {
   readonly onHistoryChange?: (history: EditHistory) => void;
   /** Renders LaTeX in place (ADR 0016); the text and undo history are unaffected. */
   readonly visual?: boolean;
+  /** Vim key bindings, with a status line showing the Vim mode. */
+  readonly vim?: boolean;
   /** Macros from the project's other files, for math in visual mode. */
   readonly macros?: MacroDefinitions;
   /** Loads `\includegraphics` images for visual mode. */
@@ -100,6 +103,7 @@ export function LatexEditor({
   onCompile,
   onHistoryChange,
   visual = false,
+  vim = false,
   macros = NO_MACROS,
   images,
   references = null,
@@ -109,6 +113,8 @@ export function LatexEditor({
   const viewRef = useRef<EditorView | null>(null);
   const [mode] = useState(() => new Compartment());
   const visualRef = useRef(visual ? visualMode(visualOptions(macros, images, references)) : []);
+  const [keys] = useState(() => new Compartment());
+  const vimRef = useRef(vim ? vimBindings({ status: true }) : []);
   // Latest callbacks, so the editor does not need recreating when they change.
   const callbacks = useRef({ onChange, onCompile, onHistoryChange });
   useLayoutEffect(() => {
@@ -130,6 +136,8 @@ export function LatexEditor({
       state: EditorState.create({
         doc: initialText,
         extensions: [
+          // Before the other keymaps, so Vim sees keys first (per @replit/codemirror-vim).
+          keys.of(vimRef.current),
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightActiveLine(),
@@ -172,6 +180,11 @@ export function LatexEditor({
     visualRef.current = visual ? visualMode(visualOptions(macros, images, references)) : [];
     viewRef.current?.dispatch({ effects: mode.reconfigure(visualRef.current) });
   }, [images, macros, mode, references, visual]);
+
+  useEffect(() => {
+    vimRef.current = vim ? vimBindings({ status: true }) : [];
+    viewRef.current?.dispatch({ effects: keys.reconfigure(vimRef.current) });
+  }, [keys, vim]);
 
   useImperativeHandle(
     ref,

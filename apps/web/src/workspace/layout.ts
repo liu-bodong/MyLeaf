@@ -20,6 +20,8 @@ export interface Layout {
   /** Whether the file-tree sidebar is shown. */
   readonly fileTree: boolean;
   readonly editorMode: EditorMode;
+  /** Whether the editor uses Vim key bindings. */
+  readonly vim: boolean;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -35,6 +37,7 @@ export const DEFAULT_LAYOUT: Layout = {
   logs: false,
   fileTree: true,
   editorMode: 'code',
+  vim: false,
 };
 
 const STORAGE_KEY = 'myleaf.layout';
@@ -85,6 +88,7 @@ export function parseLayout(raw: string | null): Layout {
     logs: typeof saved.logs === 'boolean' ? saved.logs : DEFAULT_LAYOUT.logs,
     fileTree: typeof saved.fileTree === 'boolean' ? saved.fileTree : DEFAULT_LAYOUT.fileTree,
     editorMode: EDITOR_MODES.find((mode) => mode === saved.editorMode) ?? DEFAULT_LAYOUT.editorMode,
+    vim: typeof saved.vim === 'boolean' ? saved.vim : DEFAULT_LAYOUT.vim,
   };
 }
 

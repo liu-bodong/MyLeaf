@@ -24,6 +24,7 @@
     "@myleaf/editor-visual": "workspace:*",
     "@myleaf/latex-syntax": "workspace:*",
     "@myleaf/project": "workspace:*",
+    "@replit/codemirror-vim": "catalog:",
     "katex": "catalog:",
     "pdfjs-dist": "catalog:",
     "react": "catalog:",
