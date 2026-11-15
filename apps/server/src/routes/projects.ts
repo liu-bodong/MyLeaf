@@ -1,9 +1,15 @@
-import type { CreateProjectRequest, ProjectDto, UpdateProjectRequest } from '@myleaf/api';
+import type {
+  CreateProjectRequest,
+  ImportProjectQuery,
+  ProjectDto,
+  UpdateProjectRequest,
+} from '@myleaf/api';
 import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
 import { ProjectNotFoundError, parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
+import { MAX_ZIP_BYTES, extractProject } from '../zip-import.js';
 
 const NEW_PROJECT_ROOT = 'main.tex';
 const NEW_PROJECT_CONTENT = String.raw`\documentclass{article}
@@ -48,6 +54,39 @@ export function registerProjectRoutes(
         rootFile,
         files: [{ path: rootFile, content: new TextEncoder().encode(NEW_PROJECT_CONTENT) }],
       });
+      reply.status(201);
+      return project;
+    },
+  );
+
+  // A zip upload travels as raw bytes, its project name in the query string.
+  app.addContentTypeParser(
+    'application/zip',
+    { parseAs: 'buffer', bodyLimit: MAX_ZIP_BYTES },
+    (_request, body, done) => done(null, body),
+  );
+
+  app.post<{ Querystring: ImportProjectQuery; Body: Buffer }>(
+    '/api/projects/import',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['name'],
+          properties: { name: { type: 'string' } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply): Promise<ProjectDto> => {
+      if (!Buffer.isBuffer(request.body)) {
+        return reply.status(415).send({
+          error: 'UnsupportedMediaType',
+          message: 'The zip file must be sent as application/zip',
+        });
+      }
+      const { rootFile, files } = extractProject(new Uint8Array(request.body));
+      const project = await store.createProject({ name: request.query.name, rootFile, files });
       reply.status(201);
       return project;
     },

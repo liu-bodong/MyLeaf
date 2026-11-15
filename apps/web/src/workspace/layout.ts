@@ -24,6 +24,8 @@ export interface Layout {
   readonly outline: boolean;
   /** Width of the outline sidebar in CSS pixels. */
   readonly outlineWidth: number;
+  /** Clean visual mode: unrendered commands shown as blocks with their name. */
+  readonly cleanVisual: boolean;
 }
 
 export const SPLIT_MIN = 0.2;
@@ -42,6 +44,7 @@ export const DEFAULT_LAYOUT: Layout = {
   editorMode: 'code',
   outline: false,
   outlineWidth: OUTLINE_DEFAULT,
+  cleanVisual: false,
 };
 
 const STORAGE_KEY = 'myleaf.layout';
@@ -97,6 +100,8 @@ export function parseLayout(raw: string | null): Layout {
       typeof saved.outlineWidth === 'number' && Number.isFinite(saved.outlineWidth)
         ? clampSidebar(saved.outlineWidth)
         : DEFAULT_LAYOUT.outlineWidth,
+    cleanVisual:
+      typeof saved.cleanVisual === 'boolean' ? saved.cleanVisual : DEFAULT_LAYOUT.cleanVisual,
   };
 }
 
