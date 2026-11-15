@@ -151,7 +151,12 @@ a marker.
     `\twocolumn[…]`. Inside a line it stays source. Control symbols (`\%`,
     `\\`) are left as they are.
   - An environment visual mode does not render (not math, lists, `figure`,
-    `center` or `document`) is replaced by a block with its name.
+    `center` or `document`) is replaced by a block with its name. Content
+    environments (`abstract`, `quote`, `quotation`, `verse`, `flushleft`,
+    `flushright`, `theorem`, `lemma`, `proposition`, `corollary`,
+    `definition`, `remark`, `example`, `proof`, and starred forms) instead
+    show their content with the `\begin`/`\end` lines hidden, like `figure`
+    (owner's choice).
   - Like math, a block shows its source when the selection touches it.
   - Typing at the end of a trailing hidden comment goes before it; Backspace
     there deletes the character before it; other typing or deleting inside

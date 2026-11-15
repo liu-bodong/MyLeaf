@@ -264,6 +264,15 @@ text`;
       );
     });
 
+    it('shows content environments like abstract with their begin and end lines hidden', () => {
+      const text =
+        '\\begin{abstract}\nThe text.\n\\end{abstract}\n\\begin{theorem*}[Name]\nT.\n\\end{theorem*}';
+      expect(shown(text, clean(text))).toBe('The text.\nT.\n');
+      expect(shown(text, clean(text, text.indexOf('{abstract}')))).toBe(
+        '\\begin{abstract}\nThe text.\nT.\n',
+      );
+    });
+
     it('hides the preamble, comments, spacing commands and labels, even at the cursor', () => {
       const text = String.raw`\documentclass{article}
 \begin{document}

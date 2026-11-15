@@ -264,7 +264,10 @@ export function planVisual(
             spans.push({ kind: 'widget', from: node.from, to: node.to, widget });
             break;
           }
-          if (FRAMES.has(node.name) && node.end !== null) {
+          if (
+            (FRAMES.has(node.name) || (clean && CONTENT_ENVIRONMENTS.has(node.name))) &&
+            node.end !== null
+          ) {
             hideLine(text, node.begin, selection, spans);
             hideLine(text, node.end, selection, spans);
           }
@@ -306,7 +309,30 @@ export function planVisual(
 
 /** Whether clean mode shows the environment `name` as a block. */
 const isUnrenderedEnvironment = (name: string, math: boolean) =>
-  !math && name !== 'document' && !FRAMES.has(name);
+  !math && name !== 'document' && !FRAMES.has(name) && !CONTENT_ENVIRONMENTS.has(name);
+
+/**
+ * Clean mode: environments holding text, shown like `figure` (their \begin and
+ * \end lines hidden, the content shown) instead of as a block.
+ */
+const CONTENT_ENVIRONMENTS = new Set(
+  [
+    'abstract',
+    'quote',
+    'quotation',
+    'verse',
+    'flushleft',
+    'flushright',
+    'theorem',
+    'lemma',
+    'proposition',
+    'corollary',
+    'definition',
+    'remark',
+    'example',
+    'proof',
+  ].flatMap((name) => [name, `${name}*`]),
+);
 
 /**
  * Clean mode's handling of a command: hides labels and spacing commands, or
