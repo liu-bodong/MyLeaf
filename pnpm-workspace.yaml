@@ -2,6 +2,10 @@ packages:
   - 'packages/*'
   - 'apps/*'
 
+# Run package scripts through pnpm's cross-platform shell, so POSIX syntax such
+# as `VAR=value node …` (apps/server `dev`) also works on Windows.
+shellEmulator: true
+
 # Single source of truth for dependency versions shared across packages.
 catalog:
   '@codemirror/commands': ^6.11.1

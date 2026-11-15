@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, realpath, rm, rmdir, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseTexLog } from '@myleaf/compile';
 import { parseAux } from '@myleaf/latex-syntax';
 import type { AuxReferences, CitationReference, LabelReference } from '@myleaf/latex-syntax';
@@ -185,9 +185,13 @@ export class TexLiveCompileBackend implements CompileBackend {
     ]);
     const record = parseSynctexRecords(result, 'Output')[0];
     // SyncTeX records the directory TeX ran in with symlinks resolved
-    // (e.g. /private/var/... for /var/... on macOS).
+    // (e.g. /private/var/... for /var/... on macOS), or as is (Windows, with
+    // 8.3 short names and junctions): compare both with links resolved.
     const srcDir = await realpath(this.#srcDir(projectId));
-    const file = this.#toProjectPath(projectId, record?.get('Input') ?? '', srcDir);
+    const input = record?.get('Input') ?? '';
+    const inputPath =
+      input === '' ? '' : await realpath(resolve(srcDir, input)).catch(() => input);
+    const file = this.#toProjectPath(projectId, inputPath, srcDir);
     const line = Number(record?.get('Line'));
     const column = Number(record?.get('Column'));
     if (file === null || !Number.isInteger(line) || line < 1) {
@@ -277,17 +281,27 @@ export class TexLiveCompileBackend implements CompileBackend {
     }
   }
 
+  /**
+   * How pdfTeX finds the precompiled preamble: by name through TEXFORMATS on
+   * TeX Live (an absolute -fmt path breaks pdfTeX's -recorder file name when
+   * -output-directory is set), by absolute path on MiKTeX (no TEXFORMATS).
+   */
+  async #formatLookup(projectId: ProjectId) {
+    const dir = this.#formats(projectId).dir;
+    return (await this.#getTexVersion()).includes('MiKTeX')
+      ? { fmt: join(dir, `${FORMAT_NAME}.fmt`), env: {} }
+      : { fmt: FORMAT_NAME, env: { TEXFORMATS: `${dir}${delimiter}` } };
+  }
+
   async #runLatexmk(request: CompileRequest, useFormat: boolean): Promise<ProcessResult> {
     const outDir = this.#outDir(request.projectId);
-    const formats = this.#formats(request.projectId);
+    const format = useFormat ? await this.#formatLookup(request.projectId) : null;
     return runProcess(
       this.#latexmk,
       [
         '-norc',
         ENGINE_FLAGS[request.engine],
-        // The format is found through TEXFORMATS: an absolute -fmt path breaks
-        // pdfTeX's -recorder file name when -output-directory is set.
-        ...(useFormat ? [`-pdflatex=${this.#pdflatex} -fmt=${FORMAT_NAME} %O %S`] : []),
+        ...(format ? [`-pdflatex=${this.#pdflatex} "-fmt=${format.fmt}" %O %S`] : []),
         '-synctex=1',
         '-interaction=nonstopmode',
         '-file-line-error',
@@ -297,10 +311,7 @@ export class TexLiveCompileBackend implements CompileBackend {
       ],
       {
         cwd: this.#srcDir(request.projectId),
-        env: {
-          ...this.#texEnv(outDir),
-          ...(useFormat ? { TEXFORMATS: `${formats.dir}:` } : {}),
-        },
+        env: { ...this.#texEnv(outDir), ...format?.env },
         timeoutMs: this.#timeoutMs,
       },
     );
@@ -309,11 +320,11 @@ export class TexLiveCompileBackend implements CompileBackend {
   /** One pdfLaTeX run with latexmk's flags, without latexmk's rerun logic (~100 ms less). */
   async #runPdflatexOnce(request: CompileRequest, useFormat: boolean): Promise<ProcessResult> {
     const outDir = this.#outDir(request.projectId);
-    const formats = this.#formats(request.projectId);
+    const format = useFormat ? await this.#formatLookup(request.projectId) : null;
     return runProcess(
       this.#pdflatex,
       [
-        ...(useFormat ? [`-fmt=${FORMAT_NAME}`] : []),
+        ...(format ? [`-fmt=${format.fmt}`] : []),
         '-synctex=1',
         '-interaction=nonstopmode',
         '-file-line-error',
@@ -325,10 +336,7 @@ export class TexLiveCompileBackend implements CompileBackend {
       ],
       {
         cwd: this.#srcDir(request.projectId),
-        env: {
-          ...this.#texEnv(outDir),
-          ...(useFormat ? { TEXFORMATS: `${formats.dir}:` } : {}),
-        },
+        env: { ...this.#texEnv(outDir), ...format?.env },
         timeoutMs: this.#timeoutMs,
       },
     );

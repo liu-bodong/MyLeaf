@@ -57,7 +57,8 @@ describe.skipIf(!hasTexLive)('TexLiveCompileBackend (requires TeX Live)', () => 
     // Reached through a symlink, like macOS's /var -> /private/var: SyncTeX
     // reports paths with symlinks resolved.
     await mkdir(join(tempDir, 'real'));
-    await symlink(join(tempDir, 'real'), join(tempDir, 'link'));
+    // A junction on Windows, where symlinks need Developer Mode; ignored elsewhere.
+    await symlink(join(tempDir, 'real'), join(tempDir, 'link'), 'junction');
     workRoot = join(tempDir, 'link');
     backend = new TexLiveCompileBackend({ workRoot, timeoutMs: 20_000 });
   });

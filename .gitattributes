@@ -1,0 +1,2 @@
+# LF everywhere, also on Windows with core.autocrlf (see .editorconfig).
+* text=auto eol=lf

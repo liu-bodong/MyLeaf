@@ -13,16 +13,21 @@ export interface RunOptions {
   readonly timeoutMs: number;
 }
 
+const isWindows = process.platform === 'win32';
+
 /**
- * Runs a command without a shell. On timeout the whole process group is
- * killed, so child processes (e.g. the TeX engine under latexmk) stop too.
+ * Runs a command without a shell. On timeout the whole process tree is
+ * killed, so child processes (e.g. the TeX engine under latexmk) stop too:
+ * through the process group on POSIX, with `taskkill /T` on Windows (where a
+ * detached process has no console, which crashes MiKTeX's latexmk).
  */
 export function runProcess(command: string, args: readonly string[], options: RunOptions) {
   return new Promise<ProcessResult>((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      detached: true,
+      detached: !isWindows,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -33,7 +38,15 @@ export function runProcess(command: string, args: readonly string[], options: Ru
 
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child.pid !== undefined) {
+      if (child.pid === undefined) {
+        return;
+      }
+      if (isWindows) {
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        }).on('error', () => child.kill());
+      } else {
         process.kill(-child.pid, 'SIGKILL');
       }
     }, options.timeoutMs);

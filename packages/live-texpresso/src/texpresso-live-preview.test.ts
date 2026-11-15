@@ -33,7 +33,8 @@ describe('sanitizeSvg', () => {
   });
 });
 
-describe('TexpressoLivePreview with a missing binary', () => {
+// The backend starts TeXpresso through /bin/sh: live preview is Linux and macOS only.
+describe.skipIf(process.platform === 'win32')('TexpressoLivePreview with a missing binary', () => {
   it('reports the failure and still closes', async () => {
     const workRoot = await mkdtemp(join(tmpdir(), 'myleaf-live-'));
     const events: LivePreviewEvent[] = [];
