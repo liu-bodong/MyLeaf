@@ -15,23 +15,24 @@ const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text);
 
 describe('pauseOffset', () => {
-  it('returns the start of the line holding \\begin{document}', () => {
+  it('returns the start of the line after the one holding \\begin{document}', () => {
     const preamble = '\\documentclass{article}\n\\usepackage{x}\n';
-    expect(pauseOffset(bytes(`${preamble}\\begin{document}\nHi\n\\end{document}\n`))).toBe(
-      preamble.length,
+    const begin = '\\begin{document}\n';
+    expect(pauseOffset(bytes(`${preamble}${begin}Hi\n\\end{document}\n`))).toBe(
+      preamble.length + begin.length,
     );
-    expect(pauseOffset(bytes(`${preamble}  \\usepackage{y}\\begin{document}Hi`))).toBe(
-      preamble.length,
-    );
+    const line = '  \\usepackage{y}\\begin{document}Hi\n';
+    expect(pauseOffset(bytes(`${preamble}${line}More`))).toBe(preamble.length + line.length);
+    expect(pauseOffset(bytes(`${preamble}\\begin{document}`))).toBe(preamble.length);
   });
 
   it('skips commented occurrences, but not escaped percent signs', () => {
-    const text = '% \\begin{document}\na % b \\begin{document}\n50\\% \\begin{document}\n';
-    expect(pauseOffset(bytes(text))).toBe(text.indexOf('50'));
+    const text = '% \\begin{document}\na % b \\begin{document}\n50\\% \\begin{document}\nX\n';
+    expect(pauseOffset(bytes(text))).toBe(text.indexOf('X'));
   });
 
   it('counts bytes, not characters', () => {
-    expect(pauseOffset(bytes('% é\n\\begin{document}'))).toBe(5);
+    expect(pauseOffset(bytes('% é\n\\begin{document}\nX'))).toBe(22);
   });
 
   it('returns null without \\begin{document}', () => {
@@ -129,6 +130,17 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     live.updateFile(mainFile(main('\\usepackage{local}\\pagestyle{empty}', 'Text.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(3);
     expect(new Set(pages().map((page) => page.svg)).size).toBe(3);
+  });
+
+  it('brings references up to date without an edit', async () => {
+    const live = await open([
+      mainFile(main('', String.raw`\section{One}\label{one} See section~\ref{one}.`)),
+    ]);
+    live.showPages(1, 1);
+    // The first run has no .aux (section ??); a new engine reads the one it
+    // wrote, and the page is typeset again.
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
+    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
   });
 
   it('typesets a root file without \\begin{document} in full runs', async () => {

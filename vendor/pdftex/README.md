@@ -6,13 +6,13 @@ work (`docs/spikes/pdflatex-live-preview.md`). Live preview uses it with
 `MYLEAF_LIVE_ENGINE=pdftex` (`packages/live-pdftex`); the default is still
 TeXpresso (ADR 0012).
 
-| File                  | Purpose                                                                                             |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                             |
-| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)          |
-| `warm-fork.patch`     | Level 2: pauses before `\begin{document}` and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
-| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks   |
-| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                      |
+| File                  | Purpose                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `build.sh`            | Fetches the pinned commit, applies `*.patch`, builds `build/bin/pdftex`                              |
+| `stream-hooks.patch`  | Returns files opened through `openclose.c` as pass-through streams (`MYLEAF_PDFTEX_HOOKS`)           |
+| `warm-fork.patch`     | Level 2: pauses at a line of the main file and forks a child per edit (`MYLEAF_PDFTEX_PAUSE_OFFSET`) |
+| `check-hooks.sh`      | Compiles documents with hooks off and on, compares the PDFs, lists files opened outside the hooks    |
+| `fixtures/images.tex` | PNG, JPEG and PDF images, for `check-hooks.sh`                                                       |
 
 ## Source
 
@@ -54,8 +54,10 @@ the spike notes.
 `warm-fork.patch` applies on top of `stream-hooks.patch`. With
 `MYLEAF_PDFTEX_HOOKS`, `MYLEAF_PDFTEX_PAUSE_OFFSET=<n>` and
 `MYLEAF_PDFTEX_CONTROL_FD=<fd>`, pdfTeX runs the preamble, and when it is
-about to read byte `<n>` of the main file (the start of the
-`\begin{document}` line) it stops and serves commands on `<fd>`. Each
+about to read byte `<n>` of the main file it stops and serves commands on
+`<fd>`. `<n>` must be the start of a line; live preview uses the line after
+`\begin{document}`, so the engine has also run `\begin{document}` (and read
+the `.aux`). Each
 `run` forks a child that reads the rest of the main file from a new file
 and writes all output (including a copy of the log so far) to its own
 directory. Messages are lines of tab-separated fields:
@@ -63,7 +65,7 @@ directory. Messages are lines of tab-separated fields:
 | Direction       | Message                             | Meaning                                                        |
 | --------------- | ----------------------------------- | -------------------------------------------------------------- |
 | engine → driver | `input <path>`                      | A file read before the pause (preamble dependencies)           |
-| engine → driver | `ready`                             | Paused before `\begin{document}`                               |
+| engine → driver | `ready`                             | Paused before byte `<n>`                                       |
 | driver → engine | `run <id> <main-file> <output-dir>` | Fork a child; its bytes before `<n>` must equal the original's |
 | driver → engine | `cancel <id>`                       | Kill that child                                                |
 | engine → driver | `done <id> <status>`                | The child exited (exit status, or minus the signal)            |
