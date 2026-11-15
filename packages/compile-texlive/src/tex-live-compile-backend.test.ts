@@ -6,11 +6,12 @@ import type { CompileRequest } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withoutFilePathEntries } from './run-process.js';
 import { TexLiveCompileBackend } from './tex-live-compile-backend.js';
 
 const hasTexLive = (() => {
   try {
-    execFileSync('latexmk', ['-v'], { stdio: 'ignore' });
+    execFileSync('latexmk', ['-v'], { stdio: 'ignore', env: withoutFilePathEntries(process.env) });
     return true;
   } catch {
     return false;

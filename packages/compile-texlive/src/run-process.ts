@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
+import { delimiter } from 'node:path';
 
 export interface ProcessResult {
   readonly exitCode: number | null;
@@ -16,6 +18,31 @@ export interface RunOptions {
 const isWindows = process.platform === 'win32';
 
 /**
+ * Removes PATH entries that are files (e.g. `...\bin\tool.exe` instead of
+ * `...\bin`): MiKTeX scans PATH and fails on them ("cannot retrieve
+ * attributes for the directory"). Windows only; the variable is `Path` there.
+ */
+export function withoutFilePathEntries(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!isWindows) {
+    return env;
+  }
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH');
+  const value = key === undefined ? undefined : env[key];
+  if (key === undefined || value === undefined) {
+    return env;
+  }
+  const entries = value.split(delimiter);
+  const kept = entries.filter((entry) => {
+    try {
+      return !statSync(entry.replace(/[\\/]+$/, '')).isFile();
+    } catch {
+      return true;
+    }
+  });
+  return kept.length === entries.length ? env : { ...env, [key]: kept.join(delimiter) };
+}
+
+/**
  * Runs a command without a shell. On timeout the whole process tree is
  * killed, so child processes (e.g. the TeX engine under latexmk) stop too:
  * through the process group on POSIX, with `taskkill /T` on Windows (where a
@@ -25,7 +52,7 @@ export function runProcess(command: string, args: readonly string[], options: Ru
   return new Promise<ProcessResult>((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env,
+      env: withoutFilePathEntries(options.env),
       detached: !isWindows,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
