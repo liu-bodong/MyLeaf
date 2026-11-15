@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAux } from './aux.js';
+import { parseAux } from './aux-file.js';
 
 describe('parseAux', () => {
   it('reads labels from plain LaTeX, hyperref and cleveref', () => {
