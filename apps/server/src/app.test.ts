@@ -1,6 +1,7 @@
 import type { ProjectDto } from '@myleaf/api';
 import { FakeCompileBackend, InMemoryProjectStore } from '@myleaf/testing';
 import type { FastifyInstance } from 'fastify';
+import { strToU8, zipSync } from 'fflate';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 
@@ -114,6 +115,57 @@ describe('server API', () => {
       expect(compiler.discarded).toEqual([project.id]);
       const get = await app.inject({ method: 'GET', url: `/api/projects/${project.id}` });
       expect(get.statusCode).toBe(404);
+    });
+  });
+
+  describe('zip import', () => {
+    const DOC = '\\documentclass{article}\n';
+    const importZip = (name: string, zip: Uint8Array, contentType = 'application/zip') =>
+      app.inject({
+        method: 'POST',
+        url: `/api/projects/import?name=${encodeURIComponent(name)}`,
+        headers: { 'content-type': contentType },
+        payload: Buffer.from(zip),
+      });
+
+    it('creates a project from the files in a zip', async () => {
+      const zip = zipSync({ 'paper/main.tex': strToU8(DOC), 'paper/refs.bib': strToU8('@a') });
+      const response = await importZip('Thesis', zip);
+      expect(response.statusCode).toBe(201);
+      const imported: ProjectDto = response.json();
+      expect(imported).toMatchObject({ name: 'Thesis', rootFile: 'main.tex' });
+      const files = await app.inject({ method: 'GET', url: `/api/projects/${imported.id}/files` });
+      expect(files.json<{ path: string }[]>().map((file) => file.path)).toEqual([
+        'main.tex',
+        'refs.bib',
+      ]);
+      const bib = await app.inject({
+        method: 'GET',
+        url: `/api/projects/${imported.id}/files/refs.bib`,
+      });
+      expect(bib.body).toBe('@a');
+    });
+
+    it('rejects an unsafe zip without creating a project', async () => {
+      const zip = zipSync({ 'main.tex': strToU8(DOC), '../evil.tex': strToU8('x') });
+      const response = await importZip('Evil', zip);
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: 'InvalidArchiveError' });
+      const list = await app.inject({ method: 'GET', url: '/api/projects' });
+      expect(list.json()).toEqual([project]);
+    });
+
+    it('requires a name and a zip body', async () => {
+      const zip = zipSync({ 'main.tex': strToU8(DOC) });
+      expect((await importZip(' ', zip)).statusCode).toBe(400);
+      const noName = await app.inject({
+        method: 'POST',
+        url: '/api/projects/import',
+        headers: { 'content-type': 'application/zip' },
+        payload: Buffer.from(zip),
+      });
+      expect(noName.statusCode).toBe(400);
+      expect((await importZip('X', zip, 'text/plain')).statusCode).toBe(415);
     });
   });
 

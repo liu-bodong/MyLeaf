@@ -776,6 +776,20 @@ button.icon-button:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* A button that stays on or off, styled like the segmented switch next to it. */
+.toggle-button {
+  background: none;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.toggle-button[aria-pressed='true'] {
+  background: var(--bg-hover);
+  color: var(--fg);
+  font-weight: 600;
+}
+
 /* Menus */
 
 .dropdown {

@@ -8,7 +8,9 @@ const widgetText = (widget: WidgetSpec) =>
     ? widget.label
     : widget.type === 'chip'
       ? `${widget.chip}:${widget.text}`
-      : `image:${widget.path}`;
+      : widget.type === 'image'
+        ? `image:${widget.path}`
+        : `${widget.type}:${widget.name}`;
 
 /** The text as visual mode shows it: hidden spans removed, folds as `[label]`, math as `⟨tex⟩`. */
 function shown(text: string, spans: readonly VisualSpan[]): string {
@@ -198,5 +200,117 @@ describe('planVisual', () => {
     expect(shown(text, planVisual(text, parseLatex(text), [], references))).toBe(
       String.raw`«ref:(4)» «cite:(Kay, 1999)» «ref:??» ⟨\begin{equation*}x \tag{4}\end{equation*}⟩`,
     );
+  });
+
+  describe('clean mode', () => {
+    const clean = (text: string, cursor: number | null = null) =>
+      planVisual(
+        text,
+        parseLatex(text),
+        cursor === null ? [] : [{ from: cursor, to: cursor }],
+        null,
+        { clean: true },
+      );
+    const skipped = (text: string, spans: readonly VisualSpan[]) =>
+      spans.flatMap((s) =>
+        s.kind === 'hide' && s.skip === true ? [text.slice(s.from, s.to)] : [],
+      );
+
+    it('shows unrendered commands on their own line as a block with the name', () => {
+      const text = String.raw`\icmlaffiliation{yyy}{Department of XXX}
+\printAffiliationsAndNotice{}  % no special notice
+text`;
+      expect(shown(text, clean(text))).toBe(
+        '«command:icmlaffiliation»\n«command:printAffiliationsAndNotice»\ntext',
+      );
+    });
+
+    it('shows unrendered commands inside a line as source', () => {
+      const text = String.raw`The \LaTeX\ way\footnote{a \emph{note}}.`;
+      expect(shown(text, clean(text))).toBe(String.raw`The \LaTeX\ way\footnote{a note}.`);
+    });
+
+    it('takes the [ ] and { } right after a command, across lines', () => {
+      const text = '\\twocolumn[\n  \\icmltitle{T}\n  a [x] b\n]\nafter';
+      expect(shown(text, clean(text))).toBe('«command:twocolumn»\nafter');
+      const groups = String.raw`\foo{a}[b]{c} {d}`;
+      expect(shown(groups, clean(groups))).toBe(String.raw`\foo{a}[b]{c} {d}`);
+      const own = '\\foo{a}[b]{c}\n';
+      expect(shown(own, clean(own))).toBe('«command:foo»\n');
+    });
+
+    it('shows the source of a block the cursor touches, with its content rendered', () => {
+      const text = String.raw`\icmltitle{A \textbf{bold} title}`;
+      const spans = clean(text, text.indexOf('title}'));
+      expect(shown(text, spans)).toBe(String.raw`\icmltitle{A bold title}`);
+      expect(styled(text, spans)).toEqual([['bold', 'bold']]);
+    });
+
+    it('shows unrendered environments as a block, except document', () => {
+      const text = String.raw`\begin{document}
+\begin{icmlauthorlist}
+\icmlauthor{A}{x}
+\end{icmlauthorlist}
+\begin{itemize}
+\item one
+\end{itemize}
+\end{document}`;
+      expect(shown(text, clean(text))).toBe(
+        '\\begin{document}\n«environment:icmlauthorlist»\n«•» one\n\\end{document}',
+      );
+      const inside = text.indexOf('{A}');
+      expect(shown(text, clean(text, inside))).toContain(
+        '\\begin{icmlauthorlist}\n\\icmlauthor{A}{x}\n\\end{icmlauthorlist}',
+      );
+    });
+
+    it('shows content environments like abstract with their begin and end lines hidden', () => {
+      const text =
+        '\\begin{abstract}\nThe text.\n\\end{abstract}\n\\begin{theorem*}[Name]\nT.\n\\end{theorem*}';
+      expect(shown(text, clean(text))).toBe('The text.\nT.\n');
+      expect(shown(text, clean(text, text.indexOf('{abstract}')))).toBe(
+        '\\begin{abstract}\nThe text.\nT.\n',
+      );
+    });
+
+    it('hides the preamble, comments, spacing commands and labels, even at the cursor', () => {
+      const text = String.raw`\documentclass{article}
+\begin{document}
+% a whole-line comment
+Text % trailing
+\vskip 0.3in
+\vspace*{1em}
+\section{Intro\label{sec:intro}}
+\label{x}
+More.
+\end{document}`;
+      const spans = clean(text, text.indexOf('whole'));
+      expect(shown(text, spans)).toBe('\n\\begin{document}\nText\nIntro\nMore.\n\\end{document}');
+      expect(skipped(text, spans)).toEqual([
+        '\\documentclass{article}',
+        '% a whole-line comment\n',
+        ' % trailing',
+        '\\vskip 0.3in\n',
+        '\\vspace*{1em}\n',
+        '\\label{sec:intro}',
+        '\\label{x}\n',
+      ]);
+    });
+
+    it('shows runs of blank lines as one, except lines the cursor is on', () => {
+      const text = 'a\n\n% c\n\n\nb';
+      expect(shown(text, clean(text))).toBe('a\n\nb');
+      expect(shown(text, clean(text, text.length - 2))).toBe('a\n\n\nb');
+    });
+
+    it('keeps rendered commands and control symbols as before', () => {
+      const text = String.raw`\section{Intro} 50\% \textbf{b} \cite{k}\\`;
+      expect(shown(text, clean(text))).toBe(String.raw`Intro 50\% b «cite:[k]»\\`);
+    });
+
+    it('leaves visual mode unchanged when off', () => {
+      const text = '\\icmlaffiliation{yyy}{Dept}\n% c';
+      expect(shown(text, plan(text))).toBe(text);
+    });
   });
 });

@@ -221,6 +221,9 @@ catalogs:
     fastify:
       specifier: ^5.12.8
       version: 5.12.8
+    fflate:
+      specifier: ^0.8.3
+      version: 0.8.3
     globals:
       specifier: ^17.14.0
       version: 17.14.0
@@ -277,6 +280,9 @@ importers:
       eslint-plugin-react-hooks:
         specifier: 'catalog:'
         version: 7.1.1(eslint@10.14.0)
+      fflate:
+        specifier: 'catalog:'
+        version: 0.8.3
       globals:
         specifier: 'catalog:'
         version: 17.14.0
@@ -328,6 +334,9 @@ importers:
       fastify:
         specifier: 'catalog:'
         version: 5.12.8
+      fflate:
+        specifier: 'catalog:'
+        version: 0.8.3
     devDependencies:
       '@myleaf/testing':
         specifier: workspace:*
@@ -1450,6 +1459,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
 
   file-entry-cache@11.1.5:
     resolution: {integrity: sha512-+PFTHITI08JIGhnNpGNI8T8inUpgZfk3GNEqfT9R2zZV2iFXg3CvqzSl/uEhs7TSGujYRELEANyDvS8Fj7+S7Q==}
@@ -2865,6 +2877,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  fflate@0.8.3: {}
 
   file-entry-cache@11.1.5:
     dependencies:

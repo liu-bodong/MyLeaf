@@ -26,6 +26,7 @@
     "eslint": "catalog:",
     "eslint-config-prettier": "catalog:",
     "eslint-plugin-react-hooks": "catalog:",
+    "fflate": "catalog:",
     "globals": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:",
