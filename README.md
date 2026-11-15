@@ -30,7 +30,9 @@ Server configuration (environment variables):
 | `HOST`                     | `127.0.0.1` | Address to listen on                                                     |
 | `PORT`                     | `3000`      | Port to listen on                                                        |
 | `MYLEAF_DATA_DIR`          | `./data`    | Project files (`projects/`) and builds (`builds/`)                       |
+| `MYLEAF_LIVE_ENGINE`       | `texpresso` | Live preview engine: `texpresso` or `pdftex` (see below)                 |
 | `MYLEAF_TEXPRESSO`         | (unset)     | Patched TeXpresso binary for live preview; `off` disables it (see below) |
+| `MYLEAF_PDFTEX`            | (unset)     | Patched pdfTeX binary, with `MYLEAF_LIVE_ENGINE=pdftex`                  |
 | `MYLEAF_LIVE_MAX_SESSIONS` | `4`         | Live previews open at once (~250 MB each)                                |
 | `MYLEAF_LIVE_IDLE_MINUTES` | `10`        | Inactivity before a live preview is closed                               |
 | `MYLEAF_SAMPLE_PROJECT`    | (unset)     | Folder to create the sample project from if missing (`pnpm dev` sets it) |
@@ -52,6 +54,13 @@ the binary `MYLEAF_TEXPRESSO` points to (`MYLEAF_TEXPRESSO=off` turns live
 preview off). Without a usable binary it runs with live preview disabled and
 says why in its startup log.
 
+With `MYLEAF_LIVE_ENGINE=pdftex`, live preview runs on the patched pdfTeX
+instead (level 2 in `docs/spikes/pdflatex-live-preview.md`): its pages are
+pdfLaTeX's own output. Build it with `vendor/pdftex/build.sh` (dependencies
+in `vendor/pdftex/README.md`); it also needs TeX Live and MuPDF's `mutool`.
+The server uses `vendor/pdftex/build/bin/pdftex`, or the binary
+`MYLEAF_PDFTEX` points to.
+
 There is no authentication yet, and compilation is hardened but not
 sandboxed (see [ADR 0010](docs/adr/0010-projects-storage-and-compile-service.md)).
 Only expose the server to people you trust.
@@ -68,6 +77,7 @@ Only expose the server to people you trust.
 | `packages/compile-texlive` | Adapter | `CompileBackend` on latexmk + synctex                      |
 | `packages/live-preview`    | Domain  | `LivePreviewBackend` port                                  |
 | `packages/live-texpresso`  | Adapter | `LivePreviewBackend` on patched TeXpresso                  |
+| `packages/live-pdftex`     | Adapter | `LivePreviewBackend` on patched pdfTeX (level 2)           |
 | `packages/latex-syntax`    | Domain  | Structural LaTeX parser with source offsets                |
 | `packages/editor-visual`   | Adapter | Visual mode: CodeMirror extension rendering LaTeX in place |
 | `packages/testing`         | Testing | Port contract suites and in-memory test doubles            |

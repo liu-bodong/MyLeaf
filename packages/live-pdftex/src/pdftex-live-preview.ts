@@ -1,0 +1,369 @@
+import { execFile, spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createInterface } from 'node:readline';
+import type { Duplex } from 'node:stream';
+import { promisify } from 'node:util';
+import type {
+  LivePreviewBackend,
+  LivePreviewEvent,
+  LivePreviewRequest,
+  LivePreviewSession,
+} from '@myleaf/live-preview';
+import type { ProjectFile } from '@myleaf/project';
+import { pauseOffset } from './pause-offset.js';
+import { sanitizeSvg } from './sanitize-svg.js';
+
+const run = promisify(execFile);
+
+export interface PdftexLivePreviewOptions {
+  /** Path of the patched `pdftex` binary (vendor/pdftex/build.sh). */
+  readonly command: string;
+  /** Directory holding the format and per-session workspaces. */
+  readonly workRoot: string;
+  /** kpathsea configuration path for the patched binary (`kpsewhich -var-value TEXMFCNF`). */
+  readonly texmfcnf: string;
+  /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
+  readonly mutool?: string;
+}
+
+/**
+ * LivePreviewBackend on the patched pdfTeX (vendor/pdftex, level 2 in
+ * docs/spikes/pdflatex-live-preview.md). Per session, an engine process runs
+ * the root file's preamble and pauses before `\begin{document}`; each edit
+ * forks a child that typesets the document from there into a PDF, whose
+ * pages are rendered to SVG with MuPDF. Output is pdfLaTeX's own.
+ *
+ *   <workRoot>/format/pdflatex.fmt          made with the patched binary
+ *   <workRoot>/<project-id>/<session>/src/  source files, kept up to date
+ *   <workRoot>/<project-id>/<session>/runs/ one directory per child
+ */
+export class PdftexLivePreview implements LivePreviewBackend {
+  readonly #options: Required<PdftexLivePreviewOptions>;
+  #format: Promise<string> | null = null;
+
+  constructor(options: PdftexLivePreviewOptions) {
+    this.#options = { mutool: 'mutool', ...options, workRoot: resolve(options.workRoot) };
+  }
+
+  async open(
+    request: LivePreviewRequest,
+    onEvent: (event: LivePreviewEvent) => void,
+  ): Promise<LivePreviewSession> {
+    const dir = join(this.#options.workRoot, request.projectId, randomUUID());
+    await mkdir(join(dir, 'runs'), { recursive: true });
+    const session = new PdftexSession(this.#options, request, dir, onEvent);
+    for (const file of request.files) await session.writeSource(file);
+    try {
+      session.start(await this.#formatFile());
+    } catch (error) {
+      onEvent({ type: 'stopped', reason: `pdfTeX could not be started: ${String(error)}` });
+    }
+    return session;
+  }
+
+  /** Builds the `pdflatex` format with the patched binary, once per backend. */
+  #formatFile(): Promise<string> {
+    this.#format ??= (async () => {
+      const dir = join(this.#options.workRoot, 'format');
+      await mkdir(dir, { recursive: true });
+      await run(
+        this.#options.command,
+        ['-ini', '-jobname=pdflatex', '-progname=pdflatex', '-etex', 'pdflatex.ini'],
+        { cwd: dir, env: { ...process.env, TEXMFCNF: this.#options.texmfcnf } },
+      );
+      return join(dir, 'pdflatex.fmt');
+    })();
+    this.#format.catch(() => {
+      this.#format = null; // Retried by the next session.
+    });
+    return this.#format;
+  }
+}
+
+interface Engine {
+  readonly process: ChildProcess;
+  readonly control: Duplex;
+  /** Root-file bytes before the pause. */
+  readonly preamble: Buffer;
+  /** Project files the engine read before the pause. */
+  readonly inputs: Set<string>;
+  readonly ready: Promise<boolean>;
+  readonly waiting: Map<string, (status: number | null) => void>;
+  /** A file it read before the pause changed: start a new engine. */
+  stale: boolean;
+}
+
+class PdftexSession implements LivePreviewSession {
+  readonly #options: Required<PdftexLivePreviewOptions>;
+  readonly #rootFile: string;
+  readonly #job: string;
+  readonly #dir: string;
+  readonly #srcDir: string;
+  readonly #onEvent: (event: LivePreviewEvent) => void;
+  readonly #files = new Map<string, Uint8Array>();
+  #format = '';
+  #engine: Engine | null = null;
+  #closing = false;
+  /** Runs one at a time; edits during a run are coalesced into one more. */
+  #running = false;
+  #pending = false;
+  #runs = 0;
+  /** File writes, in order; a run starts after those queued before it. */
+  #writes: Promise<void> = Promise.resolve();
+  /** The run loop, while one is going. */
+  #loop: Promise<void> = Promise.resolve();
+  /** Page renders, in order. */
+  #renders: Promise<void> = Promise.resolve();
+  #range: readonly [number, number] = [1, 1];
+  #pdf: { readonly path: string; readonly pages: number } | null = null;
+  readonly #emitted = new Map<number, string>();
+
+  constructor(
+    options: Required<PdftexLivePreviewOptions>,
+    request: LivePreviewRequest,
+    dir: string,
+    onEvent: (event: LivePreviewEvent) => void,
+  ) {
+    this.#options = options;
+    this.#rootFile = request.rootFile;
+    this.#job = basename(request.rootFile).replace(/\.tex$/, '');
+    this.#dir = dir;
+    this.#srcDir = join(dir, 'src');
+    this.#onEvent = onEvent;
+  }
+
+  async writeSource(file: ProjectFile): Promise<void> {
+    this.#files.set(file.path, file.content);
+    const path = join(this.#srcDir, ...file.path.split('/'));
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, file.content);
+  }
+
+  start(format: string): void {
+    this.#format = format;
+    this.#schedule();
+  }
+
+  updateFile(file: ProjectFile): void {
+    if (this.#closing) return;
+    if (this.#engine?.inputs.has(file.path) && file.path !== this.#rootFile) {
+      this.#engine.stale = true;
+    }
+    this.#files.set(file.path, file.content);
+    this.#writes = this.#writes.then(() => this.writeSource(file)).catch(() => {});
+    this.#schedule();
+  }
+
+  showPages(first: number, last: number): void {
+    const from = Math.max(1, Math.floor(first));
+    this.#range = [from, Math.max(from, Math.floor(last))];
+    void this.#render();
+  }
+
+  async close(): Promise<void> {
+    if (this.#closing) return;
+    this.#closing = true;
+    this.#stopEngine();
+    await Promise.all([this.#writes, this.#loop, this.#renders]);
+    await rm(this.#dir, { recursive: true, force: true });
+  }
+
+  #schedule(): void {
+    if (!this.#format || this.#closing) return;
+    if (this.#running) {
+      this.#pending = true;
+      return;
+    }
+    this.#running = true;
+    this.#loop = (async () => {
+      do {
+        this.#pending = false;
+        await this.#writes;
+        await this.#runOnce().catch(() => {});
+      } while (this.#pending && !this.#closing);
+      this.#running = false;
+    })();
+  }
+
+  /** Typesets the current sources once and shows the result. */
+  async #runOnce(): Promise<void> {
+    const root = Buffer.from(this.#files.get(this.#rootFile) ?? new Uint8Array());
+    const offset = pauseOffset(root);
+    let engine: Engine | null = null;
+    if (offset !== null) {
+      const preamble = root.subarray(0, offset);
+      if (!this.#engine || this.#engine.stale || !this.#engine.preamble.equals(preamble)) {
+        this.#stopEngine();
+        this.#engine = this.#startEngine(Buffer.from(preamble));
+      }
+      engine = (await this.#engine.ready) ? this.#engine : null;
+    }
+    if (this.#closing) return;
+
+    const id = String(++this.#runs);
+    const out = join(this.#dir, 'runs', id);
+    await mkdir(out);
+    // The child reads the root file from a copy, so later edits cannot change it mid-run.
+    const main = `${out}.tex`;
+    let status: number | null;
+    if (engine) {
+      await writeFile(main, root);
+      status = await new Promise<number | null>((resolveRun) => {
+        engine.waiting.set(id, resolveRun);
+        engine.control.write(`run\t${id}\t${main}\t${out}\n`);
+      });
+    } else {
+      // No \begin{document} in the root file, or the engine failed: a full run.
+      status = await this.#fullRun(out);
+    }
+    if (this.#closing) return;
+    // The next run reads this run's .aux, so references settle over edits.
+    if (status === 0) {
+      await copyFile(join(out, `${this.#job}.aux`), join(this.#srcDir, `${this.#job}.aux`)).catch(
+        () => {},
+      );
+    }
+    const log = await readFile(join(out, `${this.#job}.log`), 'latin1').catch(() => '');
+    const pages = /Output written on .*?\((\d+) pages?/s.exec(log);
+    // Without a PDF (fatal error, or no pages), the last one stays on screen.
+    const previous = pages ? this.#pdf : { path: join(out, `${this.#job}.pdf`), pages: 0 };
+    if (pages) {
+      this.#pdf = { path: join(out, `${this.#job}.pdf`), pages: Number(pages[1]) };
+      this.#onEvent({ type: 'page-count', count: this.#pdf.pages, final: true });
+      await this.#render();
+    }
+    if (previous) {
+      const previousOut = dirname(previous.path);
+      await rm(previousOut, { recursive: true, force: true });
+      await rm(`${previousOut}.tex`, { force: true });
+    }
+  }
+
+  /** Emits the pages of the visible range whose rendering changed. */
+  #render(): Promise<void> {
+    this.#renders = this.#renders.then(() => this.#renderNow()).catch(() => {});
+    return this.#renders;
+  }
+
+  async #renderNow(): Promise<void> {
+    const pdf = this.#pdf;
+    if (!pdf || this.#closing) return;
+    const first = Math.min(this.#range[0], pdf.pages);
+    const last = Math.min(this.#range[1], pdf.pages);
+    const pattern = join(dirname(pdf.path), 'page-%d.svg');
+    await run(this.#options.mutool, [
+      'draw',
+      '-q',
+      '-F',
+      'svg',
+      '-o',
+      pattern,
+      pdf.path,
+      `${first}-${last}`,
+    ]);
+    for (let page = first; page <= last; page++) {
+      const raw = await readFile(join(dirname(pdf.path), `page-${page}.svg`), 'utf8');
+      if (this.#closing || this.#pdf !== pdf) return;
+      const svg = sanitizeSvg(raw);
+      const hash = createHash('sha1').update(svg).digest('base64');
+      if (this.#emitted.get(page) === hash) continue;
+      this.#emitted.set(page, hash);
+      this.#onEvent({ type: 'page', page, svg });
+    }
+  }
+
+  #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+    return { ...process.env, TEXMFCNF: this.#options.texmfcnf, ...extra };
+  }
+
+  #args(): string[] {
+    return [
+      `-fmt=${this.#format}`,
+      '-progname=pdflatex',
+      '-interaction=nonstopmode',
+      this.#rootFile,
+    ];
+  }
+
+  #startEngine(preamble: Buffer): Engine {
+    const child = spawn(this.#options.command, this.#args(), {
+      cwd: this.#srcDir,
+      env: this.#env({
+        MYLEAF_PDFTEX_HOOKS: '1',
+        MYLEAF_PDFTEX_PAUSE_OFFSET: String(preamble.length),
+        MYLEAF_PDFTEX_CONTROL_FD: '3',
+      }),
+      // fd 3 is a socket pair: the engine's control connection.
+      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+      // Own process group with its children, so close() can stop them all.
+      detached: true,
+    });
+    const control = child.stdio[3] as Duplex;
+    control.on('error', () => {}); // The exit is handled below.
+    const inputs = new Set<string>();
+    const waiting = new Map<string, (status: number | null) => void>();
+    let markReady: (ready: boolean) => void = () => {};
+    const ready = new Promise<boolean>((resolveReady) => (markReady = resolveReady));
+    createInterface({ input: control }).on('line', (line) => {
+      const [kind, first, second] = line.split('\t');
+      if (kind === 'input' && first !== undefined) {
+        const path = this.#projectPath(first);
+        if (path !== null) inputs.add(path);
+      } else if (kind === 'ready') {
+        markReady(true);
+      } else if (kind === 'done' && first !== undefined) {
+        waiting.get(first)?.(Number(second));
+        waiting.delete(first);
+      }
+    });
+    child.on('error', (error) => {
+      markReady(false);
+      if (!this.#closing && child.pid === undefined) {
+        this.#closing = true;
+        this.#onEvent({ type: 'stopped', reason: `pdfTeX could not be started: ${error.message}` });
+      }
+    });
+    child.on('exit', () => {
+      markReady(false);
+      for (const resolveRun of waiting.values()) resolveRun(null);
+      waiting.clear();
+      if (this.#engine?.process === child) this.#engine = null;
+    });
+    return { process: child, control, preamble, inputs, ready, waiting, stale: false };
+  }
+
+  /** The project path of a file the engine read, or `null` outside the project. */
+  #projectPath(path: string): string | null {
+    const rel = relative(this.#srcDir, isAbsolute(path) ? path : join(this.#srcDir, path));
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+    return rel.split(sep).join('/');
+  }
+
+  async #fullRun(out: string): Promise<number | null> {
+    const child = spawn(this.#options.command, [`-output-directory=${out}`, ...this.#args()], {
+      cwd: this.#srcDir,
+      env: this.#env(),
+      stdio: 'ignore',
+    });
+    const [code] = (await once(child, 'exit')) as [number | null];
+    return code;
+  }
+
+  #stopEngine(): void {
+    const engine = this.#engine;
+    this.#engine = null;
+    if (!engine?.process.pid) return;
+    // Closing the control connection ends a paused engine and its children;
+    // the group kill also ends one that is still in the preamble.
+    engine.control.end();
+    try {
+      process.kill(-engine.process.pid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+}

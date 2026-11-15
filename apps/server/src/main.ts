@@ -1,10 +1,13 @@
 import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { TexLiveCompileBackend } from '@myleaf/compile-texlive';
+import { PdftexLivePreview } from '@myleaf/live-pdftex';
+import type { LivePreviewBackend } from '@myleaf/live-preview';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
 import { FileSystemProjectStore } from '@myleaf/storage-fs';
 import { buildApp } from './app.js';
 import { LiveSessionPool } from './live/live-session-pool.js';
+import { choosePdftex } from './live/pdftex-command.js';
 import { chooseTexpresso } from './live/texpresso-command.js';
 import { seedSampleProject } from './sample-project.js';
 
@@ -37,25 +40,55 @@ const sampleCreated =
   }));
 const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds') });
 
-// Live preview (ADR 0012) runs on the patched TeXpresso: MYLEAF_TEXPRESSO,
-// or the build of vendor/texpresso/build.sh (this file is in apps/server/{src,dist}).
-const texpresso = await chooseTexpresso(
-  process.env.MYLEAF_TEXPRESSO,
-  resolve(import.meta.dirname, '../../../vendor/texpresso/build/bin/texpresso'),
-);
 // Live sessions do not survive a restart: remove workspaces a crash left behind.
 const liveRoot = join(dataDir, 'live');
 await rm(liveRoot, { recursive: true, force: true });
+
+// Live preview engine: the patched TeXpresso (ADR 0012, default) or the
+// patched pdfTeX (MYLEAF_LIVE_ENGINE=pdftex; docs/spikes/pdflatex-live-preview.md).
+// MYLEAF_TEXPRESSO / MYLEAF_PDFTEX name the binary, or else the build of
+// vendor/*/build.sh is used (this file is in apps/server/{src,dist}).
+const liveEngine = process.env.MYLEAF_LIVE_ENGINE ?? 'texpresso';
+let liveBackend: LivePreviewBackend | null = null;
+let liveStatus: { readonly level: 'info' | 'warn'; readonly message: string };
+if (liveEngine === 'pdftex') {
+  const pdftex = await choosePdftex(
+    process.env.MYLEAF_PDFTEX,
+    resolve(import.meta.dirname, '../../../vendor/pdftex/build/bin/pdftex'),
+  );
+  if (pdftex.kind === 'enabled') {
+    liveBackend = new PdftexLivePreview({
+      command: pdftex.command,
+      texmfcnf: pdftex.texmfcnf,
+      workRoot: liveRoot,
+    });
+    liveStatus = { level: 'info', message: `Live preview: enabled, pdfTeX (${pdftex.command})` };
+  } else {
+    liveStatus = { level: pdftex.level, message: `Live preview disabled: ${pdftex.reason}` };
+  }
+} else if (liveEngine === 'texpresso') {
+  const texpresso = await chooseTexpresso(
+    process.env.MYLEAF_TEXPRESSO,
+    resolve(import.meta.dirname, '../../../vendor/texpresso/build/bin/texpresso'),
+  );
+  if (texpresso.kind === 'enabled') {
+    liveBackend = new TexpressoLivePreview({ command: texpresso.command, workRoot: liveRoot });
+    liveStatus = { level: 'info', message: `Live preview: enabled (${texpresso.command})` };
+  } else {
+    liveStatus = { level: texpresso.level, message: `Live preview disabled: ${texpresso.reason}` };
+  }
+} else {
+  throw new Error(
+    `MYLEAF_LIVE_ENGINE must be texpresso or pdftex, got ${JSON.stringify(liveEngine)}`,
+  );
+}
 const livePreview =
-  texpresso.kind === 'enabled'
-    ? new LiveSessionPool(
-        new TexpressoLivePreview({ command: texpresso.command, workRoot: liveRoot }),
-        {
-          maxSessions: positiveInt('MYLEAF_LIVE_MAX_SESSIONS', 4),
-          idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
-        },
-      )
-    : null;
+  liveBackend === null
+    ? null
+    : new LiveSessionPool(liveBackend, {
+        maxSessions: positiveInt('MYLEAF_LIVE_MAX_SESSIONS', 4),
+        idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
+      });
 
 const app = buildApp({ store, compiler, livePreview }, { logger: true });
 
@@ -68,5 +101,4 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 await app.listen({ host, port });
 app.log.info(`Data directory: ${dataDir}`);
 if (sampleCreated) app.log.info(`Sample project created from ${resolve(sampleDir)}`);
-if (texpresso.kind === 'enabled') app.log.info(`Live preview: enabled (${texpresso.command})`);
-else app.log[texpresso.level](`Live preview disabled: ${texpresso.reason}`);
+app.log[liveStatus.level](liveStatus.message);

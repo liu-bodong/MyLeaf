@@ -17,6 +17,7 @@
     "@myleaf/compile": "workspace:*",
     "@myleaf/compile-texlive": "workspace:*",
     "@myleaf/doc-model": "workspace:*",
+    "@myleaf/live-pdftex": "workspace:*",
     "@myleaf/live-preview": "workspace:*",
     "@myleaf/live-texpresso": "workspace:*",
     "@myleaf/project": "workspace:*",
