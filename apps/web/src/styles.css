@@ -1117,9 +1117,37 @@ button.icon-button:hover:not(:disabled) {
 }
 
 /* Live preview names its engine in the toolbar; in a narrow output pane that
-   costs the page arrows (the page box and Page Up/Down remain). */
+   costs the page arrows (the page box and Page Up/Down remain), and below
+   that the download button (also in the File and project menus). Whatever
+   still does not fit is cut off rather than drawn over the next pane. */
 .pdf-toolbar {
   container-type: inline-size;
+  overflow-x: clip;
+}
+
+@container (max-width: 540px) {
+  .pdf-toolbar .download-button {
+    display: none;
+  }
+}
+
+@container (max-width: 460px) {
+  .pdf-toolbar .page-step,
+  .pdf-toolbar .toolbar-separator {
+    display: none;
+  }
+}
+
+/* Narrower still: Recompile shows only its icon (the label stays for screen readers). */
+@container (max-width: 420px) {
+  .pdf-toolbar .compile-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 @container (max-width: 640px) {

@@ -83,12 +83,17 @@ export function PdfToolbar(props: PdfToolbarProps) {
         </button>
       )}
       {props.downloadUrl === null ? (
-        <button type="button" className="icon-button" aria-label="Download PDF" disabled>
+        <button
+          type="button"
+          className="icon-button download-button"
+          aria-label="Download PDF"
+          disabled
+        >
           <Icon name="download" />
         </button>
       ) : (
         <a
-          className="icon-button"
+          className="icon-button download-button"
           href={props.downloadUrl}
           download={props.downloadName}
           aria-label="Download PDF"
@@ -222,7 +227,7 @@ function RecompileButton({ compiling, onRecompile, settings }: RecompileButtonPr
         title={`Recompile (${shortcut('S')})`}
       >
         <Icon name="recompile" />
-        {compiling ? 'Compiling…' : 'Recompile'}
+        <span className="compile-label">{compiling ? 'Compiling…' : 'Recompile'}</span>
       </button>
       <button
         type="button"

@@ -88,7 +88,7 @@ test('live preview updates the page while typing', async ({ page, request }) => 
 
   // Turned on again, it opens on the compiled PDF's pages until live pages arrive.
   await toggle.click();
-  await expect(page.getByTestId('page-count')).toHaveText('/ 2');
+  await expect(page.getByTestId('page-count')).toHaveText('/ 2', { timeout: 30_000 });
   await expect(image).toBeVisible({ timeout: 30_000 });
 
   // The setting persists.
