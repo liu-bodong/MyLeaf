@@ -99,13 +99,52 @@ function placeLines(lines: readonly TextLine[]): PlacedLine[] {
   });
 }
 
-/** Device pixels across a page slot of the scroller. */
-function slotPixelWidth(scroller: HTMLElement | null): number {
-  const style = scroller === null ? null : getComputedStyle(scroller);
-  const padding =
-    style === null ? 0 : parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-  const width = (scroller?.clientWidth ?? 800) - padding;
-  return Math.max(100, Math.round(width * window.devicePixelRatio));
+/**
+ * Where page slots go in the scroller, on whole device pixels: a canvas
+ * shown at a fractional size or position is resampled, which blurs it.
+ */
+interface SlotGeometry {
+  readonly dpr: number;
+  /** Slot width in device pixels; pages are drawn this wide. */
+  readonly width: number;
+  /** Left margin in CSS pixels that moves slots onto a device pixel. */
+  readonly offset: number;
+}
+
+/** Tolerance for floating-point error in positions, in device pixels. */
+const EPSILON = 0.01;
+
+function measureSlots(scroller: HTMLElement): SlotGeometry {
+  const dpr = window.devicePixelRatio;
+  const style = getComputedStyle(scroller);
+  const box = scroller.getBoundingClientRect();
+  // Borders and scrollbar are whole CSS pixels; the box may be fractional.
+  const inner = box.width - (scroller.offsetWidth - scroller.clientWidth);
+  const left = (box.left + scroller.clientLeft + parseFloat(style.paddingLeft)) * dpr;
+  const right =
+    left + (inner - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) * dpr;
+  const start = Math.ceil(left - EPSILON);
+  return {
+    dpr,
+    width: Math.max(100, Math.floor(right + EPSILON) - start),
+    offset: Math.max(0, start - left) / dpr,
+  };
+}
+
+/** Calls `onChange` when the device pixel ratio changes (zoom, another monitor). */
+function watchPixelRatio(onChange: () => void): () => void {
+  let query: MediaQueryList | null = null;
+  const listen = () => {
+    query?.removeEventListener('change', changed);
+    query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    query.addEventListener('change', changed);
+  };
+  const changed = () => {
+    listen();
+    onChange();
+  };
+  listen();
+  return () => query?.removeEventListener('change', changed);
 }
 
 /** Time to wait after the pane is resized before drawing pages at the new size. */
@@ -150,6 +189,7 @@ export function LivePreviewPane({
   /** Pages to lay out: the final count, or the most seen while re-typesetting. */
   const [count, setCount] = useState(1);
   const [current, setCurrent] = useState(1);
+  const [geometry, setGeometry] = useState<SlotGeometry | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
@@ -170,6 +210,8 @@ export function LivePreviewPane({
     const received = new Map<number, number>();
     const staleNow = new Set<number>();
     const renderer = new PdfRenderer();
+    /** Where slots go (see measureSlots); pages are drawn at its width. */
+    let measured: SlotGeometry | null = null;
     const searches = new Map<number, (result: SearchResult | null) => void>();
     let nextSearch = 0;
     searchRef.current = (message) =>
@@ -204,7 +246,7 @@ export function LivePreviewPane({
     };
     const draw = (page: number, sequence: number, pdf: Uint8Array) => {
       renderer
-        .render(pdf, slotPixelWidth(scrollerRef.current))
+        .render(pdf, measured?.width ?? 800)
         .then(({ bitmap, width, height, lines }) =>
           show(page, sequence, {
             kind: 'pdf',
@@ -227,15 +269,27 @@ export function LivePreviewPane({
       return sequence;
     };
 
-    // Pages are drawn again at the pane's new width once resizing pauses.
+    // Slots follow the pane's size at once; pages are drawn again at the new
+    // width once resizing pauses.
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-    let drawnWidth = slotPixelWidth(scrollerRef.current);
-    const resizes = new ResizeObserver(() => {
+    const measure = () => {
+      const scroller = scrollerRef.current;
+      if (scroller === null) return;
+      const next = measureSlots(scroller);
+      const previous = measured;
+      if (
+        previous !== null &&
+        previous.dpr === next.dpr &&
+        previous.width === next.width &&
+        previous.offset === next.offset
+      ) {
+        return;
+      }
+      measured = next;
+      setGeometry(next);
+      if (previous === null || previous.width === next.width) return;
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        const width = slotPixelWidth(scrollerRef.current);
-        if (width === drawnWidth) return;
-        drawnWidth = width;
         for (const [page, shown] of live) {
           if (shown.kind !== 'pdf') continue;
           const sequence = (received.get(page) ?? 0) + 1;
@@ -243,8 +297,11 @@ export function LivePreviewPane({
           draw(page, sequence, shown.pdf);
         }
       }, RESIZE_DELAY_MS);
-    });
+    };
+    measure();
+    const resizes = new ResizeObserver(measure);
     if (scrollerRef.current !== null) resizes.observe(scrollerRef.current);
+    const unwatchPixelRatio = watchPixelRatio(measure);
 
     socket.addEventListener('message', (event: MessageEvent<string | ArrayBuffer>) => {
       const message: LiveServerMessage =
@@ -307,6 +364,7 @@ export function LivePreviewPane({
       searchRef.current = null;
       endSearches();
       resizes.disconnect();
+      unwatchPixelRatio();
       clearTimeout(resizeTimer);
       renderer.close();
       for (const page of live.values()) release(page);
@@ -446,7 +504,15 @@ export function LivePreviewPane({
               key={page}
               className={stale.has(page) ? 'live-slot stale' : 'live-slot'}
               data-page={page}
-              style={{ aspectRatio: `${size.width} / ${size.height}` }}
+              style={
+                geometry === null
+                  ? { aspectRatio: `${size.width} / ${size.height}` }
+                  : {
+                      width: `${geometry.width / geometry.dpr}px`,
+                      height: `${Math.round((geometry.width * size.height) / size.width) / geometry.dpr}px`,
+                      marginLeft: `${geometry.offset}px`,
+                    }
+              }
               onDoubleClick={
                 onInverseSearch &&
                 ((event) => {
