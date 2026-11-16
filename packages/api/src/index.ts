@@ -106,21 +106,50 @@ export const LIVE_MAX_PAGE_RANGE = 20;
 
 /**
  * A live page as a PDF of that one page. It travels as one binary WebSocket
- * message (`encodeLivePdfPage`).
+ * message (`encodeLiveBinary`).
  */
 export interface LivePdfPageMessage {
   readonly type: 'page';
   readonly page: number;
   readonly pdf: Uint8Array;
+  /**
+   * Ids of the font programs left out of `pdf`, each sent before in a
+   * `font` message on this connection (since the last `fonts-reset`). In
+   * `pdf`, such a font stream has no data and `/MyLeafFont (id)`
+   * (`LIVE_PDF_FONT_KEY`) in its dictionary; the font's data is its raw data.
+   */
+  readonly fonts?: readonly string[];
   /** From a run older than the latest `stale` message covering the page. */
   readonly stale?: true;
 }
+
+/**
+ * A font program that pages on this connection leave out, sent once. It
+ * travels as one binary WebSocket message (`encodeLiveBinary`).
+ */
+export interface LiveFontMessage {
+  readonly type: 'font';
+  readonly id: string;
+  /** The font stream's raw (still encoded) data. */
+  readonly data: Uint8Array;
+}
+
+/** Key in a font stream's dictionary naming the font left out of it (see `LivePdfPageMessage`). */
+export const LIVE_PDF_FONT_KEY = 'MyLeafFont';
+
+/** Messages sent as binary WebSocket messages. */
+export type LiveBinaryMessage = LivePdfPageMessage | LiveFontMessage;
 
 /** Messages the server sends on a project's live-preview WebSocket. */
 export type LiveServerMessage =
   /** `stale`: from a run older than the latest `stale` message covering the page. */
   | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
-  | LivePdfPageMessage
+  | LiveBinaryMessage
+  /**
+   * The browser may forget the fonts sent so far: pages that follow name
+   * only fonts sent after this. Pages it already has keep theirs.
+   */
+  | { readonly type: 'fonts-reset' }
   /** The page was rendered again with the same content: it is up to date. */
   | { readonly type: 'page-unchanged'; readonly page: number }
   /** Pages from `from` on are being typeset again and may be out of date. */
@@ -146,25 +175,30 @@ export type LiveServerMessage =
       readonly message?: string;
     };
 
-/** A PDF page message as binary: the message without `pdf` as a JSON line, then the PDF. */
-export function encodeLivePdfPage(message: LivePdfPageMessage): Uint8Array {
-  const { pdf, ...header } = message;
-  // The header is ASCII (a type, a number, a flag), so one byte per character.
+/**
+ * A binary message: the message without its bytes (`pdf` or `data`) as a
+ * JSON line, then the bytes.
+ */
+export function encodeLiveBinary(message: LiveBinaryMessage): Uint8Array {
+  const { header, bytes } =
+    message.type === 'page'
+      ? (({ pdf, ...rest }) => ({ header: rest, bytes: pdf }))(message)
+      : (({ data, ...rest }) => ({ header: rest, bytes: data }))(message);
+  // The header is ASCII (a type, numbers, a flag, base64url ids), so one byte per character.
   const head = Uint8Array.from(`${JSON.stringify(header)}\n`, (char) => char.charCodeAt(0));
-  const data = new Uint8Array(head.length + pdf.length);
-  data.set(head);
-  data.set(pdf, head.length);
-  return data;
+  const encoded = new Uint8Array(head.length + bytes.length);
+  encoded.set(head);
+  encoded.set(bytes, head.length);
+  return encoded;
 }
 
-/** The message `encodeLivePdfPage` encoded. */
-export function decodeLivePdfPage(data: Uint8Array): LivePdfPageMessage {
-  const end = data.indexOf(0x0a);
-  const header = JSON.parse(String.fromCharCode(...data.subarray(0, end))) as Omit<
-    LivePdfPageMessage,
-    'pdf'
-  >;
-  return { ...header, pdf: data.subarray(end + 1) };
+/** The message `encodeLiveBinary` encoded. */
+export function decodeLiveBinary(encoded: Uint8Array): LiveBinaryMessage {
+  const end = encoded.indexOf(0x0a);
+  const header = JSON.parse(String.fromCharCode(...encoded.subarray(0, end))) as
+    Omit<LivePdfPageMessage, 'pdf'> | Omit<LiveFontMessage, 'data'>;
+  const bytes = encoded.subarray(end + 1);
+  return header.type === 'page' ? { ...header, pdf: bytes } : { ...header, data: bytes };
 }
 
 /** Body of every non-2xx JSON response. */

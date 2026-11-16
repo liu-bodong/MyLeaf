@@ -1,4 +1,4 @@
-import { LIVE_MAX_PAGE_RANGE, encodeLivePdfPage } from '@myleaf/api';
+import { LIVE_MAX_PAGE_RANGE, encodeLiveBinary } from '@myleaf/api';
 import type { LiveClientMessage, LivePreviewInfo, LiveServerMessage } from '@myleaf/api';
 import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
@@ -6,10 +6,13 @@ import { parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
+import { LiveFonts } from '../live/live-fonts.js';
 import type { LiveSessionHandle, LiveSessionPool } from '../live/live-session-pool.js';
 
 const send = (socket: WebSocket, message: LiveServerMessage) => {
-  if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+  if (socket.readyState !== socket.OPEN) return;
+  const binary = message.type === 'font' || (message.type === 'page' && 'pdf' in message);
+  socket.send(binary ? encodeLiveBinary(message) : JSON.stringify(message));
 };
 
 function parseClientMessage(raw: string): LiveClientMessage | null {
@@ -111,6 +114,7 @@ export function registerLiveRoutes(
       const pending: LiveClientMessage[] = [];
       let handle: LiveSessionHandle | null = null;
       let socketClosed = false;
+      const fonts = new LiveFonts();
       const apply = (message: LiveClientMessage) => {
         if (handle === null) {
           pending.push(message);
@@ -178,10 +182,15 @@ export function registerLiveRoutes(
         (event) => {
           if (event.type === 'page' && 'pdf' in event) {
             const { page, pdf, stale } = event;
-            const message = stale
-              ? { type: event.type, page, pdf, stale }
-              : { type: event.type, page, pdf };
-            if (socket.readyState === socket.OPEN) socket.send(encodeLivePdfPage(message));
+            // Fonts the page leaves out go first, once per connection.
+            for (const message of fonts.send(event.fonts ?? [])) send(socket, message);
+            const ids = event.fonts?.length ? { fonts: event.fonts.map((font) => font.id) } : {};
+            send(
+              socket,
+              stale
+                ? { type: 'page', page, pdf, ...ids, stale }
+                : { type: 'page', page, pdf, ...ids },
+            );
           } else if (event.type === 'page') {
             send(
               socket,

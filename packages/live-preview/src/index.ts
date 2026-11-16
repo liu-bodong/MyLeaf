@@ -27,6 +27,11 @@ export type LivePreviewEvent =
       readonly type: 'page';
       readonly page: number;
       readonly pdf: Uint8Array;
+      /**
+       * Font programs left out of `pdf` (see `LivePdfFont`), so that a
+       * font that many pages use travels once. Absent: `pdf` is complete.
+       */
+      readonly fonts?: readonly LivePdfFont[];
       readonly stale?: true;
     }
   /** A page of the requested range was rendered again, with the content last emitted. */
@@ -44,6 +49,21 @@ export type LivePreviewEvent =
   | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
   /** The session ended without `close()` being called. */
   | { readonly type: 'stopped'; readonly reason: string };
+
+/**
+ * A font program (a `FontFile`, `FontFile2` or `FontFile3` stream) taken out
+ * of a page's PDF. The PDF keeps the stream's dictionary with no data and
+ * `/MyLeafFont (id)` in it; putting `data` back as the stream's raw (still
+ * encoded) data makes the PDF whole again. `id` is a digest of `data` and
+ * the dictionary, so equal ids are equal fonts.
+ */
+export interface LivePdfFont {
+  readonly id: string;
+  readonly data: Uint8Array;
+}
+
+/** Key in a font stream's dictionary that names the `LivePdfFont` left out of it. */
+export const LIVE_FONT_KEY = 'MyLeafFont';
 
 /** A running live preview of one project. */
 export interface LivePreviewSession {
