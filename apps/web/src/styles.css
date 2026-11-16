@@ -1116,30 +1116,44 @@ button.icon-button:hover:not(:disabled) {
   flex: 1;
 }
 
-/* Live preview names its engine in the toolbar; in a narrow output pane that
-   costs the page arrows (the page box and Page Up/Down remain), and below
-   that the download button (also in the File and project menus). Whatever
-   still does not fit is cut off rather than drawn over the next pane. */
+/* The output toolbar fits narrow panes by tightening and dropping, in turn:
+   the download button (also in the File and project menus), Recompile's
+   label (the icon stays; the label stays for screen readers), then the page
+   arrows (the page box and Page Up/Down remain). Live preview's engine name costs the
+   arrows sooner. Whatever still does not fit is cut off rather than drawn
+   over the next pane. */
 .pdf-toolbar {
   container-type: inline-size;
   overflow-x: clip;
 }
 
 @container (max-width: 540px) {
-  .pdf-toolbar .download-button {
-    display: none;
+  /* The toolbar's own gap cannot change here (it is the container), so the
+     items close it up: 4px becomes 2px. */
+  .pdf-toolbar > * + * {
+    margin-left: -2px;
   }
-}
 
-@container (max-width: 460px) {
-  .pdf-toolbar .page-step,
+  .pdf-toolbar .icon-button {
+    min-width: 24px;
+  }
+
+  .pdf-toolbar .logs-button {
+    padding: 3px 5px;
+  }
+
+  .pdf-toolbar .download-button,
   .pdf-toolbar .toolbar-separator {
     display: none;
   }
+
+  .pdf-toolbar .live-toggle {
+    padding: 3px 7px;
+    gap: 4px;
+  }
 }
 
-/* Narrower still: Recompile shows only its icon (the label stays for screen readers). */
-@container (max-width: 420px) {
+@container (max-width: 470px) {
   .pdf-toolbar .compile-label {
     position: absolute;
     width: 1px;
@@ -1147,6 +1161,12 @@ button.icon-button:hover:not(:disabled) {
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+}
+
+@container (max-width: 420px) {
+  .pdf-toolbar .page-step {
+    display: none;
   }
 }
 
