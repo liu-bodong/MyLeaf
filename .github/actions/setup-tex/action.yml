@@ -1,0 +1,43 @@
+name: Set up TeX Live, TeXpresso and pdfTeX
+description: >-
+  Installs TeX Live and the engine build dependencies, then restores the patched
+  TeXpresso and pdfTeX binaries from the cache, building them only when their
+  build script or patches changed (the pdfTeX build alone takes over 4 minutes).
+runs:
+  using: composite
+  steps:
+    - name: Install TeX Live, TeXpresso and pdfTeX build dependencies
+      # latex-extra provides mylatexformat (ADR 0011); xetex and the libraries
+      # are needed to build and run TeXpresso (vendor/texpresso/README.md);
+      # texinfo builds pdfTeX (vendor/pdftex/README.md).
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          texlive-latex-base texlive-latex-extra texlive-xetex latexmk \
+          build-essential pkg-config libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev \
+          libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev \
+          libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
+          libpng-dev zlib1g-dev texinfo
+    # The keys cover only what the build scripts read, so any change to them
+    # rebuilds; ImageOS rebuilds on a new runner OS. Bump v1 to force a rebuild.
+    - name: Restore TeXpresso
+      id: texpresso
+      uses: actions/cache@v6
+      with:
+        path: vendor/texpresso/build/bin
+        key: texpresso-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ hashFiles('vendor/texpresso/build.sh', 'vendor/texpresso/*.patch') }}
+    - name: Build TeXpresso
+      if: steps.texpresso.outputs.cache-hit != 'true'
+      shell: bash
+      run: vendor/texpresso/build.sh
+    - name: Restore pdfTeX
+      id: pdftex
+      uses: actions/cache@v6
+      with:
+        path: vendor/pdftex/build/bin
+        key: pdftex-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ hashFiles('vendor/pdftex/build.sh', 'vendor/pdftex/*.patch') }}
+    - name: Build pdfTeX (live preview with MYLEAF_LIVE_ENGINE=pdftex)
+      if: steps.pdftex.outputs.cache-hit != 'true'
+      shell: bash
+      run: vendor/pdftex/build.sh
