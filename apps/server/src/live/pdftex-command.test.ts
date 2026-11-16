@@ -6,7 +6,6 @@ const bundled = '/repo/vendor/pdftex/build/bin/pdftex';
 const host = (paths: string[], overrides: Partial<PdftexHost> = {}): PdftexHost => ({
   executable: (path) => Promise.resolve(paths.includes(path)),
   kpathsea: () => Promise.resolve({ TEXMFCNF: '/etc/texmf/web2c' }),
-  mutool: () => Promise.resolve(true),
   ...overrides,
 });
 
@@ -34,16 +33,11 @@ describe('choosePdftex', () => {
     });
   });
 
-  it('needs TeX Live and mutool', async () => {
+  it('needs TeX Live', async () => {
     const noTexLive = host([bundled], { kpathsea: () => Promise.resolve(null) });
     expect(await choosePdftex(undefined, bundled, noTexLive)).toMatchObject({
       kind: 'disabled',
       reason: expect.stringContaining('kpsewhich') as string,
-    });
-    const noMutool = host([bundled], { mutool: () => Promise.resolve(false) });
-    expect(await choosePdftex(undefined, bundled, noMutool)).toMatchObject({
-      kind: 'disabled',
-      reason: expect.stringContaining('mutool') as string,
     });
   });
 });

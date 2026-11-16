@@ -7,12 +7,29 @@ import { ProjectId } from '@myleaf/doc-model';
 import type { LivePreviewEvent, LivePreviewSession } from '@myleaf/live-preview';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
+import * as mupdf from 'mupdf';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { kpathseaEnv } from './kpathsea-env.js';
 import { pauseOffset } from './pause-offset.js';
 import { PdftexLivePreview } from './pdftex-live-preview.js';
 
 const encoder = new TextEncoder();
+const images = new WeakMap<Uint8Array, string>();
+/** What a one-page PDF shows: its rendering at 72 dpi, as base64 PNG. */
+const look = (pdf: Uint8Array): string => {
+  let image = images.get(pdf);
+  if (image === undefined) {
+    const document = new mupdf.PDFDocument(pdf);
+    const pixmap = document
+      .loadPage(0)
+      .toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);
+    image = Buffer.from(pixmap.asPNG()).toString('base64');
+    pixmap.destroy();
+    document.destroy();
+    images.set(pdf, image);
+  }
+  return image;
+};
 const bytes = (text: string) => encoder.encode(text);
 
 describe('pauseOffset', () => {
@@ -52,11 +69,7 @@ const tool = (name: string, args: string[]) => {
   }
 };
 const kpathsea = await kpathseaEnv();
-const available =
-  process.platform !== 'win32' &&
-  existsSync(command) &&
-  kpathsea !== null &&
-  tool('mutool', ['-v']) !== null;
+const available = process.platform !== 'win32' && existsSync(command) && kpathsea !== null;
 
 const main = (preamble: string, firstPage: string) =>
   bytes(String.raw`\documentclass{article}
@@ -95,7 +108,9 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
   };
   const pages = () =>
     events.flatMap((event) =>
-      event.type === 'page' ? [{ page: event.page, svg: event.svg }] : [],
+      event.type === 'page' && 'pdf' in event
+        ? [{ page: event.page, pdf: event.pdf, image: look(event.pdf) }]
+        : [],
     );
   const mainFile = (content: Uint8Array): ProjectFile => ({
     path: parseProjectPath('main.tex'),
@@ -108,12 +123,12 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
     expect(events).toContainEqual({ type: 'page-count', count: 2, final: true });
     const [first] = pages();
-    expect(first?.svg).toMatch(/^<svg /);
+    expect(Buffer.from(first!.pdf.subarray(0, 5)).toString()).toBe('%PDF-');
 
     live.updateFile(mainFile(main('', 'First page, edited with more words.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(3);
     expect(pages()[2]?.page).toBe(1);
-    expect(pages()[2]?.svg).not.toBe(first?.svg);
+    expect(pages()[2]?.image).not.toBe(first?.image);
   });
 
   // After page 1 the document never ends: what is shown comes from finishers.
@@ -139,7 +154,7 @@ ${text}
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
     live.updateFile(mainFile(endless('After the edit.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
   });
 
   it('starts a new engine when the preamble or a file it read changes', async () => {
@@ -156,7 +171,7 @@ ${text}
 
     live.updateFile(mainFile(main('\\usepackage{local}\\pagestyle{empty}', 'Text.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(3);
-    expect(new Set(pages().map((page) => page.svg)).size).toBe(3);
+    expect(new Set(pages().map((page) => page.image)).size).toBe(3);
   });
 
   it('brings references up to date without an edit', async () => {
@@ -167,7 +182,7 @@ ${text}
     // The first run has no .aux (section ??); a new engine reads the one it
     // wrote, and the page is typeset again.
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
   });
 
   // Three pages; typesetting page 1 takes a while, so a run that starts
@@ -202,9 +217,9 @@ ${third}
     );
     try {
       other.showPages(page, page);
-      const svg = () => fresh.find((event) => event.type === 'page' && event.page === page);
-      await expect.poll(svg, { timeout: 30_000 }).toBeDefined();
-      return (svg() as { svg: string }).svg;
+      const shown = () => fresh.find((event) => event.type === 'page' && event.page === page);
+      await expect.poll(shown, { timeout: 30_000 }).toBeDefined();
+      return look((shown() as { pdf: Uint8Array }).pdf);
     } finally {
       await other.close();
     }
@@ -234,8 +249,8 @@ ${third}
     const edited = threePages('First page, edited.', 'Third page, edited once more.');
     const startedOver = await timeToPages(live, edited, 3);
     expect(resumed).toBeLessThan(startedOver / 2);
-    expect(pages()[1]?.svg).toBe(await freshPage(third, 3));
-    expect(pages()[2]?.svg).toBe(await freshPage(edited, 3));
+    expect(pages()[1]?.image).toBe(await freshPage(third, 3));
+    expect(pages()[2]?.image).toBe(await freshPage(edited, 3));
   });
 
   it('resumes from the last snapshot before an edit in an \\input file', async () => {
@@ -269,8 +284,8 @@ ${third}
     const edited = chapter('First page, edited.', 'Third page, edited once more.');
     const startedOver = await timeToPages(live, edited, 3);
     expect(resumed).toBeLessThan(startedOver / 2);
-    expect(pages()[1]?.svg).toBe(await freshPage([root, third], 3));
-    expect(pages()[2]?.svg).toBe(await freshPage([root, edited], 3));
+    expect(pages()[1]?.image).toBe(await freshPage([root, third], 3));
+    expect(pages()[2]?.image).toBe(await freshPage([root, edited], 3));
   });
 
   it('keeps at most the snapshots asked for', async () => {
@@ -317,7 +332,7 @@ ${third}
     live.updateFile(mainFile(threePages('First page, edited.', 'Third page, edited.')));
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(4);
     await expect.poll(processes, { timeout: 10_000 }).toBe(2);
-    expect(pages().at(-1)?.svg).toBe(
+    expect(pages().at(-1)?.image).toBe(
       await freshPage(threePages('First page, edited.', 'Third page, edited.'), 3),
     );
   });
@@ -380,7 +395,7 @@ ${third}
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
     const extra = { path: parseProjectPath('extra.tex'), content: bytes('% extra\n') };
     await timeToPages(live, extra, 2);
-    expect(pages()[1]?.svg).toBe(await freshPage([root, extra], 3));
+    expect(pages()[1]?.image).toBe(await freshPage([root, extra], 3));
   });
 
   it('does not resume from a snapshot that read a changed file', async () => {
@@ -393,7 +408,7 @@ ${third}
     await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(1);
     live.updateFile(body('First page, from another file.'));
     await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
   });
 
   it('typesets a root file without \\begin{document} in full runs', async () => {

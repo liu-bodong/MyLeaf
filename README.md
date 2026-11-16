@@ -75,7 +75,8 @@ says why in its startup log.
 With `MYLEAF_LIVE_ENGINE=pdftex`, live preview runs on the patched pdfTeX
 instead (level 2 in `docs/spikes/pdflatex-live-preview.md`): its pages are
 pdfLaTeX's own output. Build it with `vendor/pdftex/build.sh` (dependencies
-in `vendor/pdftex/README.md`); it also needs TeX Live and MuPDF's `mutool`.
+in `vendor/pdftex/README.md`); it also needs TeX Live. Its pages are sent
+as one-page PDFs and drawn in the browser by MuPDF (WebAssembly).
 The server uses `vendor/pdftex/build/bin/pdftex`, or the binary
 `MYLEAF_PDFTEX` points to.
 

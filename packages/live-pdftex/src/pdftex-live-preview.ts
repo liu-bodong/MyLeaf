@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -15,7 +15,8 @@ import type {
 } from '@myleaf/live-preview';
 import type { ProjectFile } from '@myleaf/project';
 import { pauseOffset } from './pause-offset.js';
-import { sanitizeSvg } from './sanitize-svg.js';
+import { extractPages } from './pdf-pages.js';
+import type { PdfPage } from './pdf-pages.js';
 
 const run = promisify(execFile);
 
@@ -41,8 +42,6 @@ export interface PdftexLivePreviewOptions {
    * Live (`kpathseaEnv()`).
    */
   readonly kpathsea: Readonly<Record<string, string>>;
-  /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
-  readonly mutool?: string;
   /**
    * Most snapshots a session keeps (a request can ask for fewer). When a
    * document has more pages, snapshots are spread out: one every
@@ -77,7 +76,6 @@ export class PdftexLivePreview implements LivePreviewBackend {
 
   constructor(options: PdftexLivePreviewOptions) {
     this.#options = {
-      mutool: 'mutool',
       maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
       trace: () => {},
       ...options,
@@ -471,34 +469,18 @@ class PdftexSession implements LivePreviewSession {
   async #renderNow(): Promise<void> {
     const pdf = this.#pdf;
     if (!pdf || this.#closing) return;
-    const first = Math.min(this.#range[0], pdf.pages);
-    const last = Math.min(this.#range[1], pdf.pages);
-    const pattern = join(dirname(pdf.path), 'page-%d.svg');
-    await run(this.#options.mutool, [
-      'draw',
-      '-q',
-      '-F',
-      'svg',
-      '-o',
-      pattern,
-      pdf.path,
-      `${first}-${last}`,
-    ]);
-    for (let page = first; page <= last; page++) {
-      const raw = await readFile(join(dirname(pdf.path), `page-${page}.svg`), 'utf8');
-      if (this.#closing || this.#pdf !== pdf) return;
-      this.#emitPage(page, pdf.run, raw);
-    }
+    const [first, last] = this.#range;
+    const pages = await extractPages(pdf.path, first, last);
+    if (this.#closing || this.#pdf !== pdf) return;
+    for (const [page, extracted] of pages) this.#emitPage(page, pdf.run, extracted);
   }
 
   /** Emits a page rendered from run `run`, unless a newer run's is shown. */
-  #emitPage(page: number, run: number, raw: string): void {
+  #emitPage(page: number, run: number, { pdf, hash }: PdfPage): void {
     if ((this.#pageRuns.get(page) ?? 0) > run) return;
     this.#pageRuns.set(page, run);
     // From a run older than the latest one that typesets this page again.
     const stale = run < this.#staleSince(page);
-    const svg = sanitizeSvg(raw);
-    const hash = createHash('sha1').update(svg).digest('base64');
     if (this.#emitted.get(page) === hash) {
       this.#trace(`page ${page} of run ${run}: unchanged${stale ? ', stale' : ''}`);
       if (!stale) this.#onEvent({ type: 'page-unchanged', page });
@@ -506,9 +488,9 @@ class PdftexSession implements LivePreviewSession {
     }
     this.#emitted.set(page, hash);
     this.#trace(
-      `page ${page} of run ${run}: emitted, ${svg.length} chars${stale ? ', stale' : ''}`,
+      `page ${page} of run ${run}: emitted, ${pdf.length} bytes${stale ? ', stale' : ''}`,
     );
-    this.#onEvent(stale ? { type: 'page', page, svg, stale } : { type: 'page', page, svg });
+    this.#onEvent(stale ? { type: 'page', page, pdf, stale } : { type: 'page', page, pdf });
   }
 
   /** Run `run` typesets pages from `from` on again. */
@@ -531,20 +513,9 @@ class PdftexSession implements LivePreviewSession {
       .then(async () => {
         const id = Number(inFlight.id);
         if (this.#closing || (this.#pageRuns.get(page) ?? 0) >= id) return;
-        const pattern = join(dirname(pdf), 'page-%d.svg');
-        await run(this.#options.mutool, [
-          'draw',
-          '-q',
-          '-F',
-          'svg',
-          '-o',
-          pattern,
-          pdf,
-          String(page),
-        ]);
-        const raw = await readFile(join(dirname(pdf), `page-${page}.svg`), 'utf8');
-        if (this.#closing) return;
-        this.#emitPage(page, id, raw);
+        const extracted = (await extractPages(pdf, page, page)).get(page);
+        if (this.#closing || extracted === undefined) return;
+        this.#emitPage(page, id, extracted);
         this.#onEvent({ type: 'page-count', count: page, final: false });
         if (page >= this.#range[1] && this.#inFlight === inFlight) {
           inFlight.shown = true;

@@ -28,6 +28,7 @@
     "@myleaf/project": "workspace:*",
     "@replit/codemirror-vim": "catalog:",
     "katex": "catalog:",
+    "mupdf": "catalog:",
     "pdfjs-dist": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"

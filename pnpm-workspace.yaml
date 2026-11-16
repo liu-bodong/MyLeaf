@@ -32,6 +32,7 @@ catalog:
   fflate: ^0.8.3
   globals: ^17.14.0
   katex: ^0.19.1
+  mupdf: 1.28.1
   pdfjs-dist: ^6.5.438
   prettier: ^3.10.1
   react: ^19.3.1

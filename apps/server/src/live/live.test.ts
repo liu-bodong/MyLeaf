@@ -1,3 +1,4 @@
+import { decodeLivePdfPage } from '@myleaf/api';
 import type { LiveServerMessage, ProjectDto } from '@myleaf/api';
 import type {
   LivePreviewBackend,
@@ -155,8 +156,12 @@ describe('live preview routes', () => {
       {},
       {
         onInit: (ws) => {
-          ws.on('message', (data: Buffer) =>
-            messages.push(JSON.parse(data.toString()) as LiveServerMessage),
+          ws.on('message', (data: Buffer, isBinary: boolean) =>
+            messages.push(
+              isBinary
+                ? decodeLivePdfPage(new Uint8Array(data))
+                : (JSON.parse(data.toString()) as LiveServerMessage),
+            ),
           );
           ws.on('close', (code: number) => (closedWith = code));
         },
@@ -207,14 +212,14 @@ describe('live preview routes', () => {
 
     session.emit({ type: 'stale', from: 3 });
     session.emit({ type: 'page', page: 3, svg: '<svg/>' });
-    session.emit({ type: 'page', page: 4, svg: '<svg/>', stale: true });
+    session.emit({ type: 'page', page: 4, pdf: new Uint8Array([37, 80, 68, 70, 10]), stale: true });
     session.emit({ type: 'page-unchanged', page: 5 });
     session.emit({ type: 'page-count', count: 7, final: true });
     await until(() => messages.find((m) => m.type === 'page-count'), 'page count');
     expect(messages.slice(-5)).toEqual([
       { type: 'stale', from: 3 },
       { type: 'page', page: 3, svg: '<svg/>' },
-      { type: 'page', page: 4, svg: '<svg/>', stale: true },
+      { type: 'page', page: 4, pdf: new Uint8Array([37, 80, 68, 70, 10]), stale: true },
       { type: 'page-unchanged', page: 5 },
       { type: 'page-count', count: 7, final: true },
     ]);

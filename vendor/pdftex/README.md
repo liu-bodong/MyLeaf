@@ -143,19 +143,17 @@ hooks' overhead, and `pnpm bench:pdftex-warm` the level 2 and 3 engine.
 ## Build dependencies (Ubuntu 24.04)
 
 ```bash
-sudo apt-get install build-essential texinfo mupdf-tools
+sudo apt-get install build-essential texinfo
 ```
 
-`texinfo` provides `makeinfo`, which the TeX Live build runs for its manuals;
-`mupdf-tools` provides `mutool`, which live preview uses to render pages.
+`texinfo` provides `makeinfo`, which the TeX Live build runs for its manuals.
 A TeX Live installation (`texlive-latex-base` and the packages the documents
 use) is needed to run it, and `strace` for `check-hooks.sh`.
 
 ## Build dependencies (macOS)
 
 The build needs Xcode's command line tools and `makeinfo`
-(`brew install texinfo`); live preview also needs MuPDF's `mutool` on the
-`PATH`. TeX Live 2023's bundled zlib 1.2.13 and libpng 1.6.39 take
+(`brew install texinfo`). TeX Live 2023's bundled zlib 1.2.13 and libpng 1.6.39 take
 `TARGET_OS_MAC`, which current macOS SDKs always define, to mean classic
 Mac OS (zlib defines `fdopen` as `NULL`, libpng includes `<fp.h>`);
 `macos-target-os-mac.patch` removes those two checks, as zlib 1.3 and

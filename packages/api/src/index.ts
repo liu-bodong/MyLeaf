@@ -84,10 +84,23 @@ export type LiveClientMessage =
 /** Largest page range a browser may request in one `pages` message. */
 export const LIVE_MAX_PAGE_RANGE = 20;
 
+/**
+ * A live page as a PDF of that one page. It travels as one binary WebSocket
+ * message (`encodeLivePdfPage`).
+ */
+export interface LivePdfPageMessage {
+  readonly type: 'page';
+  readonly page: number;
+  readonly pdf: Uint8Array;
+  /** From a run older than the latest `stale` message covering the page. */
+  readonly stale?: true;
+}
+
 /** Messages the server sends on a project's live-preview WebSocket. */
 export type LiveServerMessage =
   /** `stale`: from a run older than the latest `stale` message covering the page. */
   | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
+  | LivePdfPageMessage
   /** The page was rendered again with the same content: it is up to date. */
   | { readonly type: 'page-unchanged'; readonly page: number }
   /** Pages from `from` on are being typeset again and may be out of date. */
@@ -104,6 +117,27 @@ export type LiveServerMessage =
       readonly state: 'starting' | 'unavailable' | 'busy' | 'stopped';
       readonly message?: string;
     };
+
+/** A PDF page message as binary: the message without `pdf` as a JSON line, then the PDF. */
+export function encodeLivePdfPage(message: LivePdfPageMessage): Uint8Array {
+  const { pdf, ...header } = message;
+  // The header is ASCII (a type, a number, a flag), so one byte per character.
+  const head = Uint8Array.from(`${JSON.stringify(header)}\n`, (char) => char.charCodeAt(0));
+  const data = new Uint8Array(head.length + pdf.length);
+  data.set(head);
+  data.set(pdf, head.length);
+  return data;
+}
+
+/** The message `encodeLivePdfPage` encoded. */
+export function decodeLivePdfPage(data: Uint8Array): LivePdfPageMessage {
+  const end = data.indexOf(0x0a);
+  const header = JSON.parse(String.fromCharCode(...data.subarray(0, end))) as Omit<
+    LivePdfPageMessage,
+    'pdf'
+  >;
+  return { ...header, pdf: data.subarray(end + 1) };
+}
 
 /** Body of every non-2xx JSON response. */
 export interface ErrorResponse {

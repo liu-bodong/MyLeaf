@@ -16,11 +16,18 @@ export interface LivePreviewRequest {
 
 export type LivePreviewEvent =
   /**
-   * A page of the requested range was (re)rendered with new content. `svg`
-   * is a standalone, valid SVG document. `stale`: rendered from a run older
-   * than the latest `stale` event that covers the page.
+   * A page of the requested range was (re)rendered with new content: `svg`
+   * is a standalone, valid SVG document, or `pdf` a PDF of that one page.
+   * `stale`: rendered from a run older than the latest `stale` event that
+   * covers the page.
    */
   | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
+  | {
+      readonly type: 'page';
+      readonly page: number;
+      readonly pdf: Uint8Array;
+      readonly stale?: true;
+    }
   /** A page of the requested range was rendered again, with the content last emitted. */
   | { readonly type: 'page-unchanged'; readonly page: number }
   /**

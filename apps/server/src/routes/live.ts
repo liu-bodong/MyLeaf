@@ -1,4 +1,4 @@
-import { LIVE_MAX_PAGE_RANGE } from '@myleaf/api';
+import { LIVE_MAX_PAGE_RANGE, encodeLivePdfPage } from '@myleaf/api';
 import type { LiveClientMessage, LivePreviewInfo, LiveServerMessage } from '@myleaf/api';
 import type { CompileBackend } from '@myleaf/compile';
 import { ProjectId } from '@myleaf/doc-model';
@@ -133,7 +133,13 @@ export function registerLiveRoutes(
             : { maxSnapshots: project.settings.liveSnapshots }),
         },
         (event) => {
-          if (event.type === 'page') {
+          if (event.type === 'page' && 'pdf' in event) {
+            const { page, pdf, stale } = event;
+            const message = stale
+              ? { type: event.type, page, pdf, stale }
+              : { type: event.type, page, pdf };
+            if (socket.readyState === socket.OPEN) socket.send(encodeLivePdfPage(message));
+          } else if (event.type === 'page') {
             send(
               socket,
               event.stale

@@ -130,7 +130,7 @@ describe.skipIf(!available)(
     it('renders the first page as valid SVG', async () => {
       await open();
       const event = await waitFor(isPage(1));
-      if (event.type !== 'page') throw new Error('expected a page');
+      if (event.type !== 'page' || !('svg' in event)) throw new Error('expected an SVG page');
       expect(event.svg).toContain('<svg');
       expect(event.svg).not.toContain('data-text');
     });
@@ -166,11 +166,13 @@ describe.skipIf(!available)(
       // Expected page: the same text with the number typed in.
       const typed = await open('See Section~1.\n\\section{Alpha}');
       const expected = await waitFor(isPage(1));
-      if (expected.type !== 'page') throw new Error('expected a page');
+      if (expected.type !== 'page' || !('svg' in expected)) throw new Error('expected an SVG page');
       await typed.close();
       events.length = 0;
       await open('See Section~\\ref{s}.\n\\section{Alpha}\\label{s}');
-      await waitFor((e) => e.type === 'page' && e.page === 1 && e.svg === expected.svg);
+      await waitFor(
+        (e) => e.type === 'page' && 'svg' in e && e.page === 1 && e.svg === expected.svg,
+      );
     });
 
     it('renders the requested page range and reports the page count', async () => {

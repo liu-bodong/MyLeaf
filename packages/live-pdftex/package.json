@@ -22,7 +22,8 @@
   "dependencies": {
     "@myleaf/doc-model": "workspace:*",
     "@myleaf/live-preview": "workspace:*",
-    "@myleaf/project": "workspace:*"
+    "@myleaf/project": "workspace:*",
+    "mupdf": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
