@@ -205,11 +205,17 @@ describe('live preview routes', () => {
     expect(text(session.updates[0])).toBe('edited');
     expect(session.ranges).toEqual([[3, 5]]);
 
+    session.emit({ type: 'stale', from: 3 });
     session.emit({ type: 'page', page: 3, svg: '<svg/>' });
+    session.emit({ type: 'page', page: 4, svg: '<svg/>', stale: true });
+    session.emit({ type: 'page-unchanged', page: 5 });
     session.emit({ type: 'page-count', count: 7, final: true });
     await until(() => messages.find((m) => m.type === 'page-count'), 'page count');
-    expect(messages.slice(-2)).toEqual([
+    expect(messages.slice(-5)).toEqual([
+      { type: 'stale', from: 3 },
       { type: 'page', page: 3, svg: '<svg/>' },
+      { type: 'page', page: 4, svg: '<svg/>', stale: true },
+      { type: 'page-unchanged', page: 5 },
       { type: 'page-count', count: 7, final: true },
     ]);
   });

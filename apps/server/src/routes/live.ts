@@ -134,7 +134,16 @@ export function registerLiveRoutes(
         },
         (event) => {
           if (event.type === 'page') {
-            send(socket, { type: 'page', page: event.page, svg: event.svg });
+            send(
+              socket,
+              event.stale
+                ? { type: 'page', page: event.page, svg: event.svg, stale: true }
+                : { type: 'page', page: event.page, svg: event.svg },
+            );
+          } else if (event.type === 'page-unchanged') {
+            send(socket, { type: 'page-unchanged', page: event.page });
+          } else if (event.type === 'stale') {
+            send(socket, { type: 'stale', from: event.from });
           } else if (event.type === 'page-count') {
             send(socket, { type: 'page-count', count: event.count, final: event.final });
           } else {

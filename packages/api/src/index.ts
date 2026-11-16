@@ -86,7 +86,12 @@ export const LIVE_MAX_PAGE_RANGE = 20;
 
 /** Messages the server sends on a project's live-preview WebSocket. */
 export type LiveServerMessage =
-  | { readonly type: 'page'; readonly page: number; readonly svg: string }
+  /** `stale`: from a run older than the latest `stale` message covering the page. */
+  | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
+  /** The page was rendered again with the same content: it is up to date. */
+  | { readonly type: 'page-unchanged'; readonly page: number }
+  /** Pages from `from` on are being typeset again and may be out of date. */
+  | { readonly type: 'stale'; readonly from: number }
   /** Pages typeset so far; `final` once the whole document is. */
   | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
   | {

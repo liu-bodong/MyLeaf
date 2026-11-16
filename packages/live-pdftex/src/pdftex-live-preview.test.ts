@@ -322,6 +322,48 @@ ${third}
     );
   });
 
+  it('marks the pages a run typesets again as stale until they are shown or unchanged', async () => {
+    const live = await open([mainFile(threePages('First page.', 'Third page.'))]);
+    live.showPages(1, 3);
+    /** Waits until no event arrived for a second (reruns for the .aux included). */
+    const settled = () =>
+      expect
+        .poll(
+          async () => {
+            const before = events.length;
+            await new Promise((done) => setTimeout(done, 1000));
+            return events.length === before;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+    const shown = () => pages().map((page) => page.page);
+    const unchanged = () =>
+      events.flatMap((event) => (event.type === 'page-unchanged' ? [event.page] : []));
+    await settled();
+    expect(events[0]).toEqual({ type: 'stale', from: 1 });
+    expect(new Set(shown())).toEqual(new Set([1, 2, 3]));
+
+    // An edit on page 3 resumes from the snapshot after page 2: pages 1 and 2
+    // are rendered again from the run's PDF and reported unchanged (page 3
+    // too, after the run).
+    events = [];
+    live.updateFile(mainFile(threePages('First page.', 'Third page, edited.')));
+    await settled();
+    expect(events.filter((event) => event.type === 'stale')).toEqual([{ type: 'stale', from: 3 }]);
+    expect(shown()).toEqual([3]);
+    expect(unchanged()).toEqual(expect.arrayContaining([1, 2]));
+
+    // An edit on page 1 starts from the engine: every page is typeset again.
+    events = [];
+    live.updateFile(mainFile(threePages('First page, edited.', 'Third page, edited.')));
+    await settled();
+    expect(events.filter((event) => event.type === 'stale')).toEqual([{ type: 'stale', from: 1 }]);
+    expect(shown()).toEqual([1]);
+    expect(unchanged()).toEqual(expect.arrayContaining([2, 3]));
+    expect(events.some((event) => event.type === 'page' && event.stale)).toBe(false);
+  });
+
   it('does not resume from a snapshot after a file it did not read appeared', async () => {
     // \IfFileExists on page 1 does not open a missing file, so snapshots
     // after it cannot tell that they depend on it.
