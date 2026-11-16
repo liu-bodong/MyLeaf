@@ -29,7 +29,7 @@ const others = await Promise.all(
     })),
 );
 const paper = await readFile(join(sample, 'example_paper.tex'), 'utf8');
-const marker = '\\section{Electronic Submission}';
+const marker = process.env.BENCH_AT ?? '\\section{Electronic Submission}';
 const main = (typed: string) => ({
   path: parseProjectPath('main.tex'),
   content: new TextEncoder().encode(paper.replace(marker, `${marker}\n${typed}\n`)),
@@ -83,7 +83,8 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
   while (!final) await sleep(50);
   session.showPages(1, count);
   while (performance.now() - lastEvent < 3000) await sleep(100);
-  session.showPages(1, 3);
+  const firstShown = Number(process.env.BENCH_FIRST ?? 1);
+  session.showPages(firstShown, firstShown + 2);
   let typed = 'Typed';
   for (let edit = 0; edit < EDITS; edit++) {
     typed += process.env.BENCH_BIG
@@ -92,7 +93,7 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
     final = false;
     settledAt = 0;
     session.updateFile(main(typed));
-    await sleep(150);
+    await sleep(Number(process.env.BENCH_INTERVAL ?? 150));
   }
   const last = performance.now() - 150;
   while (performance.now() - lastEvent < 4000) await sleep(100);
