@@ -15,15 +15,17 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await page.getByRole('button', { name: 'Create' }).click();
   await expect(page.locator('.cm-content')).toContainText('Start writing here.');
 
-  await page.getByRole('button', { name: 'Compile settings' }).click();
+  // One switch next to Recompile; while on, the toolbar names the engine.
   const name = engine === 'pdflatex' ? 'pdfLaTeX' : 'XeLaTeX';
-  await page.getByRole('checkbox', { name: `Live preview (${name})` }).check();
-  await page.getByRole('button', { name: 'Compile settings' }).click();
+  const toggle = page.getByRole('button', { name: 'Live preview' });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggle).toContainText(name);
 
   // An <img> (TeXpresso's SVG pages) or a <canvas> (pdfTeX's PDF pages).
   const image = page.getByRole('img', { name: 'Live preview of page 1' });
   await expect(image).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId('live-preview')).toContainText(`Live · ${name}`);
   const before = await image.screenshot();
 
   // Typing (without saving or compiling) re-renders the page.
@@ -33,11 +35,12 @@ test('live preview updates the page while typing', async ({ page, request }) => 
   await expect
     .poll(async () => (await image.screenshot()).equals(before), { timeout: 30_000 })
     .toBe(false);
-  await expect(page.getByTestId('live-page')).toHaveText('Page 1 of 1');
+  // The toolbar's page box follows the live pages.
+  await expect(page.getByTestId('page-count')).toHaveText('/ 1');
 
   // A new page appears below the first one (continuous scroll).
   await page.keyboard.insertText(' \\newpage Second page.');
-  await expect(page.getByTestId('live-page')).toHaveText('Page 1 of 2', { timeout: 30_000 });
+  await expect(page.getByTestId('page-count')).toHaveText('/ 2', { timeout: 30_000 });
   await expect(page.getByRole('img', { name: 'Live preview of page 2' })).toBeAttached({
     timeout: 30_000,
   });
@@ -65,17 +68,31 @@ test('live preview updates the page while typing', async ({ page, request }) => 
     await expect(page.getByTestId('live-preview')).toBeVisible();
   }
 
-  // The PDF stays reachable while live preview is on.
-  await page.getByRole('tab', { name: 'PDF' }).click();
-  await expect(page.getByTestId('live-preview')).toBeHidden();
-  await expect(page.getByText('Compile to see the PDF.')).toBeVisible();
-  await page.getByRole('tab', { name: 'Live' }).click();
-  await expect(image).toBeVisible();
+  // Zoom works on the live pages too, drawing them wider.
+  const before100 = await image.boundingBox();
+  await page.getByRole('button', { name: /^Zoom level/ }).click();
+  await page.getByRole('menuitem', { name: '200%' }).click();
+  await expect(page.getByTestId('zoom-level')).toHaveText('200%');
+  await expect
+    .poll(async () => (await image.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before100?.width ?? 0);
+  await page.getByRole('button', { name: /^Zoom level/ }).click();
+  await page.getByRole('menuitem', { name: 'Fit to width' }).click();
 
-  // The setting persists; turning it off brings the PDF view back.
+  // Turning it off brings the PDF back, compiled at once from what the live
+  // pages showed (the source changed since the last compile).
+  await toggle.click();
+  await expect(page.getByTestId('live-preview')).toHaveCount(0);
+  await expect(page.getByTestId('pdf-viewer')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('page-count')).toHaveText('/ 2', { timeout: 30_000 });
+
+  // Turned on again, it opens on the compiled PDF's pages until live pages arrive.
+  await toggle.click();
+  await expect(page.getByTestId('page-count')).toHaveText('/ 2', { timeout: 30_000 });
+  await expect(image).toBeVisible({ timeout: 30_000 });
+
+  // The setting persists.
   await page.reload();
   await expect(page.getByTestId('live-preview')).toBeVisible();
-  await page.getByRole('button', { name: 'Compile settings' }).click();
-  await page.getByRole('checkbox', { name: /Live preview/ }).uncheck();
-  await expect(page.getByTestId('live-preview')).toHaveCount(0);
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
 });

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { stepZoom } from '../pdf/zoom.js';
 import type { PdfZoom } from '../pdf/zoom.js';
 import type { PdfViewState } from '../pdf/PdfViewer.js';
+import type { LiveConnection } from '../live/LivePreviewPane.js';
 import { Dropdown } from '../ui/Menu.js';
 import type { MenuItem } from '../ui/Menu.js';
 import { Icon } from '../ui/icons.js';
@@ -21,21 +22,30 @@ interface PdfToolbarProps {
   /** Null when there is no PDF. */
   readonly downloadUrl: string | null;
   readonly downloadName: string;
-  /** Live/PDF switch, shown while live preview is on. */
-  readonly outputTabs?: ReactNode;
-  /** Page and zoom controls act on the PDF; false while another view is shown. */
-  readonly pdfControls: boolean;
+  /** The live preview switch and, while it is on, its status. */
+  readonly live: LiveToolbarState;
+  /** Page and zoom of the shown view: the live pages or the PDF. */
   readonly view: PdfViewState;
   readonly onGoToPage: (page: number) => void;
   readonly onZoom: (zoom: PdfZoom) => void;
+}
+
+export interface LiveToolbarState {
+  /** The engine's name, or null when the server has no live preview. */
+  readonly engine: string | null;
+  readonly on: boolean;
+  readonly onToggle: () => void;
+  /** The session's state while live preview is on. */
+  readonly connection: LiveConnection | null;
+  readonly onRetry: () => void;
 }
 
 const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4] as const;
 
 /** Above the output pane: compile, logs, download, page navigation and zoom. */
 export function PdfToolbar(props: PdfToolbarProps) {
-  const { view, pdfControls, onGoToPage, onZoom } = props;
-  const navigation = pdfControls && view.pages > 0;
+  const { view, live, onGoToPage, onZoom } = props;
+  const navigation = view.pages > 0;
   const zoomItems: MenuItem[] = [
     { label: 'Fit to width', onSelect: () => onZoom('fit-width') },
     { label: 'Fit to page', onSelect: () => onZoom('fit-page') },
@@ -48,12 +58,17 @@ export function PdfToolbar(props: PdfToolbarProps) {
   const percent = view.zoom === null ? '—' : `${Math.round(view.zoom * 100)}%`;
 
   return (
-    <div className="pane-toolbar pdf-toolbar" role="toolbar" aria-label="PDF">
+    <div
+      className={`pane-toolbar pdf-toolbar${live.on ? ' live-on' : ''}`}
+      role="toolbar"
+      aria-label="PDF"
+    >
       <RecompileButton
         compiling={props.compiling}
         onRecompile={props.onRecompile}
         settings={props.compileSettings}
       />
+      <LiveToggle live={live} />
       {props.errorCount !== null && (
         <button
           type="button"
@@ -68,12 +83,17 @@ export function PdfToolbar(props: PdfToolbarProps) {
         </button>
       )}
       {props.downloadUrl === null ? (
-        <button type="button" className="icon-button" aria-label="Download PDF" disabled>
+        <button
+          type="button"
+          className="icon-button download-button"
+          aria-label="Download PDF"
+          disabled
+        >
           <Icon name="download" />
         </button>
       ) : (
         <a
-          className="icon-button"
+          className="icon-button download-button"
           href={props.downloadUrl}
           download={props.downloadName}
           aria-label="Download PDF"
@@ -82,11 +102,25 @@ export function PdfToolbar(props: PdfToolbarProps) {
           <Icon name="download" />
         </a>
       )}
-      {props.outputTabs}
+      {live.on && live.connection?.state === 'connecting' && (
+        <span className="live-status" role="status">
+          Starting…
+        </span>
+      )}
+      {live.on && live.connection?.state === 'ended' && (
+        <span className="live-status ended" role="status">
+          <span className="live-status-message" title={live.connection.message}>
+            {live.connection.message}
+          </span>
+          <button type="button" onClick={live.onRetry}>
+            Retry
+          </button>
+        </span>
+      )}
       <span className="toolbar-spacer" />
       <button
         type="button"
-        className="icon-button"
+        className="icon-button page-step"
         aria-label="Previous page"
         title="Previous page (Page Up in the PDF)"
         disabled={!navigation || view.page <= 1}
@@ -96,7 +130,7 @@ export function PdfToolbar(props: PdfToolbarProps) {
       </button>
       <button
         type="button"
-        className="icon-button"
+        className="icon-button page-step"
         aria-label="Next page"
         title="Next page (Page Down in the PDF)"
         disabled={!navigation || view.page >= view.pages}
@@ -143,6 +177,34 @@ export function PdfToolbar(props: PdfToolbarProps) {
   );
 }
 
+/**
+ * Live preview on/off. While on, it names the engine; the toolbar's page and
+ * zoom controls then act on the live pages.
+ */
+function LiveToggle({ live }: { readonly live: LiveToolbarState }) {
+  const available = live.engine !== null;
+  const title = !available
+    ? 'Live preview is not enabled on this server'
+    : live.on
+      ? `Live preview with ${live.engine}: pages update as you type. Click to show the compiled PDF.`
+      : `Turn on live preview (${live.engine}): pages update as you type`;
+  return (
+    <button
+      type="button"
+      className={`live-toggle${live.on ? ' on' : ''}${live.connection?.state === 'ended' ? ' ended' : ''}`}
+      aria-pressed={live.on}
+      aria-label="Live preview"
+      title={title}
+      disabled={!available}
+      onClick={live.onToggle}
+    >
+      <span className="live-dot" aria-hidden="true" />
+      Live
+      {live.on && <span className="live-engine">· {live.engine}</span>}
+    </button>
+  );
+}
+
 interface RecompileButtonProps {
   readonly compiling: boolean;
   readonly onRecompile: () => void;
@@ -165,7 +227,7 @@ function RecompileButton({ compiling, onRecompile, settings }: RecompileButtonPr
         title={`Recompile (${shortcut('S')})`}
       >
         <Icon name="recompile" />
-        {compiling ? 'Compiling…' : 'Recompile'}
+        <span className="compile-label">{compiling ? 'Compiling…' : 'Recompile'}</span>
       </button>
       <button
         type="button"

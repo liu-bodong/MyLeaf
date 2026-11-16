@@ -640,11 +640,6 @@ a {
   color: var(--fg-muted);
 }
 
-.compile-menu .compile-number input {
-  width: 56px;
-  flex: none;
-}
-
 /* File tree */
 
 .file-tree-area {
@@ -776,26 +771,6 @@ a {
   flex-direction: column;
   min-height: 0;
   background: var(--pdf-bg);
-}
-
-.live-pane header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--fg-muted);
-  background: var(--bg-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.live-badge {
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.live-status {
-  margin-left: auto;
 }
 
 .live-page {
@@ -1141,8 +1116,134 @@ button.icon-button:hover:not(:disabled) {
   flex: 1;
 }
 
+/* The output toolbar fits narrow panes by tightening and dropping, in turn:
+   the download button (also in the File and project menus), Recompile's
+   label (the icon stays; the label stays for screen readers), then the page
+   arrows (the page box and Page Up/Down remain). Live preview's engine name costs the
+   arrows sooner. Whatever still does not fit is cut off rather than drawn
+   over the next pane. */
+.pdf-toolbar {
+  container-type: inline-size;
+  overflow-x: clip;
+}
+
+@container (max-width: 540px) {
+  /* The toolbar's own gap cannot change here (it is the container), so the
+     items close it up: 4px becomes 2px. */
+  .pdf-toolbar > * + * {
+    margin-left: -2px;
+  }
+
+  .pdf-toolbar .icon-button {
+    min-width: 24px;
+  }
+
+  .pdf-toolbar .logs-button {
+    padding: 3px 5px;
+  }
+
+  .pdf-toolbar .download-button,
+  .pdf-toolbar .toolbar-separator {
+    display: none;
+  }
+
+  .pdf-toolbar .live-toggle {
+    padding: 3px 7px;
+    gap: 4px;
+  }
+}
+
+@container (max-width: 470px) {
+  .pdf-toolbar .compile-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@container (max-width: 420px) {
+  .pdf-toolbar .page-step {
+    display: none;
+  }
+}
+
+@container (max-width: 640px) {
+  .pdf-toolbar.live-on .page-step {
+    display: none;
+  }
+}
+
 .logs-button {
   padding: 3px 8px;
+}
+
+/* Live preview switch: a hollow dot when off; filled, with the engine, when on. */
+.live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 12px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-muted);
+}
+
+.live-toggle.on {
+  font-weight: 600;
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.live-toggle.on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg));
+}
+
+.live-toggle.on .live-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.live-toggle.on.ended,
+.live-toggle.on.ended .live-dot {
+  color: var(--fg-muted);
+  border-color: var(--fg-muted);
+}
+
+.live-toggle.on.ended .live-dot {
+  background: none;
+}
+
+.live-engine {
+  font-weight: 400;
+}
+
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.live-status-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.live-status.ended button {
+  padding: 1px 8px;
 }
 
 .count-badge {
