@@ -206,6 +206,11 @@ interface Snapshot {
 
 /** Most runs in a row without an edit to bring references up to date. */
 const MAX_SETTLE_RUNS = 3;
+/**
+ * Pages leave their font programs out, beside them: a font that many pages
+ * use is sent to the browser once (see the live route).
+ */
+const SEPARATE_FONTS = { separateFonts: true };
 
 /** A run of an engine's child that has not finished yet. */
 interface InFlightRun {
@@ -579,13 +584,13 @@ class PdftexSession implements LivePreviewSession {
     const pdf = this.#pdf;
     if (!pdf || this.#closing) return;
     const [first, last] = this.#range;
-    const pages = await extractPages(pdf.path, first, last, this.#mupdfLog);
+    const pages = await extractPages(pdf.path, first, last, this.#mupdfLog, SEPARATE_FONTS);
     if (this.#closing || this.#pdf !== pdf) return;
     for (const [page, extracted] of pages) this.#emitPage(page, pdf.run, extracted);
   }
 
   /** Emits a page rendered from run `run`, unless a newer run's is shown. */
-  #emitPage(page: number, run: number, { pdf, hash }: PdfPage): void {
+  #emitPage(page: number, run: number, { pdf, hash, fonts }: PdfPage): void {
     if ((this.#pageRuns.get(page) ?? 0) > run) return;
     this.#pageRuns.set(page, run);
     // From a run older than the latest one that typesets this page again.
@@ -597,9 +602,11 @@ class PdftexSession implements LivePreviewSession {
     }
     this.#emitted.set(page, hash);
     this.#trace(
-      `page ${page} of run ${run}: emitted, ${pdf.length} bytes${stale ? ', stale' : ''}`,
+      `page ${page} of run ${run}: emitted, ${pdf.length} bytes + ${fonts.length} fonts${stale ? ', stale' : ''}`,
     );
-    this.#onEvent(stale ? { type: 'page', page, pdf, stale } : { type: 'page', page, pdf });
+    this.#onEvent(
+      stale ? { type: 'page', page, pdf, fonts, stale } : { type: 'page', page, pdf, fonts },
+    );
   }
 
   /** Run `run` typesets pages from `from` on again. */
@@ -622,7 +629,9 @@ class PdftexSession implements LivePreviewSession {
       .then(async () => {
         const id = Number(inFlight.id);
         if (this.#closing || (this.#pageRuns.get(page) ?? 0) >= id) return;
-        const extracted = (await extractPages(pdf, page, page, this.#mupdfLog)).get(page);
+        const extracted = (await extractPages(pdf, page, page, this.#mupdfLog, SEPARATE_FONTS)).get(
+          page,
+        );
         if (this.#closing || extracted === undefined) return;
         this.#emitPage(page, id, extracted);
         this.#onEvent({ type: 'page-count', count: page, final: false });

@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 // Draws live-preview pages (one-page PDFs) with MuPDF, off the main thread.
 import * as mupdf from 'mupdf';
+import { restoreFonts } from './mupdf-fonts.js';
 
 export interface RenderRequest {
   readonly id: number;
@@ -15,6 +16,8 @@ export interface RenderRequest {
   readonly page?: number;
   /** Width to draw the page at, in device pixels. */
   readonly pixelWidth: number;
+  /** Font programs `pdf` left out, by id (see LivePdfPageMessage.fonts). */
+  readonly fonts?: ReadonlyMap<string, Uint8Array>;
 }
 
 /** A line of text, in PDF points from the page's top left. */
@@ -47,10 +50,14 @@ export interface WorkerReady {
 /** The document kept open for requests that name its key. */
 let kept: { readonly key: string; readonly document: mupdf.PDFDocument } | null = null;
 
-function openDocument({ pdf, key }: RenderRequest): mupdf.PDFDocument {
+function openDocument({ pdf, key, fonts }: RenderRequest): mupdf.PDFDocument {
   if (key !== undefined && kept?.key === key) return kept.document;
   if (pdf === undefined) throw new Error(`No document for ${key ?? 'the request'}`);
   const document = new mupdf.PDFDocument(pdf);
+  if (fonts !== undefined) {
+    const missing = restoreFonts(document, fonts);
+    if (missing.length > 0) console.warn(`Live preview: drawn without fonts ${missing.join(', ')}`);
+  }
   if (key !== undefined) {
     kept?.document.destroy();
     kept = { key, document };

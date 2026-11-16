@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { PDFObject } from 'mupdf';
+import { LIVE_FONT_KEY } from '@myleaf/live-preview';
+import type { LivePdfFont } from '@myleaf/live-preview';
+import type { PDFDocument, PDFObject } from 'mupdf';
 
 type MuPdf = typeof import('mupdf');
 
@@ -16,17 +18,21 @@ export interface PdfPage {
    * (whose PDFs differ in object numbers, font subsets and so on).
    */
   readonly hash: string;
+  /** Font programs left out of `pdf` (see `LivePdfFont`); none unless `separateFonts`. */
+  readonly fonts: readonly LivePdfFont[];
 }
 
 /**
  * Pages `first` to `last` (1-based, those that exist) of the PDF at `path`.
- * MuPDF's warnings and errors go to `log`.
+ * MuPDF's warnings and errors go to `log`. With `separateFonts`, each page's
+ * embedded font programs are left out of its PDF and returned beside it.
  */
 export async function extractPages(
   path: string,
   first: number,
   last: number,
   log: (message: string) => void = () => {},
+  { separateFonts = false }: { separateFonts?: boolean } = {},
 ): Promise<Map<number, PdfPage>> {
   const { PDFDocument, setLog } = await mupdf();
   const data = await readFile(path);
@@ -40,11 +46,12 @@ export async function extractPages(
       const loaded = source.loadPage(page - 1);
       try {
         single.graftPage(-1, source, page - 1);
+        const fonts = separateFonts ? takeFonts(single) : [];
         const saved = single.saveToBuffer('compress,garbage=compact');
         // Copied out of MuPDF's memory before the buffer is freed.
         const pdf = saved.asUint8Array().slice();
         saved.destroy();
-        pages.set(page, { pdf, hash: pageHash(loaded.getObject()) });
+        pages.set(page, { pdf, hash: pageHash(loaded.getObject()), fonts });
       } finally {
         loaded.destroy();
         single.destroy();
@@ -54,6 +61,45 @@ export async function extractPages(
   } finally {
     source.destroy();
   }
+}
+
+/** Keys of a font descriptor that hold a font program. */
+const FONT_FILES = ['FontFile', 'FontFile2', 'FontFile3'];
+
+/**
+ * Takes the font programs out of `document`: each stream a font descriptor
+ * holds keeps its dictionary, no data, and `/MyLeafFont (id)`.
+ */
+function takeFonts(document: PDFDocument): LivePdfFont[] {
+  const fonts = new Map<string, LivePdfFont>();
+  for (let number = 1; number < document.countObjects(); number++) {
+    const descriptor = document.newIndirect(number).resolve();
+    if (!descriptor.isDictionary() || descriptor.get('Type').toString() !== '/FontDescriptor') {
+      continue;
+    }
+    for (const key of FONT_FILES) {
+      const stream = descriptor.get(key);
+      if (!stream.isStream() || !stream.get(LIVE_FONT_KEY).isNull()) continue;
+      const raw = stream.readRawStream();
+      const data = raw.asUint8Array().slice();
+      raw.destroy();
+      if (data.length === 0) continue;
+      // The dictionary says how to read the data (Filter, Length1, Subtype, ...).
+      const hash = createHash('sha256');
+      const entries: string[] = [];
+      stream.forEach((value, name) => {
+        if (String(name) !== 'Length') entries.push(`/${String(name)} ${value.toString()}`);
+      });
+      hash.update(entries.sort().join(' '));
+      hash.update('\n');
+      hash.update(data);
+      const id = hash.digest('base64url').slice(0, 22);
+      stream.writeRawStream(new Uint8Array(0));
+      stream.put(LIVE_FONT_KEY, document.newString(id));
+      fonts.set(id, { id, data });
+    }
+  }
+  return [...fonts.values()];
 }
 
 /**

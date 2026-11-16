@@ -46,9 +46,17 @@ export class PdfRenderer {
     };
   }
 
-  /** Draws `pdf`'s first page `pixelWidth` device pixels wide. */
-  render(pdf: Uint8Array, pixelWidth: number): Promise<RenderedPage> {
-    return this.#request({ id: this.#nextId++, pdf, pixelWidth });
+  /**
+   * Draws `pdf`'s first page `pixelWidth` device pixels wide; `fonts` are the
+   * font programs it left out, by id.
+   */
+  render(
+    pdf: Uint8Array,
+    pixelWidth: number,
+    fonts?: ReadonlyMap<string, Uint8Array>,
+  ): Promise<RenderedPage> {
+    const id = this.#nextId++;
+    return this.#request(fonts ? { id, pdf, pixelWidth, fonts } : { id, pdf, pixelWidth });
   }
 
   /**

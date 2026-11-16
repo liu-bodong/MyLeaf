@@ -1,4 +1,4 @@
-import { LIVE_MAX_PAGE_RANGE, decodeLivePdfPage } from '@myleaf/api';
+import { LIVE_MAX_PAGE_RANGE, decodeLiveBinary } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
 import type { PdfPoint, PdfRect, SourceLocation } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
@@ -191,8 +191,14 @@ const release = (page: LivePage) => {
 const DEFAULT_SIZE = { width: 612, height: 792 };
 /** Visible shares at which the shown page is worked out again. */
 const THRESHOLDS = Array.from({ length: 11 }, (_, index) => index / 10);
-/** Pages rendered beyond the visible ones in each direction. */
-const PREFETCH = 1;
+/**
+ * Pages requested beyond the visible ones, ahead in the direction of the
+ * last scroll and behind it: the server sends them and they are drawn
+ * before they scroll into view. Pages leave their fonts out, so each costs
+ * tens of KB.
+ */
+const PREFETCH_AHEAD = 2;
+const PREFETCH_BEHIND = 1;
 
 function svgSize(svg: string): { width: number; height: number } | null {
   const match = /<svg[^>]*\swidth="([\d.]+)[a-z]*"[^>]*\sheight="([\d.]+)[a-z]*"/.exec(svg);
@@ -201,7 +207,7 @@ function svgSize(svg: string): { width: number; height: number } | null {
 
 /**
  * Live-rendered pages over the project's live-preview WebSocket (ADR 0012,
- * 0014), in one continuous scroll. The visible pages (plus PREFETCH) are
+ * 0014), in one continuous scroll. The visible pages (plus PREFETCH_*) are
  * requested from the server; other pages keep their latest rendering, a
  * page of the compiled PDF (`seed`), or a placeholder of the same size.
  * Each mount is one session. Status, page and zoom go to the toolbar
@@ -259,6 +265,8 @@ export function LivePreviewPane({
     const received = new Map<number, number>();
     const staleNow = new Set<number>();
     const renderer = new PdfRenderer();
+    /** Font programs sent on this connection since the last `fonts-reset`, by id. */
+    const fonts = new Map<string, Uint8Array>();
     /** The compiled PDF that stands in for pages not rendered live yet. */
     let seedDocument: { key: string; pdf: Uint8Array; pages: number } | null = null;
     const seeding = new Set<number>();
@@ -393,11 +401,25 @@ export function LivePreviewPane({
       const message: LiveServerMessage =
         typeof event.data === 'string'
           ? (JSON.parse(event.data) as LiveServerMessage)
-          : decodeLivePdfPage(new Uint8Array(event.data));
-      if (message.type === 'page' && 'pdf' in message) {
+          : decodeLiveBinary(new Uint8Array(event.data));
+      if (message.type === 'font') {
+        fonts.set(message.id, message.data);
+      } else if (message.type === 'fonts-reset') {
+        // Shown pages keep the fonts they use (their redraw holds them).
+        fonts.clear();
+      } else if (message.type === 'page' && 'pdf' in message) {
         const { page, pdf } = message;
+        const pageFonts =
+          message.fonts === undefined
+            ? undefined
+            : new Map(
+                message.fonts.flatMap((id) => {
+                  const data = fonts.get(id);
+                  return data === undefined ? [] : [[id, data] as const];
+                }),
+              );
         void draw(page, receive(page, message.stale === true), (width) =>
-          renderer.render(pdf, width),
+          renderer.render(pdf, width, pageFonts),
         );
       } else if (message.type === 'page') {
         const { page } = message;
@@ -496,6 +518,9 @@ export function LivePreviewPane({
     /** Visible height of each visible page, updated at THRESHOLDS. */
     const shares = new Map<number, number>();
     let requested = '';
+    /** 1 when the last scroll went down the document, -1 when up. */
+    let direction = 1;
+    let lastFirst = 0;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -517,9 +542,14 @@ export function LivePreviewPane({
             (shares.get(page) ?? 0) > (shares.get(best) ?? 0) ? page : best,
           ),
         );
-        const first = Math.max(1, firstVisible - PREFETCH);
+        if (firstVisible !== lastFirst) direction = firstVisible > lastFirst ? 1 : -1;
+        lastFirst = firstVisible;
+        const first = Math.max(
+          1,
+          firstVisible - (direction > 0 ? PREFETCH_BEHIND : PREFETCH_AHEAD),
+        );
         const last = Math.min(
-          (shown.at(-1) ?? firstVisible) + PREFETCH,
+          (shown.at(-1) ?? firstVisible) + (direction > 0 ? PREFETCH_AHEAD : PREFETCH_BEHIND),
           first + LIVE_MAX_PAGE_RANGE - 1,
         );
         const key = `${first}-${last}`;

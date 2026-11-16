@@ -1,4 +1,4 @@
-import { decodeLivePdfPage } from '@myleaf/api';
+import { decodeLiveBinary } from '@myleaf/api';
 import type { LiveServerMessage, ProjectDto } from '@myleaf/api';
 import type { PdfPoint, SourceLocation } from '@myleaf/compile';
 import type {
@@ -174,7 +174,7 @@ describe('live preview routes', () => {
           ws.on('message', (data: Buffer, isBinary: boolean) =>
             messages.push(
               isBinary
-                ? decodeLivePdfPage(new Uint8Array(data))
+                ? decodeLiveBinary(new Uint8Array(data))
                 : (JSON.parse(data.toString()) as LiveServerMessage),
             ),
           );
@@ -239,6 +239,29 @@ describe('live preview routes', () => {
       { type: 'page', page: 4, pdf: new Uint8Array([37, 80, 68, 70, 10]), stale: true },
       { type: 'page-unchanged', page: 5 },
       { type: 'page-count', count: 7, final: true },
+    ]);
+  });
+
+  it('sends the fonts that PDF pages leave out once per connection', async () => {
+    await start();
+    const { messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const session = backend.sessions[0]!;
+    const pdf = new Uint8Array([37, 80, 68, 70, 10]);
+    const a = { id: 'a', data: new Uint8Array([1, 2, 3]) };
+    const b = { id: 'b', data: new Uint8Array([4]) };
+    session.emit({ type: 'page', page: 1, pdf, fonts: [a, b] });
+    session.emit({ type: 'page', page: 2, pdf, fonts: [b], stale: true });
+    session.emit({ type: 'page', page: 3, pdf, fonts: [] });
+    session.emit({ type: 'page-count', count: 3, final: true });
+    await until(() => messages.find((m) => m.type === 'page-count'), 'page count');
+    expect(messages.slice(1)).toEqual([
+      { type: 'font', id: 'a', data: a.data },
+      { type: 'font', id: 'b', data: b.data },
+      { type: 'page', page: 1, pdf, fonts: ['a', 'b'] },
+      { type: 'page', page: 2, pdf, fonts: ['b'], stale: true },
+      { type: 'page', page: 3, pdf },
+      { type: 'page-count', count: 3, final: true },
     ]);
   });
 
