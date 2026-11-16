@@ -19,6 +19,7 @@
     "e2e": "playwright test",
     "bench": "pnpm --filter \"@myleaf/compile-texlive...\" run build && node packages/compile-texlive/bench/compile-bench.ts",
     "bench:live-compression": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-compression-bench.ts",
+    "bench:live-typing": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/typing-bench.ts",
     "bench:pdftex-hooks": "node packages/compile-texlive/bench/pdftex-hooks-bench.ts",
     "bench:pdftex-warm": "node packages/compile-texlive/bench/pdftex-warm-bench.ts"
   },

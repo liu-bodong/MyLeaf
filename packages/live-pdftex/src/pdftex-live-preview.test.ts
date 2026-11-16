@@ -97,9 +97,18 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     await rm(workRoot, { recursive: true, force: true });
   });
 
-  const open = async (files: ProjectFile[], root = workRoot) => {
+  const open = async (
+    files: ProjectFile[],
+    root = workRoot,
+    options: { tailDelayMs?: number; trace?: (line: string) => void } = {},
+  ) => {
     events = [];
-    const backend = new PdftexLivePreview({ command, workRoot: root, kpathsea: kpathsea ?? {} });
+    const backend = new PdftexLivePreview({
+      command,
+      workRoot: root,
+      kpathsea: kpathsea ?? {},
+      ...options,
+    });
     session = await backend.open(
       { projectId: ProjectId('p'), rootFile: parseProjectPath('main.tex'), files },
       (event) => events.push(event),
@@ -483,6 +492,53 @@ Second page.
     await settled();
     expect(pages().map((page) => page.page)).toEqual([1]);
     expect(events).toContainEqual({ type: 'page-unchanged', page: 1 });
+  });
+
+  it('pauses the rest of a run until edits stop or the visible pages move past it', async () => {
+    const long = (first: string) =>
+      mainFile(
+        bytes(String.raw`\documentclass{article}
+\begin{document}
+${first}
+\count255=0 \loop\advance\count255 by 1 \ifnum\count255<60 \newpage Page \the\count255. \repeat
+\end{document}
+`),
+      );
+    const delay = 4000;
+    const trace: string[] = [];
+    const live = await open([long('First.')], workRoot, {
+      tailDelayMs: delay,
+      trace: (line) => trace.push(line),
+    });
+    live.showPages(1, 1);
+    const finalCount = () =>
+      events.find((event) => event.type === 'page-count' && event.final) ?? null;
+    await expect.poll(finalCount, { timeout: 30_000 }).not.toBeNull();
+    await settled();
+
+    // After an edit, page 1 comes at once and the rest after `delay`.
+    events = [];
+    let start = performance.now();
+    live.updateFile(long('First, edited.'));
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
+    expect(trace.some((line) => / pause run \d+ /.test(line))).toBe(true);
+    await expect.poll(finalCount, { timeout: 20_000 }).toEqual({
+      type: 'page-count',
+      count: 60,
+      final: true,
+    });
+    expect(performance.now() - start).toBeGreaterThanOrEqual(delay - 100);
+    await settled();
+
+    // Scrolling past the paused run's last page lets it go on at once.
+    events = [];
+    start = performance.now();
+    live.updateFile(long('First, edited again.'));
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
+    live.showPages(40, 40);
+    await expect.poll(finalCount, { timeout: 20_000 }).not.toBeNull();
+    expect(performance.now() - start).toBeLessThan(delay - 1000);
+    expect(pages().map((page) => page.page)).toContain(40);
   });
 
   it('counts the pages of a run in a workspace with a long path', async () => {

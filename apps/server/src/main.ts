@@ -2,7 +2,11 @@ import { rm } from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { TexLiveCompileBackend } from '@myleaf/compile-texlive';
-import { DEFAULT_MAX_SNAPSHOTS, PdftexLivePreview } from '@myleaf/live-pdftex';
+import {
+  DEFAULT_MAX_SNAPSHOTS,
+  DEFAULT_TAIL_DELAY_MS,
+  PdftexLivePreview,
+} from '@myleaf/live-pdftex';
 import type { LivePreviewBackend } from '@myleaf/live-preview';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
 import { FileSystemProjectStore } from '@myleaf/storage-fs';
@@ -70,6 +74,8 @@ if (liveEngine === 'pdftex') {
       workRoot: liveRoot,
       // Each snapshot is a paused pdfTeX process (about 3 MB of its own on Linux).
       maxSnapshots: positiveInt('MYLEAF_LIVE_MAX_SNAPSHOTS', DEFAULT_MAX_SNAPSHOTS, 0),
+      // The rest of a run waits until typing pauses this long (0: never waits).
+      tailDelayMs: positiveInt('MYLEAF_LIVE_TAIL_DELAY_MS', DEFAULT_TAIL_DELAY_MS, 0),
       // For diagnosis: a timestamped line per edit, run, pdfTeX message and page.
       ...(liveTrace === null
         ? {}
