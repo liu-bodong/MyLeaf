@@ -17,7 +17,7 @@ import type {
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
 import { pauseOffset } from './pause-offset.js';
-import { extractPages } from './pdf-pages.js';
+import { extractPageList, extractPages } from './pdf-pages.js';
 import type { PdfPage } from './pdf-pages.js';
 import { parseSynctexRecords } from './synctex-output.js';
 
@@ -34,7 +34,7 @@ const signal = (pid: number, name: NodeJS.Signals) => {
 const kill = (pid: number) => signal(pid, 'SIGKILL');
 
 /** Default of `tailDelayMs`. */
-export const DEFAULT_TAIL_DELAY_MS = 1000;
+export const DEFAULT_TAIL_DELAY_MS = 300;
 
 /** Snapshots a session keeps by default (each is a paused pdfTeX process). */
 export const DEFAULT_MAX_SNAPSHOTS = 32;
@@ -211,6 +211,18 @@ const MAX_SETTLE_RUNS = 3;
  * use is sent to the browser once (see the live route).
  */
 const SEPARATE_FONTS = { separateFonts: true };
+/**
+ * Pages outside the visible range brought up to date at a time after a run
+ * finished (see #refresh): renders of newer runs wait at most for these.
+ */
+const REFRESH_BATCH = 4;
+
+/** The PDF of the last finished run. */
+interface RunPdf {
+  readonly path: string;
+  readonly pages: number;
+  readonly run: number;
+}
 
 /** A run of an engine's child that has not finished yet. */
 interface InFlightRun {
@@ -255,7 +267,7 @@ class PdftexSession implements LivePreviewSession {
   /** Page renders, in order. */
   #renders: Promise<void> = Promise.resolve();
   #range: readonly [number, number] = [1, 1];
-  #pdf: { readonly path: string; readonly pages: number; readonly run: number } | null = null;
+  #pdf: RunPdf | null = null;
   readonly #emitted = new Map<number, string>();
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
@@ -566,6 +578,7 @@ class PdftexSession implements LivePreviewSession {
       this.#pdf = { path: join(out, `${this.#job}.pdf`), pages: Number(pages[1]), run: Number(id) };
       this.#onEvent({ type: 'page-count', count: this.#pdf.pages, final: true });
       await this.#render();
+      this.#refresh(this.#pdf);
     }
     if (previous) {
       const previousOut = dirname(previous.path);
@@ -584,22 +597,77 @@ class PdftexSession implements LivePreviewSession {
     const pdf = this.#pdf;
     if (!pdf || this.#closing) return;
     const [first, last] = this.#range;
-    const pages = await extractPages(pdf.path, first, last, this.#mupdfLog, SEPARATE_FONTS);
+    const pages = await extractPages(pdf.path, first, last, this.#mupdfLog, {
+      ...SEPARATE_FONTS,
+      skip: (page, hash) => this.#pdf !== pdf || this.#known(page, pdf.run, hash),
+    });
     if (this.#closing || this.#pdf !== pdf) return;
     for (const [page, extracted] of pages) this.#emitPage(page, pdf.run, extracted);
   }
 
-  /** Emits a page rendered from run `run`, unless a newer run's is shown. */
-  #emitPage(page: number, run: number, { pdf, hash, fonts }: PdfPage): void {
-    if ((this.#pageRuns.get(page) ?? 0) > run) return;
+  /**
+   * Brings the pages shown before outside the visible range up to date
+   * with the run that wrote `pdf`, nearest first, REFRESH_BATCH at a time:
+   * a page whose content is unchanged is reported so (and no longer shown
+   * as stale), a changed one is sent again. Without this, pages the
+   * browser holds stayed dimmed after an edit before them until they were
+   * scrolled into view again. Stops when a newer run starts: it does the
+   * same when it finishes.
+   */
+  #refresh(pdf: RunPdf): void {
+    if (this.#closing || this.#pdf !== pdf || this.#runs !== pdf.run) return;
+    const [first, last] = this.#range;
+    const distance = (page: number) => (page < first ? first - page : page - last);
+    const batch = [...this.#emitted.keys()]
+      .filter(
+        (page) =>
+          page <= pdf.pages &&
+          (page < first || page > last) &&
+          (this.#pageRuns.get(page) ?? 0) < pdf.run,
+      )
+      .sort((a, b) => distance(a) - distance(b))
+      .slice(0, REFRESH_BATCH);
+    if (batch.length === 0) return;
+    this.#renders = this.#renders
+      .then(async () => {
+        if (this.#closing || this.#pdf !== pdf || this.#runs !== pdf.run) return;
+        const pages = await extractPageList(pdf.path, batch, this.#mupdfLog, {
+          ...SEPARATE_FONTS,
+          skip: (page, hash) => this.#pdf !== pdf || this.#known(page, pdf.run, hash),
+        });
+        if (this.#closing || this.#pdf !== pdf) return;
+        for (const [page, extracted] of pages) this.#emitPage(page, pdf.run, extracted);
+        // Pages a document no longer has, or whose page was skipped, are done too.
+        for (const page of batch) {
+          if ((this.#pageRuns.get(page) ?? 0) < pdf.run) this.#pageRuns.set(page, pdf.run);
+        }
+        // The next batch queues behind renders asked for meanwhile.
+        this.#refresh(pdf);
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * Handles page `page` of run `run` when the browser already has its
+   * image (digest `hash`) or a newer run's: reports it unchanged unless it
+   * is stale. False when the page must be sent.
+   */
+  #known(page: number, run: number, hash: string): boolean {
+    if ((this.#pageRuns.get(page) ?? 0) > run) return true;
+    if (this.#emitted.get(page) !== hash) return false;
     this.#pageRuns.set(page, run);
     // From a run older than the latest one that typesets this page again.
     const stale = run < this.#staleSince(page);
-    if (this.#emitted.get(page) === hash) {
-      this.#trace(`page ${page} of run ${run}: unchanged${stale ? ', stale' : ''}`);
-      if (!stale) this.#onEvent({ type: 'page-unchanged', page });
-      return;
-    }
+    this.#trace(`page ${page} of run ${run}: unchanged${stale ? ', stale' : ''}`);
+    if (!stale) this.#onEvent({ type: 'page-unchanged', page });
+    return true;
+  }
+
+  /** Emits a page rendered from run `run`, unless a newer run's is shown. */
+  #emitPage(page: number, run: number, { pdf, hash, fonts }: PdfPage): void {
+    if (this.#known(page, run, hash)) return;
+    this.#pageRuns.set(page, run);
+    const stale = run < this.#staleSince(page);
     this.#emitted.set(page, hash);
     this.#trace(
       `page ${page} of run ${run}: emitted, ${pdf.length} bytes + ${fonts.length} fonts${stale ? ', stale' : ''}`,
@@ -629,11 +697,14 @@ class PdftexSession implements LivePreviewSession {
       .then(async () => {
         const id = Number(inFlight.id);
         if (this.#closing || (this.#pageRuns.get(page) ?? 0) >= id) return;
-        const extracted = (await extractPages(pdf, page, page, this.#mupdfLog, SEPARATE_FONTS)).get(
-          page,
-        );
-        if (this.#closing || extracted === undefined) return;
-        this.#emitPage(page, id, extracted);
+        const extracted = (
+          await extractPages(pdf, page, page, this.#mupdfLog, {
+            ...SEPARATE_FONTS,
+            skip: (_, hash) => this.#known(page, id, hash),
+          })
+        ).get(page);
+        if (!this.#closing && extracted !== undefined) this.#emitPage(page, id, extracted);
+        if (this.#closing) return;
         this.#onEvent({ type: 'page-count', count: page, final: false });
         if (page >= this.#range[1] && this.#inFlight === inFlight && !inFlight.shown) {
           inFlight.shown = true;
