@@ -1,8 +1,9 @@
 import { LIVE_MAX_PAGE_RANGE, decodeLivePdfPage } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
-import type { TexEngine } from '@myleaf/compile';
+import type { PdfPoint, PdfRect, SourceLocation, TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import { api } from '../api/client.js';
 import { engineName } from './engine-name.js';
 import type { LiveChannel } from './live-channel.js';
@@ -21,7 +22,37 @@ interface LivePreviewPaneProps {
   readonly onShowPdf: () => void;
   /** Offered when the session ended: start a new session. */
   readonly onRetry: () => void;
+  /** Boxes to highlight, e.g. from forward search. The first is scrolled into view. */
+  readonly highlights?: readonly PdfRect[];
+  /** Double-click on a page. Coordinates are PDF points from the page's top-left. */
+  readonly onInverseSearch?: ((point: PdfPoint) => void) | undefined;
+  readonly ref?: Ref<LivePreviewHandle>;
 }
+
+/** SyncTeX on the live pages, as of the server's last finished run. */
+export interface LivePreviewHandle {
+  /** Boxes on the live pages that `location` produced; none without SyncTeX. */
+  forwardSearch(location: SourceLocation): Promise<readonly PdfRect[]>;
+  /** The source that produced `point`, or `null`. */
+  inverseSearch(point: PdfPoint): Promise<SourceLocation | null>;
+  /**
+   * Point on the reading line, a third down the visible area (where forward
+   * search places its target), for inverse search. Null when nothing is shown.
+   */
+  readingPoint(): PdfPoint | null;
+}
+
+/** Where the reading line sits, as a share of the visible height (as in PdfViewer). */
+const READING_LINE = 1 / 3;
+/** A SyncTeX request, without the id the pane gives it. */
+type SearchRequest =
+  Extract<LiveClientMessage, { type: 'forward' | 'inverse' }> extends infer M
+    ? M extends unknown
+      ? Omit<M, 'id'>
+      : never
+    : never;
+/** The server's answer to a SyncTeX request. */
+type SearchResult = Extract<LiveServerMessage, { type: 'forward-result' | 'inverse-result' }>;
 
 type Connection =
   | { readonly state: 'connecting' }
@@ -108,6 +139,9 @@ export function LivePreviewPane({
   onReady,
   onShowPdf,
   onRetry,
+  highlights = [],
+  onInverseSearch,
+  ref,
 }: LivePreviewPaneProps) {
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
   const [pages, setPages] = useState<ReadonlyMap<number, LivePage>>(new Map());
@@ -122,6 +156,8 @@ export function LivePreviewPane({
   useEffect(() => {
     onReadyRef.current = onReady;
   });
+  /** Sends a SyncTeX request on the session; resolves with `null` if it ends first. */
+  const searchRef = useRef<((message: SearchRequest) => Promise<SearchResult | null>) | null>(null);
 
   useEffect(() => {
     const socket = new WebSocket(api.livePreviewUrl(projectId));
@@ -134,6 +170,23 @@ export function LivePreviewPane({
     const received = new Map<number, number>();
     const staleNow = new Set<number>();
     const renderer = new PdfRenderer();
+    const searches = new Map<number, (result: SearchResult | null) => void>();
+    let nextSearch = 0;
+    searchRef.current = (message) =>
+      new Promise((resolve) => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          resolve(null);
+          return;
+        }
+        const id = nextSearch++;
+        searches.set(id, resolve);
+        const request: LiveClientMessage = { ...message, id };
+        socket.send(JSON.stringify(request));
+      });
+    const endSearches = () => {
+      for (const resolve of searches.values()) resolve(null);
+      searches.clear();
+    };
     const end = (message: string) => {
       ended = true;
       setConnection({ state: 'ended', message });
@@ -219,6 +272,9 @@ export function LivePreviewPane({
       } else if (message.type === 'stale') {
         for (const page of received.keys()) if (page >= message.from) staleNow.add(page);
         setStale(new Set(staleNow));
+      } else if (message.type === 'forward-result' || message.type === 'inverse-result') {
+        searches.get(message.id)?.(message);
+        searches.delete(message.id);
       } else if (message.type === 'page-count') {
         setCount((shown) =>
           message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
@@ -231,6 +287,7 @@ export function LivePreviewPane({
       }
     });
     socket.addEventListener('close', () => {
+      endSearches();
       if (!ended) end('Disconnected');
     });
     const unsubscribe = channel.subscribe((update) => {
@@ -247,6 +304,8 @@ export function LivePreviewPane({
       unsubscribe();
       socket.close();
       socketRef.current = null;
+      searchRef.current = null;
+      endSearches();
       resizes.disconnect();
       clearTimeout(resizeTimer);
       renderer.close();
@@ -293,6 +352,72 @@ export function LivePreviewPane({
 
   const fallbackSize = pages.get(current) ?? pages.values().next().value ?? DEFAULT_SIZE;
   const slots = Array.from({ length: count }, (_, index) => index + 1);
+  /** Page size in PDF points: the page's own, or that of the pages around it. */
+  const sizeOf = (page: number) => pages.get(page) ?? fallbackSize;
+  const sizeOfRef = useRef(sizeOf);
+  useEffect(() => {
+    sizeOfRef.current = sizeOf;
+  });
+
+  // Scroll each new set of highlights into view once.
+  const scrolledTo = useRef<readonly PdfRect[] | null>(null);
+  useEffect(() => {
+    const target = highlights[0];
+    const scroller = scrollerRef.current;
+    if (target === undefined || scroller === null || scrolledTo.current === highlights) return;
+    const slot = scroller.querySelector(`[data-page="${target.page}"]`);
+    if (slot === null) return;
+    scrolledTo.current = highlights;
+    const box = slot.getBoundingClientRect();
+    const scale = box.width / sizeOfRef.current(target.page).width;
+    scroller.scrollTo({
+      top:
+        scroller.scrollTop +
+        box.top -
+        scroller.getBoundingClientRect().top +
+        target.y * scale -
+        scroller.clientHeight * READING_LINE,
+      behavior: 'smooth',
+    });
+  }, [highlights]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      async forwardSearch(location) {
+        const result = await searchRef.current?.({
+          type: 'forward',
+          path: location.file,
+          line: location.line,
+          column: location.column,
+        });
+        return result?.type === 'forward-result' ? result.rects : [];
+      },
+      async inverseSearch({ page, x, y }) {
+        const result = await searchRef.current?.({ type: 'inverse', page, x, y });
+        return result?.type === 'inverse-result' ? result.location : null;
+      },
+      readingPoint() {
+        const scroller = scrollerRef.current;
+        if (scroller === null || scroller.clientHeight === 0) return null;
+        const line = scroller.getBoundingClientRect().top + scroller.clientHeight * READING_LINE;
+        const slots = [...scroller.querySelectorAll<HTMLElement>('[data-page]')];
+        // The last page that starts above the reading line.
+        const slot = slots.findLast((element) => element.getBoundingClientRect().top <= line);
+        if (slot === undefined) return null;
+        const page = Number(slot.dataset.page);
+        const box = slot.getBoundingClientRect();
+        const size = sizeOfRef.current(page);
+        const scale = box.width / size.width;
+        return {
+          page,
+          x: size.width / 2,
+          y: Math.min(Math.max((line - box.top) / scale, 0), size.height),
+        };
+      },
+    }),
+    [],
+  );
 
   return (
     <div className="live-pane" data-testid="live-preview">
@@ -322,6 +447,17 @@ export function LivePreviewPane({
               className={stale.has(page) ? 'live-slot stale' : 'live-slot'}
               data-page={page}
               style={{ aspectRatio: `${size.width} / ${size.height}` }}
+              onDoubleClick={
+                onInverseSearch &&
+                ((event) => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  onInverseSearch({
+                    page,
+                    x: ((event.clientX - box.left) / box.width) * size.width,
+                    y: ((event.clientY - box.top) / box.height) * size.height,
+                  });
+                })
+              }
             >
               {rendered?.kind === 'svg' ? (
                 <img src={rendered.url} alt={`Live preview of page ${page}`} />
@@ -330,6 +466,20 @@ export function LivePreviewPane({
               ) : (
                 connection.state !== 'ended' && <p className="placeholder">Rendering…</p>
               )}
+              {highlights
+                .filter((rect) => rect.page === page)
+                .map((rect, index) => (
+                  <div
+                    key={index}
+                    className="pdf-highlight"
+                    style={{
+                      left: `${(rect.x / size.width) * 100}%`,
+                      top: `${(rect.y / size.height) * 100}%`,
+                      width: `${(rect.width / size.width) * 100}%`,
+                      height: `${(rect.height / size.height) * 100}%`,
+                    }}
+                  />
+                ))}
             </div>
           );
         })}

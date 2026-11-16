@@ -1,3 +1,4 @@
+import type { PdfPoint, PdfRect, SourceLocation } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type { ProjectFile, ProjectPath } from '@myleaf/project';
 
@@ -58,6 +59,13 @@ export interface LivePreviewSession {
    * backend's), from the next run. Backends without snapshots omit it.
    */
   setMaxSnapshots?(max: number | null): void;
+  /**
+   * SyncTeX on the live pages: boxes on the pages that `location` produced,
+   * as of the last finished run. Backends without SyncTeX omit it.
+   */
+  forwardSearch?(location: SourceLocation): Promise<readonly PdfRect[]>;
+  /** SyncTeX: the source that produced `point` of a live page, as of the last finished run. */
+  inverseSearch?(point: PdfPoint): Promise<SourceLocation | null>;
   /** Stops the session and releases its resources. */
   close(): Promise<void>;
 }
@@ -78,6 +86,8 @@ export interface LivePreviewBackend {
    * a backend without snapshots.
    */
   readonly maxSnapshots?: number;
+  /** Whether sessions answer `forwardSearch` and `inverseSearch`. */
+  readonly synctex?: boolean;
   open(
     request: LivePreviewRequest,
     onEvent: (event: LivePreviewEvent) => void,

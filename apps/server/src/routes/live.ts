@@ -23,6 +23,36 @@ function parseClientMessage(raw: string): LiveClientMessage | null {
       return { type: 'update', path: message.path, content: message.content };
     }
     if (
+      message.type === 'forward' &&
+      Number.isInteger(message.id) &&
+      typeof message.path === 'string' &&
+      Number.isInteger(message.line) &&
+      (message.column === null || Number.isInteger(message.column))
+    ) {
+      return {
+        type: 'forward',
+        id: message.id as number,
+        path: message.path,
+        line: message.line as number,
+        column: message.column as number | null,
+      };
+    }
+    if (
+      message.type === 'inverse' &&
+      Number.isInteger(message.id) &&
+      Number.isInteger(message.page) &&
+      Number.isFinite(message.x) &&
+      Number.isFinite(message.y)
+    ) {
+      return {
+        type: 'inverse',
+        id: message.id as number,
+        page: message.page as number,
+        x: message.x as number,
+        y: message.y as number,
+      };
+    }
+    if (
       message.type === 'pages' &&
       Number.isInteger(message.first) &&
       Number.isInteger(message.last)
@@ -54,6 +84,7 @@ export function registerLiveRoutes(
     available: pool !== null,
     engine: pool?.engine ?? null,
     maxSnapshots: pool?.maxSnapshots ?? null,
+    synctex: pool?.synctex ?? false,
   }));
 
   app.get<{ Params: { id: string } }>(
@@ -86,13 +117,25 @@ export function registerLiveRoutes(
           return;
         }
         handle.touch();
+        const { session } = handle;
         if (message.type === 'update') {
-          handle.session.updateFile({
+          session.updateFile({
             path: parseProjectPath(message.path),
             content: new TextEncoder().encode(message.content),
           });
+        } else if (message.type === 'pages') {
+          session.showPages(message.first, message.last);
+        } else if (message.type === 'forward') {
+          const { id, line, column } = message;
+          const location = { file: parseProjectPath(message.path), line, column };
+          void (session.forwardSearch?.(location) ?? Promise.resolve([]))
+            .catch(() => [])
+            .then((rects) => send(socket, { type: 'forward-result', id, rects }));
         } else {
-          handle.session.showPages(message.first, message.last);
+          const { id, page, x, y } = message;
+          void (session.inverseSearch?.({ page, x, y }) ?? Promise.resolve(null))
+            .catch(() => null)
+            .then((location) => send(socket, { type: 'inverse-result', id, location }));
         }
       };
       socket.on('message', (data: Buffer) => {

@@ -109,6 +109,13 @@ after a killed one exit too. Outputs are copied from their descriptors (they
 are opened for reading as well), so a snapshot still works after the driver
 deleted its run's directory.
 
+With `-synctex=-1` (uncompressed), the `.synctex` file is wrapped like the
+other outputs (`synctex.c`): each child and finisher writes its own copy,
+with the engine's records so far, and renames it from `<job>.synctex(busy)`
+to `<job>.synctex` in its own directory at the end. The `synctex` tool then
+maps between the source and that directory's PDF. Compressed SyncTeX
+(`-synctex=1`) is not wrapped, so all runs would write to one file.
+
 The child's terminal output goes to `<output-dir>/terminal.txt`. Files the
 child reads (`.aux`, included files, images) come from disk: the driver
 writes them before `run`. When the preamble or a file in an `input` line

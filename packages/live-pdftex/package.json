@@ -20,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@myleaf/compile": "workspace:*",
     "@myleaf/doc-model": "workspace:*",
     "@myleaf/live-preview": "workspace:*",
     "@myleaf/project": "workspace:*",

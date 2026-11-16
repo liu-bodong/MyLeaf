@@ -1,5 +1,6 @@
 import { decodeLivePdfPage } from '@myleaf/api';
 import type { LiveServerMessage, ProjectDto } from '@myleaf/api';
+import type { PdfPoint, SourceLocation } from '@myleaf/compile';
 import type {
   LivePreviewBackend,
   LivePreviewEvent,
@@ -35,6 +36,18 @@ class FakeLiveSession implements LivePreviewSession {
   setMaxSnapshots(max: number | null): void {
     this.maxSnapshots.push(max);
   }
+  forwardSearch(location: SourceLocation) {
+    return Promise.resolve(
+      location.line === 1 ? [{ page: 2, x: 72, y: 100, width: 300, height: 10 }] : [],
+    );
+  }
+  inverseSearch(point: PdfPoint) {
+    return Promise.resolve(
+      point.page === 2
+        ? ({ file: point.x > 100 ? 'b.tex' : 'a.tex', line: 9, column: null } as SourceLocation)
+        : null,
+    );
+  }
   close(): Promise<void> {
     this.closed = true;
     return Promise.resolve();
@@ -44,6 +57,7 @@ class FakeLiveSession implements LivePreviewSession {
 class FakeLivePreview implements LivePreviewBackend {
   readonly engine = 'pdflatex';
   readonly maxSnapshots = 32;
+  readonly synctex = true;
   readonly sessions: FakeLiveSession[] = [];
   open(request: LivePreviewRequest, onEvent: (e: LivePreviewEvent) => void) {
     const session = new FakeLiveSession(request, onEvent);
@@ -182,6 +196,7 @@ describe('live preview routes', () => {
       available: false,
       engine: null,
       maxSnapshots: null,
+      synctex: false,
     });
     const { messages } = await connect();
     await until(() => messages.find((m) => m.type === 'status'), 'status');
@@ -194,6 +209,7 @@ describe('live preview routes', () => {
       available: true,
       engine: 'pdflatex',
       maxSnapshots: 32,
+      synctex: true,
     });
     const { socket, messages } = await connect();
     await until(
@@ -223,6 +239,34 @@ describe('live preview routes', () => {
       { type: 'page-unchanged', page: 5 },
       { type: 'page-count', count: 7, final: true },
     ]);
+  });
+
+  it('answers SyncTeX requests on live pages', async () => {
+    await start();
+    const { socket, messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const send = (message: object) => socket.send(JSON.stringify(message));
+    send({ type: 'forward', id: 1, path: 'main.tex', line: 1, column: null });
+    send({ type: 'forward', id: 2, path: 'main.tex', line: 5, column: 3 });
+    send({ type: 'inverse', id: 3, page: 2, x: 150.5, y: 20 });
+    send({ type: 'inverse', id: 4, page: 1, x: 10, y: 20 });
+    await until(() => (messages.length >= 5 ? true : undefined), 'results');
+    expect(messages.slice(1)).toEqual(
+      expect.arrayContaining([
+        {
+          type: 'forward-result',
+          id: 1,
+          rects: [{ page: 2, x: 72, y: 100, width: 300, height: 10 }],
+        },
+        { type: 'forward-result', id: 2, rects: [] },
+        {
+          type: 'inverse-result',
+          id: 3,
+          location: { file: 'b.tex', line: 9, column: null },
+        },
+        { type: 'inverse-result', id: 4, location: null },
+      ]),
+    );
   });
 
   it('closes the session when the browser disconnects', async () => {
@@ -346,6 +390,10 @@ describe('live preview routes', () => {
     await until(() => garbage.messages.find((m) => m.type === 'status'), 'starting');
     garbage.socket.send('not json');
     expect(await until(() => garbage.closed() ?? undefined, 'close')).toBe(1003);
+    const search = await connect();
+    await until(() => search.messages.find((m) => m.type === 'status'), 'starting');
+    search.socket.send('{"type":"forward","id":1,"path":"../x.tex","line":1,"column":null}');
+    expect(await until(() => search.closed() ?? undefined, 'close')).toBe(1008);
   });
 
   it('stops idle sessions and tells the browser', async () => {

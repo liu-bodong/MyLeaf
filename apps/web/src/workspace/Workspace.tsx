@@ -1,6 +1,13 @@
 import type { FileEntryDto, ProjectDto } from '@myleaf/api';
 import type { ProjectSettings } from '@myleaf/project';
-import type { CompileResult, Diagnostic, PdfPoint, PdfRect, TexEngine } from '@myleaf/compile';
+import type {
+  CompileResult,
+  Diagnostic,
+  PdfPoint,
+  PdfRect,
+  SourceLocation,
+  TexEngine,
+} from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type { OutlineEntry } from '@myleaf/latex-syntax';
 import { parseProjectPath } from '@myleaf/project';
@@ -12,6 +19,7 @@ import { previewType } from '../files/file-types.js';
 import { itemsFromFileList } from '../files/upload-items.js';
 import { LiveChannel } from '../live/live-channel.js';
 import { LivePreviewPane } from '../live/LivePreviewPane.js';
+import type { LivePreviewHandle } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
@@ -94,6 +102,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** The server's live-preview engine, or `null` without live preview. */
   const [liveEngine, setLiveEngine] = useState<TexEngine | null>(null);
   const [maxSnapshots, setMaxSnapshots] = useState<number | null>(null);
+  /** Whether the live pages map to the source and back (SyncTeX). */
+  const [liveSynctex, setLiveSynctex] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
   /** Output shown while live preview is on; the PDF stays reachable. */
   const [outputView, setOutputView] = useState<'live' | 'pdf'>('live');
@@ -107,9 +117,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const [result, setResult] = useState<CompileResult | null>(null);
   const [pdfVersion, setPdfVersion] = useState(0);
   const [highlights, setHighlights] = useState<readonly PdfRect[]>([]);
+  const [liveHighlights, setLiveHighlights] = useState<readonly PdfRect[]>([]);
   const [error, setError] = useState<string | null>(null);
   const editorRef = useRef<LatexEditorHandle>(null);
   const pdfRef = useRef<PdfViewerHandle>(null);
+  const liveRef = useRef<LivePreviewHandle>(null);
   const pendingSave = useRef<PendingSave | null>(null);
   /** Line to move to once a newly opened document is in the editor. */
   const pendingLine = useRef<number | null>(null);
@@ -142,6 +154,11 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     const timer = setTimeout(() => setHighlights([]), HIGHLIGHT_MS);
     return () => clearTimeout(timer);
   }, [highlights]);
+  useEffect(() => {
+    if (liveHighlights.length === 0) return;
+    const timer = setTimeout(() => setLiveHighlights([]), HIGHLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [liveHighlights]);
 
   const updateLayout = useCallback((change: Partial<Layout>) => {
     setLayout((current) => {
@@ -208,6 +225,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       const liveInfo = await api.livePreviewInfo();
       setLiveEngine(liveInfo.engine);
       setMaxSnapshots(liveInfo.maxSnapshots);
+      setLiveSynctex(liveInfo.synctex);
       if (entries.some((entry) => entry.path === loaded.rootFile)) {
         const text = decodeText(await api.readFile(projectId, loaded.rootFile));
         if (!cancelled && text !== null) {
@@ -263,6 +281,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   );
 
   const showLive = liveEngine !== null && project?.settings.livePreview === true;
+  /** Source and PDF positions map to the live pages, not the compiled PDF. */
+  const syncLive = showLive && liveSynctex && outputView === 'live';
   /** Live preview already updates as you type: auto-compile pauses while it is on. */
   const autoCompile = project?.settings.autoCompile === true && !showLive;
 
@@ -315,32 +335,42 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     }
   };
 
+  /** Forward search, on the live pages when they are shown and support it. */
+  const forwardSearch = useCallback(
+    async (location: SourceLocation) => {
+      // Unmount the previous boxes so a repeated search restarts the fade.
+      if (syncLive) {
+        setLiveHighlights([]);
+        setLiveHighlights((await liveRef.current?.forwardSearch(location)) ?? []);
+      } else {
+        setHighlights([]);
+        setHighlights((await api.forwardSearch(projectId, location)).rects);
+      }
+    },
+    [projectId, syncLive],
+  );
+
   const showInPdf = useCallback(async () => {
     if (document?.kind !== 'text') return;
     const line = editorRef.current?.cursorLine() ?? 1;
-    // Unmount the previous boxes so a repeated search restarts the fade.
-    setHighlights([]);
-    const { rects } = await api.forwardSearch(projectId, {
-      file: document.path,
-      line,
-      column: null,
-    });
-    setHighlights(rects);
-  }, [document, projectId]);
+    await forwardSearch({ file: document.path, line, column: null });
+  }, [document, forwardSearch]);
 
   const inverseSearch = useCallback(
-    async (point: PdfPoint) => {
-      const { location } = await api.inverseSearch(projectId, point);
+    async (point: PdfPoint, onLive: boolean) => {
+      const location = onLive
+        ? ((await liveRef.current?.inverseSearch(point)) ?? null)
+        : (await api.inverseSearch(projectId, point)).location;
       if (location !== null) await openFile(location.file, location.line);
     },
     [openFile, projectId],
   );
 
-  /** Inverse search from the PDF's reading line. */
+  /** Inverse search from the reading line of the shown pages. */
   const showInSource = useCallback(async () => {
-    const point = pdfRef.current?.readingPoint() ?? null;
-    if (point !== null) await inverseSearch(point);
-  }, [inverseSearch]);
+    const point = (syncLive ? liveRef.current : pdfRef.current)?.readingPoint() ?? null;
+    if (point !== null) await inverseSearch(point, syncLive);
+  }, [inverseSearch, syncLive]);
 
   const selectDiagnostic = useCallback(
     (diagnostic: Diagnostic) => {
@@ -452,8 +482,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   const hasPdf = pdfVersion > 0;
   const pdfUrl = hasPdf ? api.pdfUrl(projectId, pdfVersion) : null;
   const pdfShown = !showLive || outputView === 'pdf';
-  const canShowInPdf = document?.kind === 'text' && hasPdf;
-  const canShowInSource = hasPdf && pdfShown && layout.view !== 'editor';
+  const canShowInPdf = document?.kind === 'text' && (syncLive || hasPdf);
+  const canShowInSource = (syncLive || (hasPdf && pdfShown)) && layout.view !== 'editor';
   const downloadPdf = () => {
     if (pdfUrl === null) return;
     const link = window.document.createElement('a');
@@ -465,7 +495,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Forward search; makes the PDF visible first. */
   const goToPdf = () => {
     if (layout.view === 'editor') updateLayout({ view: 'split' });
-    setOutputView('pdf');
+    if (!syncLive) setOutputView('pdf');
     void showInPdf().catch(report);
   };
   /** Inverse search from the PDF; makes the editor visible. */
@@ -477,15 +507,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Forward search to an outline heading; makes the PDF visible first. */
   const goToHeading = (entry: OutlineEntry) => {
     if (layout.view === 'editor') updateLayout({ view: 'split' });
-    setOutputView('pdf');
-    void (async () => {
-      const { rects } = await api.forwardSearch(projectId, {
-        file: parseProjectPath(entry.file),
-        line: entry.line,
-        column: null,
-      });
-      setHighlights(rects);
-    })().catch(report);
+    if (!syncLive) setOutputView('pdf');
+    void forwardSearch({
+      file: parseProjectPath(entry.file),
+      line: entry.line,
+      column: null,
+    }).catch(report);
   };
 
   const viewItems = (
@@ -566,7 +593,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         },
         { kind: 'separator' },
         { label: 'Show in PDF', onSelect: goToPdf, disabled: !canShowInPdf },
-        { label: 'Show in source', onSelect: goToSource, disabled: !hasPdf },
+        { label: 'Show in source', onSelect: goToSource, disabled: !(syncLive || hasPdf) },
       ],
     },
     {
@@ -820,6 +847,13 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     onReady={sendOpenDocumentToLive}
                     onShowPdf={() => setOutputView('pdf')}
                     onRetry={() => setLiveAttempt((attempt) => attempt + 1)}
+                    ref={liveRef}
+                    highlights={liveHighlights}
+                    onInverseSearch={
+                      liveSynctex
+                        ? (point) => void inverseSearch(point, true).catch(report)
+                        : undefined
+                    }
                   />
                 </div>
               )}
@@ -828,7 +862,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   ref={pdfRef}
                   url={pdfUrl}
                   highlights={highlights}
-                  onInverseSearch={(point) => void inverseSearch(point).catch(report)}
+                  onInverseSearch={(point) => void inverseSearch(point, false).catch(report)}
                   zoom={layout.zoom}
                   onViewChange={setPdfView}
                   onZoom={(zoom) => updateLayout({ zoom })}

@@ -49,6 +49,11 @@ export class LiveSessionPool {
     return this.#backend.maxSnapshots ?? null;
   }
 
+  /** Whether sessions map between source and live pages (SyncTeX). */
+  get synctex(): boolean {
+    return this.#backend.synctex === true;
+  }
+
   get size(): number {
     return this.#handles.size;
   }

@@ -72,6 +72,8 @@ export interface LivePreviewInfo {
    * (`MYLEAF_LIVE_MAX_SNAPSHOTS`), or `null` when the engine has none.
    */
   readonly maxSnapshots: number | null;
+  /** Whether live pages map to the source and back (SyncTeX `forward`/`inverse` messages). */
+  readonly synctex: boolean;
 }
 
 /** Messages the browser sends on a project's live-preview WebSocket. */
@@ -79,7 +81,25 @@ export type LiveClientMessage =
   /** Full text of a project file that changed (not necessarily saved yet). */
   | { readonly type: 'update'; readonly path: string; readonly content: string }
   /** The 1-based, inclusive range of pages the browser shows (at most 20 pages). */
-  | { readonly type: 'pages'; readonly first: number; readonly last: number };
+  | { readonly type: 'pages'; readonly first: number; readonly last: number }
+  /**
+   * SyncTeX on the live pages, as of the last finished run: the server
+   * answers with a `forward-result` or `inverse-result` of the same `id`.
+   */
+  | {
+      readonly type: 'forward';
+      readonly id: number;
+      readonly path: string;
+      readonly line: number;
+      readonly column: number | null;
+    }
+  | {
+      readonly type: 'inverse';
+      readonly id: number;
+      readonly page: number;
+      readonly x: number;
+      readonly y: number;
+    };
 
 /** Largest page range a browser may request in one `pages` message. */
 export const LIVE_MAX_PAGE_RANGE = 20;
@@ -107,6 +127,14 @@ export type LiveServerMessage =
   | { readonly type: 'stale'; readonly from: number }
   /** Pages typeset so far; `final` once the whole document is. */
   | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
+  /** Answers `forward`: none when the engine has no SyncTeX. */
+  | { readonly type: 'forward-result'; readonly id: number; readonly rects: readonly PdfRect[] }
+  /** Answers `inverse`: `null` when the engine has no SyncTeX. */
+  | {
+      readonly type: 'inverse-result';
+      readonly id: number;
+      readonly location: SourceLocation | null;
+    }
   | {
       readonly type: 'status';
       /**

@@ -587,6 +587,9 @@ importers:
 
   packages/live-pdftex:
     dependencies:
+      '@myleaf/compile':
+        specifier: workspace:*
+        version: link:../compile
       '@myleaf/doc-model':
         specifier: workspace:*
         version: link:../doc-model
@@ -612,6 +615,9 @@ importers:
 
   packages/live-preview:
     dependencies:
+      '@myleaf/compile':
+        specifier: workspace:*
+        version: link:../compile
       '@myleaf/doc-model':
         specifier: workspace:*
         version: link:../doc-model
