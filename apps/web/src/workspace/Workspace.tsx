@@ -262,6 +262,17 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
     [],
   );
 
+  const showLive = liveEngine !== null && project?.settings.livePreview === true;
+  /** Live preview already updates as you type: auto-compile pauses while it is on. */
+  const autoCompile = project?.settings.autoCompile === true && !showLive;
+
+  useEffect(() => {
+    if (!autoCompile && autoCompileTimer.current !== null) {
+      clearTimeout(autoCompileTimer.current);
+      autoCompileTimer.current = null;
+    }
+  }, [autoCompile]);
+
   const handleChange = useCallback(
     (text: string) => {
       if (document?.kind !== 'text') return;
@@ -275,20 +286,12 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       setSaveState('unsaved');
       liveChannel.publish({ path: document.path, text });
       noteOutlineEdit(text);
-      if (project?.settings.autoCompile) {
+      if (autoCompile) {
         if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
         autoCompileTimer.current = setTimeout(() => void compile('single'), AUTO_COMPILE_DELAY_MS);
       }
     },
-    [
-      compile,
-      document,
-      flushSave,
-      liveChannel,
-      noteOutlineEdit,
-      project?.settings.autoCompile,
-      report,
-    ],
+    [autoCompile, compile, document, flushSave, liveChannel, noteOutlineEdit, report],
   );
 
   /** A new live session starts from saved files: send the open document's unsaved text. */
@@ -297,8 +300,6 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       liveChannel.publish({ path: document.path, text: editorRef.current.text() });
     }
   }, [document, liveChannel]);
-
-  const showLive = liveEngine !== null && project?.settings.livePreview === true;
 
   /** Applies a settings change immediately and reverts it if saving fails. */
   const updateSettings = async (settings: Partial<ProjectSettings>) => {

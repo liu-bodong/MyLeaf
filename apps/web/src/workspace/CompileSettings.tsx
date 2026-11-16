@@ -34,15 +34,19 @@ export function CompileSettings({
   };
   return (
     <>
-      <label>
+      <label title={livePreviewOn ? 'Paused while live preview is on' : undefined}>
         <input
           type="checkbox"
-          checked={settings.autoCompile}
+          // Live preview updates as you type; the saved setting returns when it is off.
+          disabled={livePreviewOn}
+          checked={settings.autoCompile && !livePreviewOn}
           onChange={(event) => onChange({ autoCompile: event.target.checked })}
         />
         <span>
           Auto-compile
-          <small>After a 1 s pause in typing</small>
+          <small>
+            {livePreviewOn ? 'Paused while live preview is on' : 'After a 1 s pause in typing'}
+          </small>
         </span>
       </label>
       <label>
