@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CompileRequest } from '@myleaf/compile';
@@ -7,6 +7,7 @@ import { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withoutFilePathEntries } from './run-process.js';
+import { testPng } from './test-png.js';
 import { TexLiveCompileBackend } from './tex-live-compile-backend.js';
 
 const hasTexLive = (() => {
@@ -277,6 +278,66 @@ ${body}
       expect(undefinedRefs(single)).toBeGreaterThan(0);
       // ...and is after the next full compile.
       expect(undefinedRefs(await backend.compile(request([file('main.tex', edited)], id)))).toBe(0);
+    });
+  });
+
+  describe('image options', () => {
+    const FIGURE = String.raw`\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\includegraphics{plot.png}
+\end{document}
+`;
+    const files = () => [
+      file('main.tex', FIGURE),
+      { path: parseProjectPath('plot.png'), content: testPng(60, 40) },
+    ];
+    const pdfText = async (projectId: ProjectId) =>
+      Buffer.from((await backend.readPdf(projectId)) ?? []).toString('latin1');
+    const srcPng = (projectId: ProjectId) => readFile(join(workRoot, projectId, 'src', 'plot.png'));
+
+    it('reuses converted images from the compile after the first', async () => {
+      const projectId = ProjectId('images-reuse');
+      const compile = () =>
+        backend.compile(
+          request(files(), projectId, {
+            options: { precompilePreamble: true, reuseImages: true },
+          }),
+        );
+      expect(await compile()).toMatchObject({ status: 'success', hasPdf: true });
+      expect((await srcPng(projectId)).subarray(1, 4).toString()).toBe('PNG');
+      await backend.imagesConverted();
+
+      expect(await compile()).toMatchObject({ status: 'success', hasPdf: true });
+      expect((await srcPng(projectId)).subarray(0, 5).toString()).toBe('%PDF-');
+      // The image is still in the PDF, now inside the converted page.
+      expect(await pdfText(projectId)).toMatch(/\/Subtype\s*\/Image/);
+    });
+
+    it('does not convert images unless asked, or for other engines', async () => {
+      const projectId = ProjectId('images-off');
+      await backend.compile(request(files(), projectId));
+      await backend.imagesConverted();
+      await backend.compile(request(files(), projectId));
+      expect((await srcPng(projectId)).subarray(1, 4).toString()).toBe('PNG');
+    });
+
+    it('draws images as boxes in draft mode, with and without a precompiled preamble', async () => {
+      for (const precompilePreamble of [false, true]) {
+        const projectId = ProjectId(`images-draft-${precompilePreamble}`);
+        const options = { precompilePreamble, draftImages: true };
+        expect(await backend.compile(request(files(), projectId, { options }))).toMatchObject({
+          status: 'success',
+          hasPdf: true,
+        });
+        // The second compile uses the precompiled preamble, when enabled.
+        const result = await backend.compile(request(files(), projectId, { options }));
+        expect(result.preamble).toBe(precompilePreamble ? 'reused' : 'disabled');
+        expect(await pdfText(projectId)).not.toMatch(/\/Subtype\s*\/Image/);
+        // Turned off again, the image is back.
+        await backend.compile(request(files(), projectId, { options: { precompilePreamble } }));
+        expect(await pdfText(projectId)).toMatch(/\/Subtype\s*\/Image/);
+      }
     });
   });
 

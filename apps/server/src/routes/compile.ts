@@ -57,6 +57,8 @@ export function registerCompileRoutes(
         options: {
           precompilePreamble: project.settings.precompilePreamble,
           singlePass: request.body?.singlePass ?? false,
+          reuseImages: project.settings.reuseImages,
+          draftImages: project.settings.draftImages,
         },
       });
       // Live previews do not run BibTeX: give them the new bibliography.

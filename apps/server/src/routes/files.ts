@@ -4,6 +4,7 @@ import { parseProjectPath } from '@myleaf/project';
 import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
 import type { LiveSessionPool } from '../live/live-session-pool.js';
+import type { LiveSources } from '../live/live-sources.js';
 
 /** Upper bound for one uploaded file. */
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
@@ -17,6 +18,7 @@ export function registerFileRoutes(
   app: FastifyInstance,
   store: ProjectStore,
   livePreview: LiveSessionPool | null,
+  liveSources: LiveSources | null = null,
 ): void {
   // File contents travel as raw bytes in both directions.
   app.addContentTypeParser(
@@ -59,10 +61,29 @@ export function registerFileRoutes(
       await store.writeFile(id, file.path, file.content);
       // Open live previews see saved files and uploads too. Touch each session
       // so an active preview is not closed for idleness mid-upload.
-      for (const handle of livePreview?.forProject(id) ?? []) {
+      const handles = livePreview?.forProject(id) ?? [];
+      const project = handles.length > 0 && liveSources ? await store.getProject(id) : null;
+      const live =
+        project && liveSources
+          ? await liveSources.files(project, [file])
+          : { files: [file], convert: () => {} };
+      for (const handle of handles) {
         handle.touch();
-        handle.session.updateFile(file);
+        handle.session.updateFile(live.files[0]!);
       }
+      // An image converted for reuse replaces the upload in the sessions,
+      // unless another upload replaced it meanwhile.
+      live.convert((converted, original) => {
+        void store.readFile(id, original.path).then(
+          (current) => {
+            if (!Buffer.from(current).equals(original.content)) return;
+            for (const handle of livePreview?.forProject(id) ?? []) {
+              handle.session.updateFile(converted);
+            }
+          },
+          () => {},
+        );
+      });
       return reply.status(204).send();
     },
   );

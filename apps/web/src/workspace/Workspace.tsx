@@ -865,7 +865,18 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     settings={project.settings}
                     livePreviewOn={showLive}
                     autoCompileDelay={preferences.autoCompileDelay}
-                    onChange={(settings) => void updateSettings(settings).catch(report)}
+                    onChange={(settings) => {
+                      const images =
+                        settings.draftImages !== undefined || settings.reuseImages !== undefined;
+                      void updateSettings(settings)
+                        .then(() => {
+                          // Show the change: a new live session, or a new PDF.
+                          if (!images) return;
+                          if (showLive) setLiveAttempt((attempt) => attempt + 1);
+                          else void compile().catch(report);
+                        })
+                        .catch(report);
+                    }}
                   />
                 }
                 errorCount={errorCount}
