@@ -23,14 +23,18 @@ import { parseSynctexRecords } from './synctex-output.js';
 
 const run = promisify(execFile);
 
-/** Kills a process of an engine's chain; it may have exited already. */
-const kill = (pid: number) => {
+/** Sends `signal` to a process of an engine's chain; it may have exited already. */
+const signal = (pid: number, name: NodeJS.Signals) => {
   try {
-    process.kill(pid, 'SIGKILL');
+    process.kill(pid, name);
   } catch {
     // Already gone.
   }
 };
+const kill = (pid: number) => signal(pid, 'SIGKILL');
+
+/** Default of `tailDelayMs`. */
+export const DEFAULT_TAIL_DELAY_MS = 1000;
 
 /** Snapshots a session keeps by default (each is a paused pdfTeX process). */
 export const DEFAULT_MAX_SNAPSHOTS = 32;
@@ -58,6 +62,13 @@ export interface PdftexLivePreviewOptions {
   readonly trace?: (line: string) => void;
   /** The `synctex` command-line tool, for forward and inverse search. Default: `synctex`. */
   readonly synctexCommand?: string;
+  /**
+   * Once a run has shown the visible pages, the rest of the document waits
+   * until no edit came for this long (or the visible pages move past it),
+   * so typing does not compete with it for the CPU; an edit meanwhile
+   * cancels it. `0`: runs go on. Default: `DEFAULT_TAIL_DELAY_MS`.
+   */
+  readonly tailDelayMs?: number;
 }
 
 /**
@@ -87,6 +98,7 @@ export class PdftexLivePreview implements LivePreviewBackend {
       maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
       trace: () => {},
       synctexCommand: 'synctex',
+      tailDelayMs: DEFAULT_TAIL_DELAY_MS,
       ...options,
       workRoot: resolve(options.workRoot),
     };
@@ -144,6 +156,8 @@ interface Engine {
   readonly inputs: Set<string>;
   readonly ready: Promise<boolean>;
   isReady: boolean;
+  /** Whether a run's child stops itself on SIGUSR1 (a pdfTeX built before cannot). */
+  canPause: boolean;
   readonly waiting: Map<string, (status: number | null) => void>;
   /** Per run: called when a page of the visible range is ready in a finisher's directory. */
   readonly pages: Map<string, (page: number, dir: string) => void>;
@@ -248,6 +262,16 @@ class PdftexSession implements LivePreviewSession {
   /** Where runs started typesetting again, by run: see #staleSince. */
   #stales: { readonly from: number; readonly run: number }[] = [];
   #inFlight: InFlightRun | null = null;
+  /** The run stopped after the visible pages (see `tailDelayMs`), until `timer`. */
+  #paused: {
+    readonly run: InFlightRun;
+    readonly pid: number;
+    /** The last page it showed. */
+    readonly page: number;
+    readonly timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  /** When the last edit came (performance.now()). */
+  #lastEdit = 0;
   /** Writes a trace line, prefixed with this session (`trace` option). */
   readonly #trace: (line: string) => void;
   /** MuPDF's warnings and errors about the run's PDFs, to the trace. */
@@ -315,6 +339,7 @@ class PdftexSession implements LivePreviewSession {
     this.#trace(`edit ${file.path} ${file.content.length} bytes`);
     this.#files.set(file.path, file.content);
     this.#dirty.add(file.path);
+    this.#lastEdit = performance.now();
     this.#settleRuns = 0;
     this.#schedule();
   }
@@ -326,6 +351,8 @@ class PdftexSession implements LivePreviewSession {
   showPages(first: number, last: number): void {
     const from = Math.max(1, Math.floor(first));
     this.#range = [from, Math.max(from, Math.floor(last))];
+    // Pages past where the paused run stopped need the rest of it.
+    if (this.#paused && this.#range[1] > this.#paused.page) this.#continue();
     void this.#render();
   }
 
@@ -401,6 +428,8 @@ class PdftexSession implements LivePreviewSession {
   async close(): Promise<void> {
     if (this.#closing) return;
     this.#closing = true;
+    if (this.#paused) clearTimeout(this.#paused.timer);
+    this.#paused = null;
     this.#stopEngine(this.#engine);
     this.#stopEngine(this.#next);
     await Promise.all([this.#loop, this.#renders]);
@@ -606,9 +635,10 @@ class PdftexSession implements LivePreviewSession {
         if (this.#closing || extracted === undefined) return;
         this.#emitPage(page, id, extracted);
         this.#onEvent({ type: 'page-count', count: page, final: false });
-        if (page >= this.#range[1] && this.#inFlight === inFlight) {
+        if (page >= this.#range[1] && this.#inFlight === inFlight && !inFlight.shown) {
           inFlight.shown = true;
           if (this.#pending) this.#cancel(inFlight);
+          else this.#pause(inFlight, page);
         }
       })
       .catch(() => {});
@@ -617,8 +647,39 @@ class PdftexSession implements LivePreviewSession {
 
   /** Kills the running child: its parent in the chain then reads commands again. */
   #cancel(run: InFlightRun): void {
+    if (this.#paused?.run === run) {
+      clearTimeout(this.#paused.timer);
+      this.#paused = null;
+    }
     this.#trace(`cancel run ${run.id} (pid ${run.engine.leaf ?? 'none'})`);
     if (run.engine.leaf !== null) kill(run.engine.leaf);
+  }
+
+  /**
+   * Stops the running child after it showed the visible pages (up to
+   * `page`) until no edit came for `tailDelayMs`; an edit cancels it.
+   * SIGUSR1 makes the run's typesetting process stop itself; a process
+   * that has just become a snapshot ignores it (vendor/pdftex).
+   */
+  #pause(run: InFlightRun, page: number): void {
+    const pid = run.engine.leaf;
+    if (this.#options.tailDelayMs <= 0 || !run.engine.canPause || pid === null || this.#paused) {
+      return;
+    }
+    signal(pid, 'SIGUSR1');
+    const delay = Math.max(0, this.#lastEdit + this.#options.tailDelayMs - performance.now());
+    this.#trace(`pause run ${run.id} (pid ${pid}) after page ${page} for ${Math.round(delay)} ms`);
+    this.#paused = { run, pid, page, timer: setTimeout(() => this.#continue(), delay) };
+  }
+
+  /** Lets the paused run typeset the rest of the document. */
+  #continue(): void {
+    const paused = this.#paused;
+    if (!paused) return;
+    clearTimeout(paused.timer);
+    this.#paused = null;
+    this.#trace(`continue run ${paused.run.id} (pid ${paused.pid})`);
+    signal(paused.pid, 'SIGCONT');
   }
 
   /**
@@ -752,6 +813,7 @@ class PdftexSession implements LivePreviewSession {
       inputs,
       ready,
       isReady: false,
+      canPause: false,
       waiting,
       pages,
       sources: this.#written,
@@ -783,6 +845,7 @@ class PdftexSession implements LivePreviewSession {
         }
       } else if (kind === 'ready') {
         engine.isReady = true;
+        engine.canPause = first === 'pause';
         engine.reader = child.pid ?? null;
         markReady(true);
       } else if (kind === 'page' && first !== undefined && third !== undefined) {
@@ -797,6 +860,11 @@ class PdftexSession implements LivePreviewSession {
         if (files) {
           engine.snapshots.push({ pid, page, files, reads });
           engine.leaf = leaf;
+        }
+        // Asked to pause as it forked: the snapshot ignored it; ask its child.
+        if (this.#paused?.pid === pid) {
+          signal(leaf, 'SIGUSR1');
+          this.#paused = { ...this.#paused, pid: leaf };
         }
       } else if (kind === 'resumed' && first !== undefined) {
         const pid = Number(first);
@@ -861,6 +929,10 @@ class PdftexSession implements LivePreviewSession {
   #stopEngine(engine: Engine | null): void {
     if (!engine) return;
     this.#trace(`engine ${engine.process.pid ?? '?'} stopped`);
+    if (this.#paused?.run.engine === engine) {
+      clearTimeout(this.#paused.timer);
+      this.#paused = null;
+    }
     if (this.#engine === engine) this.#engine = null;
     if (this.#next === engine) this.#next = null;
     void rm(engine.dir, { recursive: true, force: true });

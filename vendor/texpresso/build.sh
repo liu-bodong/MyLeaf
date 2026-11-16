@@ -24,9 +24,13 @@ for patch in "$here"/*.patch; do
   git -C "$src" apply "$patch"
 done
 
-# `all` generates Makefile.config before building, in the right order.
 # getconf works on Linux and macOS (nproc is Linux-only).
 jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+# Build libcommon.a first: under -j, `all` builds common, texpresso and
+# texpresso-xetex at once, and the last two each archive libcommon.a too,
+# so concurrent `ar` runs can corrupt it. Both targets generate
+# Makefile.config first.
+make -C "$src" -j"$jobs" common >/dev/null
 make -C "$src" -j"$jobs" all >/dev/null
 mkdir -p "$out/bin"
 # Copy then rename, so binaries in use by running sessions can be replaced.
