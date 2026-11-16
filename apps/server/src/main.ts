@@ -61,7 +61,9 @@ await rm(liveRoot, { recursive: true, force: true });
 // patched pdfTeX (MYLEAF_LIVE_ENGINE=pdftex; docs/spikes/pdflatex-live-preview.md).
 // MYLEAF_TEXPRESSO / MYLEAF_PDFTEX name the binary, or else the build of
 // vendor/*/build.sh is used (this file is in apps/server/{src,dist}).
-const liveEngine = process.env.MYLEAF_LIVE_ENGINE ?? 'texpresso';
+// "pdflatex" is accepted as another name for the pdfTeX engine.
+const liveEngineSetting = process.env.MYLEAF_LIVE_ENGINE ?? 'texpresso';
+const liveEngine = liveEngineSetting.toLowerCase() === 'pdflatex' ? 'pdftex' : liveEngineSetting;
 let liveBackend: LivePreviewBackend | null = null;
 let liveStatus: { readonly level: 'info' | 'warn'; readonly message: string };
 if (liveEngine === 'pdftex') {
@@ -100,7 +102,7 @@ if (liveEngine === 'pdftex') {
   }
 } else {
   throw new Error(
-    `MYLEAF_LIVE_ENGINE must be texpresso or pdftex, got ${JSON.stringify(liveEngine)}`,
+    `MYLEAF_LIVE_ENGINE must be texpresso or pdftex (pdflatex also works), got ${JSON.stringify(liveEngineSetting)}`,
   );
 }
 const livePreview =

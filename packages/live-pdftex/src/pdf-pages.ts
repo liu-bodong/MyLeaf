@@ -22,17 +22,39 @@ export interface PdfPage {
   readonly fonts: readonly LivePdfFont[];
 }
 
+/** Options of `extractPages`. */
+export interface ExtractOptions {
+  /** Leave each page's embedded font programs out of its PDF and return them beside it. */
+  readonly separateFonts?: boolean;
+  /**
+   * Called with each page's digest before the page is cut out: when it
+   * returns true, the page is left out of the result (its image is known).
+   */
+  readonly skip?: (page: number, hash: string) => boolean;
+}
+
 /**
  * Pages `first` to `last` (1-based, those that exist) of the PDF at `path`.
- * MuPDF's warnings and errors go to `log`. With `separateFonts`, each page's
- * embedded font programs are left out of its PDF and returned beside it.
+ * MuPDF's warnings and errors go to `log`.
  */
-export async function extractPages(
+export function extractPages(
   path: string,
   first: number,
   last: number,
   log: (message: string) => void = () => {},
-  { separateFonts = false }: { separateFonts?: boolean } = {},
+  options: ExtractOptions = {},
+): Promise<Map<number, PdfPage>> {
+  const pages: number[] = [];
+  for (let page = Math.max(1, first); page <= last; page++) pages.push(page);
+  return extractPageList(path, pages, log, options);
+}
+
+/** `pages` (1-based, those that exist) of the PDF at `path`, as `extractPages`. */
+export async function extractPageList(
+  path: string,
+  pages: readonly number[],
+  log: (message: string) => void = () => {},
+  { separateFonts = false, skip }: ExtractOptions = {},
 ): Promise<Map<number, PdfPage>> {
   const { PDFDocument, setLog } = await mupdf();
   const data = await readFile(path);
@@ -40,24 +62,31 @@ export async function extractPages(
   setLog(log);
   const source = new PDFDocument(data);
   try {
-    const pages = new Map<number, PdfPage>();
-    for (let page = first; page <= Math.min(last, source.countPages()); page++) {
-      const single = new PDFDocument();
+    const result = new Map<number, PdfPage>();
+    const count = source.countPages();
+    for (const page of pages) {
+      if (page < 1 || page > count) continue;
       const loaded = source.loadPage(page - 1);
       try {
-        single.graftPage(-1, source, page - 1);
-        const fonts = separateFonts ? takeFonts(single) : [];
-        const saved = single.saveToBuffer('compress,garbage=compact');
-        // Copied out of MuPDF's memory before the buffer is freed.
-        const pdf = saved.asUint8Array().slice();
-        saved.destroy();
-        pages.set(page, { pdf, hash: pageHash(loaded.getObject()), fonts });
+        const hash = pageHash(loaded.getObject());
+        if (skip?.(page, hash)) continue;
+        const single = new PDFDocument();
+        try {
+          single.graftPage(-1, source, page - 1);
+          const fonts = separateFonts ? takeFonts(single) : [];
+          const saved = single.saveToBuffer('compress,garbage=compact');
+          // Copied out of MuPDF's memory before the buffer is freed.
+          const pdf = saved.asUint8Array().slice();
+          saved.destroy();
+          result.set(page, { pdf, hash, fonts });
+        } finally {
+          single.destroy();
+        }
       } finally {
         loaded.destroy();
-        single.destroy();
       }
     }
-    return pages;
+    return result;
   } finally {
     source.destroy();
   }

@@ -23,6 +23,7 @@
     "bench:live-fonts": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-fonts-bench.ts",
     "bench:live-fonts-session": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-fonts-session.ts",
     "bench:live-typing": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/typing-bench.ts",
+    "bench:live-settle": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/settle-bench.ts",
     "bench:pdftex-hooks": "node packages/compile-texlive/bench/pdftex-hooks-bench.ts",
     "bench:pdftex-warm": "node packages/compile-texlive/bench/pdftex-warm-bench.ts"
   },

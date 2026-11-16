@@ -390,6 +390,34 @@ ${third}
     expect(events.some((event) => event.type === 'page' && event.stale)).toBe(false);
   });
 
+  it('brings pages shown before, outside the visible range, up to date after a run', async () => {
+    const live = await open([mainFile(threePages('First page.', 'Third page.'))]);
+    live.showPages(1, 3);
+    await settled();
+    // Only page 1 is visible now; the browser still holds pages 2 and 3.
+    live.showPages(1, 1);
+    const unchanged = () =>
+      events.flatMap((event) => (event.type === 'page-unchanged' ? [event.page] : []));
+
+    // An edit on page 1 makes every page stale; after the run, pages 2 and 3
+    // are reported unchanged without being scrolled to.
+    events = [];
+    live.updateFile(mainFile(threePages('First page, edited.', 'Third page.')));
+    await settled();
+    expect(events.filter((event) => event.type === 'stale')).toEqual([{ type: 'stale', from: 1 }]);
+    expect(unchanged()).toEqual(expect.arrayContaining([2, 3]));
+
+    // An edit on page 3, off screen: its new image is sent, not stale.
+    events = [];
+    live.updateFile(mainFile(threePages('First page, edited.', 'Third page, edited.')));
+    await settled();
+    expect(pages().map((page) => page.page)).toEqual([3]);
+    expect(events.some((event) => event.type === 'page' && event.stale)).toBe(false);
+    expect(pages()[0]?.image).toBe(
+      await freshPage(threePages('First page, edited.', 'Third page, edited.'), 3),
+    );
+  });
+
   it('does not resume from a snapshot after a file it did not read appeared', async () => {
     // \IfFileExists on page 1 does not open a missing file, so snapshots
     // after it cannot tell that they depend on it.
