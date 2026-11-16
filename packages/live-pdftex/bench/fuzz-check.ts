@@ -68,7 +68,7 @@ const files = () => {
 };
 const pageText = (pdf: Uint8Array, i = 0) => {
   const doc = mupdf.Document.openDocument(pdf, 'application/pdf');
-  return doc.loadPage(i).toStructuredText().asText().replace(/\s+/g, ' ').trim();
+  return doc.loadPage(i).toStructuredText('').asText().replace(/\s+/g, ' ').trim();
 };
 const workRoot = await mkdtemp(join(tmpdir(), 'fuzz-'));
 const trace: string[] = [];
@@ -176,8 +176,6 @@ process.exit(failures ? 1 : 0);
 
 function readdirSyncDeep(root: string): string {
   // The session's src/main.aux.
-
-  const [project] = readdirSync(root).filter((d: string) => d === 'f');
-  const [session] = readdirSync(join(root, project));
-  return join(project, session, 'src', 'main.aux');
+  const [session = ''] = readdirSync(join(root, 'f'));
+  return join('f', session, 'src', 'main.aux');
 }

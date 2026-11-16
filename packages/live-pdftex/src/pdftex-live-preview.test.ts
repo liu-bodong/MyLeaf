@@ -311,6 +311,40 @@ ${third}
     expect(pages()[2]?.image).toBe(await freshPage([root, edited], 3));
   });
 
+  it('reads the rest of the main file after resuming inside an \\input file', async () => {
+    // The snapshot after page 1 is taken while pdfTeX reads a.tex; the
+    // \input lines for b and c are already in the main file's buffer then.
+    // They used to be skipped on macOS, whose fflush drops buffered input.
+    const part = (name: string, text: string) => ({
+      path: parseProjectPath(`${name}.tex`),
+      content: bytes(`${text}\n\\newpage\n`),
+    });
+    const a = {
+      path: parseProjectPath('a.tex'),
+      content: bytes(`Part A starts.\n\\newpage\n${padding}\nPart A ends.\n\\newpage\n`),
+    };
+    const root = mainFile(
+      bytes(String.raw`\documentclass{article}
+\begin{document}
+\input{a}
+\input{b}
+\input{c}
+\end{document}
+`),
+    );
+    const live = await open([root, a, part('b', 'Part B.'), part('c', 'Part C.')]);
+    live.showPages(1, 4);
+    await settled();
+    const edited = part('b', 'Part B, edited.');
+    events = [];
+    live.updateFile(edited);
+    await settled();
+    expect(events).toContainEqual({ type: 'page-count', count: 4, final: true });
+    const shown = new Map(pages().map((page) => [page.page, page.image]));
+    const files = [root, a, edited, part('c', 'Part C.')];
+    expect(shown.get(3)).toBe(await freshPage(files, 3));
+  });
+
   it('keeps at most the snapshots asked for', async () => {
     /** pdfTeX processes of this test's sessions: the engine and its snapshots, once idle. */
     const processes = () => {

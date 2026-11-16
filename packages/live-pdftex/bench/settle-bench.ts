@@ -108,7 +108,7 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
     const mupdf = await import('mupdf');
     const look = (pdf: Uint8Array, index = 0) => {
       const doc = mupdf.Document.openDocument(pdf, 'application/pdf');
-      return doc.loadPage(index).toStructuredText().asText().replace(/\s+/g, ' ').trim();
+      return doc.loadPage(index).toStructuredText('').asText().replace(/\s+/g, ' ').trim();
     };
     const { execFileSync } = await import('node:child_process');
     const { writeFileSync, readFileSync, mkdtempSync, cpSync } = await import('node:fs');
