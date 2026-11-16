@@ -50,6 +50,28 @@ export function CompileSettings({
           <small>Faster pdfLaTeX compiles; turn off if a package misbehaves</small>
         </span>
       </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings.reuseImages}
+          onChange={(event) => onChange({ reuseImages: event.target.checked })}
+        />
+        <span>
+          Reuse unchanged images
+          <small>Converts transparent PNGs once instead of on every pdfLaTeX compile</small>
+        </span>
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings.draftImages}
+          onChange={(event) => onChange({ draftImages: event.target.checked })}
+        />
+        <span>
+          Draft images
+          <small>Show images as boxes with their file name; fastest</small>
+        </span>
+      </label>
     </>
   );
 }

@@ -12,6 +12,7 @@ import { FakeCompileBackend, InMemoryProjectStore } from '@myleaf/testing';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WebSocket as WsSocket } from 'ws';
+import { DRAFT_IMAGES_CODE } from '@myleaf/compile-texlive';
 import { buildApp } from '../app.js';
 import { LiveSessionPool } from './live-session-pool.js';
 
@@ -341,6 +342,33 @@ describe('live preview routes', () => {
     await patch(null);
     await patch(2);
     expect(session.maxSnapshots).toEqual([null, 2]);
+  });
+
+  it("applies the project's draft-images setting to the root file", async () => {
+    await start();
+    const root = '\\documentclass{article}\n\\begin{document}\nText\n\\end{document}\n';
+    await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${project.id}/files/main.tex`,
+      headers: { 'content-type': 'application/octet-stream' },
+      payload: Buffer.from(root),
+    });
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${project.id}`,
+      payload: { settings: { draftImages: true } },
+    });
+    const { socket, messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const session = backend.sessions[0]!;
+    const draft = (source: string) =>
+      source.replace('\\begin{document}', `\\begin{document}${DRAFT_IMAGES_CODE}`);
+    expect(text(session.request.files.find((f) => f.path === 'main.tex'))).toBe(draft(root));
+
+    const edited = root.replace('Text', 'Edited');
+    socket.send(JSON.stringify({ type: 'update', path: 'main.tex', content: edited }));
+    await until(() => session.updates[0], 'update');
+    expect(text(session.updates[0])).toBe(draft(edited));
   });
 
   it('passes saved files and uploads to open sessions', async () => {

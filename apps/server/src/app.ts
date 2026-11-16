@@ -1,10 +1,12 @@
 import type { CompileBackend } from '@myleaf/compile';
+import type { ImageCache } from '@myleaf/compile-texlive';
 import type { ProjectStore } from '@myleaf/project';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyInstance, FastifyServerOptions } from 'fastify';
 import { registerErrorHandler } from './error-handler.js';
 import type { LiveSessionPool } from './live/live-session-pool.js';
+import { LiveSources } from './live/live-sources.js';
 import { registerCompileRoutes } from './routes/compile.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerLiveRoutes } from './routes/live.js';
@@ -15,6 +17,8 @@ export interface AppDependencies {
   readonly compiler: CompileBackend;
   /** `null` or absent: live preview is not offered. */
   readonly livePreview?: LiveSessionPool | null;
+  /** Converted images the compiler keeps (`reuseImages`), for live previews too. */
+  readonly imageCache?: ImageCache | null;
 }
 
 /**
@@ -30,7 +34,7 @@ export const liveSocketCompression = {
 } as const;
 
 export function buildApp(
-  { store, compiler, livePreview = null }: AppDependencies,
+  { store, compiler, livePreview = null, imageCache = null }: AppDependencies,
   options: FastifyServerOptions = {},
 ): FastifyInstance {
   const app = Fastify({
@@ -39,13 +43,14 @@ export function buildApp(
     ajv: { customOptions: { removeAdditional: false } },
   });
   registerErrorHandler(app);
+  const liveSources = livePreview && new LiveSources(imageCache, livePreview.engine);
   app.get('/health', () => ({ status: 'ok' }));
   registerProjectRoutes(app, store, compiler, livePreview);
-  registerFileRoutes(app, store, livePreview);
+  registerFileRoutes(app, store, livePreview, liveSources);
   registerCompileRoutes(app, store, compiler, livePreview);
   void app.register(websocket, { options: { perMessageDeflate: liveSocketCompression } });
   void app.register((scoped, _options, done) => {
-    registerLiveRoutes(scoped, store, compiler, livePreview);
+    registerLiveRoutes(scoped, store, compiler, livePreview, liveSources);
     done();
   });
   app.addHook('onClose', async () => {
