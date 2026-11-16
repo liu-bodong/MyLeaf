@@ -1,11 +1,14 @@
-import { LIVE_MAX_PAGE_RANGE } from '@myleaf/api';
+import { LIVE_MAX_PAGE_RANGE, decodeLivePdfPage } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
-import type { TexEngine } from '@myleaf/compile';
+import type { PdfPoint, PdfRect, SourceLocation, TexEngine } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { Ref } from 'react';
 import { api } from '../api/client.js';
 import { engineName } from './engine-name.js';
 import type { LiveChannel } from './live-channel.js';
+import { PdfRenderer } from './pdf-renderer.js';
+import type { TextLine } from './pdf-renderer.js';
 import './live-preview.css';
 
 interface LivePreviewPaneProps {
@@ -19,19 +22,99 @@ interface LivePreviewPaneProps {
   readonly onShowPdf: () => void;
   /** Offered when the session ended: start a new session. */
   readonly onRetry: () => void;
+  /** Boxes to highlight, e.g. from forward search. The first is scrolled into view. */
+  readonly highlights?: readonly PdfRect[];
+  /** Double-click on a page. Coordinates are PDF points from the page's top-left. */
+  readonly onInverseSearch?: ((point: PdfPoint) => void) | undefined;
+  readonly ref?: Ref<LivePreviewHandle>;
 }
+
+/** SyncTeX on the live pages, as of the server's last finished run. */
+export interface LivePreviewHandle {
+  /** Boxes on the live pages that `location` produced; none without SyncTeX. */
+  forwardSearch(location: SourceLocation): Promise<readonly PdfRect[]>;
+  /** The source that produced `point`, or `null`. */
+  inverseSearch(point: PdfPoint): Promise<SourceLocation | null>;
+  /**
+   * Point on the reading line, a third down the visible area (where forward
+   * search places its target), for inverse search. Null when nothing is shown.
+   */
+  readingPoint(): PdfPoint | null;
+}
+
+/** Where the reading line sits, as a share of the visible height (as in PdfViewer). */
+const READING_LINE = 1 / 3;
+/** A SyncTeX request, without the id the pane gives it. */
+type SearchRequest =
+  Extract<LiveClientMessage, { type: 'forward' | 'inverse' }> extends infer M
+    ? M extends unknown
+      ? Omit<M, 'id'>
+      : never
+    : never;
+/** The server's answer to a SyncTeX request. */
+type SearchResult = Extract<LiveServerMessage, { type: 'forward-result' | 'inverse-result' }>;
 
 type Connection =
   | { readonly state: 'connecting' }
   | { readonly state: 'live' }
   | { readonly state: 'ended'; readonly message: string };
 
-interface LivePage {
-  readonly url: string;
-  /** Page size from the SVG, in its units (pt); sets the slot's aspect ratio. */
-  readonly width: number;
-  readonly height: number;
+/** A shown page: an SVG (TeXpresso) or a PDF drawn by MuPDF (pdfTeX). */
+type LivePage =
+  | {
+      readonly kind: 'svg';
+      readonly url: string;
+      /** Page size from the SVG, in its units (pt); sets the slot's aspect ratio. */
+      readonly width: number;
+      readonly height: number;
+    }
+  | {
+      readonly kind: 'pdf';
+      readonly pdf: Uint8Array;
+      readonly bitmap: ImageBitmap;
+      /** Page size in PDF points. */
+      readonly width: number;
+      readonly height: number;
+      readonly lines: readonly PlacedLine[];
+    };
+
+/** A line of the text layer, with the horizontal stretch that makes it as wide as on the page. */
+interface PlacedLine extends TextLine {
+  readonly stretch: number;
 }
+
+/** Font of the text layer; its glyphs are invisible, only their extent matters. */
+const TEXT_FONT = 'sans-serif';
+
+let measure: CanvasRenderingContext2D | null = null;
+/** Stretches each line so the text layer's glyphs cover the page's. */
+function placeLines(lines: readonly TextLine[]): PlacedLine[] {
+  measure ??= document.createElement('canvas').getContext('2d');
+  if (measure === null) return lines.map((line) => ({ ...line, stretch: 1 }));
+  measure.font = `100px ${TEXT_FONT}`;
+  return lines.map((line) => {
+    // Width at a font size of 100 px; the layer's font size is the line's height.
+    const natural = (measure!.measureText(line.text).width * line.height) / 100;
+    return { ...line, stretch: natural > 0 ? line.width / natural : 1 };
+  });
+}
+
+/** Device pixels across a page slot of the scroller. */
+function slotPixelWidth(scroller: HTMLElement | null): number {
+  const style = scroller === null ? null : getComputedStyle(scroller);
+  const padding =
+    style === null ? 0 : parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+  const width = (scroller?.clientWidth ?? 800) - padding;
+  return Math.max(100, Math.round(width * window.devicePixelRatio));
+}
+
+/** Time to wait after the pane is resized before drawing pages at the new size. */
+const RESIZE_DELAY_MS = 200;
+
+const release = (page: LivePage) => {
+  if (page.kind === 'svg') URL.revokeObjectURL(page.url);
+  else page.bitmap.close();
+};
 
 /** US Letter, until the first page arrives. */
 const DEFAULT_SIZE = { width: 612, height: 792 };
@@ -56,6 +139,9 @@ export function LivePreviewPane({
   onReady,
   onShowPdf,
   onRetry,
+  highlights = [],
+  onInverseSearch,
+  ref,
 }: LivePreviewPaneProps) {
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
   const [pages, setPages] = useState<ReadonlyMap<number, LivePage>>(new Map());
@@ -70,30 +156,107 @@ export function LivePreviewPane({
   useEffect(() => {
     onReadyRef.current = onReady;
   });
+  /** Sends a SyncTeX request on the session; resolves with `null` if it ends first. */
+  const searchRef = useRef<((message: SearchRequest) => Promise<SearchResult | null>) | null>(null);
 
   useEffect(() => {
     const socket = new WebSocket(api.livePreviewUrl(projectId));
     socketRef.current = socket;
+    socket.binaryType = 'arraybuffer';
     let ended = false;
     let closed = false;
     const live = new Map<number, LivePage>();
-    /** Page messages received per page; a decoded image is shown only if it is the latest. */
+    /** Page messages received per page; a drawn page is shown only if it is the latest. */
     const received = new Map<number, number>();
     const staleNow = new Set<number>();
+    const renderer = new PdfRenderer();
+    const searches = new Map<number, (result: SearchResult | null) => void>();
+    let nextSearch = 0;
+    searchRef.current = (message) =>
+      new Promise((resolve) => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          resolve(null);
+          return;
+        }
+        const id = nextSearch++;
+        searches.set(id, resolve);
+        const request: LiveClientMessage = { ...message, id };
+        socket.send(JSON.stringify(request));
+      });
+    const endSearches = () => {
+      for (const resolve of searches.values()) resolve(null);
+      searches.clear();
+    };
     const end = (message: string) => {
       ended = true;
       setConnection({ state: 'ended', message });
     };
+    /** Shows `next` for `page` if no newer message for it arrived meanwhile. */
+    const show = (page: number, sequence: number, next: LivePage) => {
+      if (closed || received.get(page) !== sequence) {
+        release(next);
+        return;
+      }
+      const previous = live.get(page);
+      if (previous !== undefined) release(previous);
+      live.set(page, next);
+      setPages(new Map(live));
+    };
+    const draw = (page: number, sequence: number, pdf: Uint8Array) => {
+      renderer
+        .render(pdf, slotPixelWidth(scrollerRef.current))
+        .then(({ bitmap, width, height, lines }) =>
+          show(page, sequence, {
+            kind: 'pdf',
+            pdf,
+            bitmap,
+            width,
+            height,
+            lines: placeLines(lines),
+          }),
+        )
+        .catch(() => {});
+    };
+    /** Counts a new message for `page`; returns its sequence number. */
+    const receive = (page: number, isStale: boolean) => {
+      const sequence = (received.get(page) ?? 0) + 1;
+      received.set(page, sequence);
+      if (isStale) staleNow.add(page);
+      else staleNow.delete(page);
+      setStale(new Set(staleNow));
+      return sequence;
+    };
 
-    socket.addEventListener('message', (event: MessageEvent<string>) => {
-      const message = JSON.parse(event.data) as LiveServerMessage;
-      if (message.type === 'page') {
+    // Pages are drawn again at the pane's new width once resizing pauses.
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let drawnWidth = slotPixelWidth(scrollerRef.current);
+    const resizes = new ResizeObserver(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const width = slotPixelWidth(scrollerRef.current);
+        if (width === drawnWidth) return;
+        drawnWidth = width;
+        for (const [page, shown] of live) {
+          if (shown.kind !== 'pdf') continue;
+          const sequence = (received.get(page) ?? 0) + 1;
+          received.set(page, sequence);
+          draw(page, sequence, shown.pdf);
+        }
+      }, RESIZE_DELAY_MS);
+    });
+    if (scrollerRef.current !== null) resizes.observe(scrollerRef.current);
+
+    socket.addEventListener('message', (event: MessageEvent<string | ArrayBuffer>) => {
+      const message: LiveServerMessage =
+        typeof event.data === 'string'
+          ? (JSON.parse(event.data) as LiveServerMessage)
+          : decodeLivePdfPage(new Uint8Array(event.data));
+      if (message.type === 'page' && 'pdf' in message) {
         const { page } = message;
-        const sequence = (received.get(page) ?? 0) + 1;
-        received.set(page, sequence);
-        if (message.stale) staleNow.add(page);
-        else staleNow.delete(page);
-        setStale(new Set(staleNow));
+        draw(page, receive(page, message.stale === true), message.pdf);
+      } else if (message.type === 'page') {
+        const { page } = message;
+        const sequence = receive(page, message.stale === true);
         const url = URL.createObjectURL(new Blob([message.svg], { type: 'image/svg+xml' }));
         const size = svgSize(message.svg) ?? DEFAULT_SIZE;
         // Decoded before it replaces the shown image, so the page does not flash blank.
@@ -102,22 +265,16 @@ export function LivePreviewPane({
         void image
           .decode()
           .catch(() => {})
-          .then(() => {
-            if (closed || received.get(page) !== sequence) {
-              URL.revokeObjectURL(url);
-              return;
-            }
-            const previous = live.get(page);
-            if (previous !== undefined) URL.revokeObjectURL(previous.url);
-            live.set(page, { url, ...size });
-            setPages(new Map(live));
-          });
+          .then(() => show(page, sequence, { kind: 'svg', url, ...size }));
       } else if (message.type === 'page-unchanged') {
         staleNow.delete(message.page);
         setStale(new Set(staleNow));
       } else if (message.type === 'stale') {
         for (const page of received.keys()) if (page >= message.from) staleNow.add(page);
         setStale(new Set(staleNow));
+      } else if (message.type === 'forward-result' || message.type === 'inverse-result') {
+        searches.get(message.id)?.(message);
+        searches.delete(message.id);
       } else if (message.type === 'page-count') {
         setCount((shown) =>
           message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
@@ -130,6 +287,7 @@ export function LivePreviewPane({
       }
     });
     socket.addEventListener('close', () => {
+      endSearches();
       if (!ended) end('Disconnected');
     });
     const unsubscribe = channel.subscribe((update) => {
@@ -146,7 +304,12 @@ export function LivePreviewPane({
       unsubscribe();
       socket.close();
       socketRef.current = null;
-      for (const page of live.values()) URL.revokeObjectURL(page.url);
+      searchRef.current = null;
+      endSearches();
+      resizes.disconnect();
+      clearTimeout(resizeTimer);
+      renderer.close();
+      for (const page of live.values()) release(page);
     };
   }, [projectId, channel]);
 
@@ -189,6 +352,72 @@ export function LivePreviewPane({
 
   const fallbackSize = pages.get(current) ?? pages.values().next().value ?? DEFAULT_SIZE;
   const slots = Array.from({ length: count }, (_, index) => index + 1);
+  /** Page size in PDF points: the page's own, or that of the pages around it. */
+  const sizeOf = (page: number) => pages.get(page) ?? fallbackSize;
+  const sizeOfRef = useRef(sizeOf);
+  useEffect(() => {
+    sizeOfRef.current = sizeOf;
+  });
+
+  // Scroll each new set of highlights into view once.
+  const scrolledTo = useRef<readonly PdfRect[] | null>(null);
+  useEffect(() => {
+    const target = highlights[0];
+    const scroller = scrollerRef.current;
+    if (target === undefined || scroller === null || scrolledTo.current === highlights) return;
+    const slot = scroller.querySelector(`[data-page="${target.page}"]`);
+    if (slot === null) return;
+    scrolledTo.current = highlights;
+    const box = slot.getBoundingClientRect();
+    const scale = box.width / sizeOfRef.current(target.page).width;
+    scroller.scrollTo({
+      top:
+        scroller.scrollTop +
+        box.top -
+        scroller.getBoundingClientRect().top +
+        target.y * scale -
+        scroller.clientHeight * READING_LINE,
+      behavior: 'smooth',
+    });
+  }, [highlights]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      async forwardSearch(location) {
+        const result = await searchRef.current?.({
+          type: 'forward',
+          path: location.file,
+          line: location.line,
+          column: location.column,
+        });
+        return result?.type === 'forward-result' ? result.rects : [];
+      },
+      async inverseSearch({ page, x, y }) {
+        const result = await searchRef.current?.({ type: 'inverse', page, x, y });
+        return result?.type === 'inverse-result' ? result.location : null;
+      },
+      readingPoint() {
+        const scroller = scrollerRef.current;
+        if (scroller === null || scroller.clientHeight === 0) return null;
+        const line = scroller.getBoundingClientRect().top + scroller.clientHeight * READING_LINE;
+        const slots = [...scroller.querySelectorAll<HTMLElement>('[data-page]')];
+        // The last page that starts above the reading line.
+        const slot = slots.findLast((element) => element.getBoundingClientRect().top <= line);
+        if (slot === undefined) return null;
+        const page = Number(slot.dataset.page);
+        const box = slot.getBoundingClientRect();
+        const size = sizeOfRef.current(page);
+        const scale = box.width / size.width;
+        return {
+          page,
+          x: size.width / 2,
+          y: Math.min(Math.max((line - box.top) / scale, 0), size.height),
+        };
+      },
+    }),
+    [],
+  );
 
   return (
     <div className="live-pane" data-testid="live-preview">
@@ -218,16 +447,78 @@ export function LivePreviewPane({
               className={stale.has(page) ? 'live-slot stale' : 'live-slot'}
               data-page={page}
               style={{ aspectRatio: `${size.width} / ${size.height}` }}
+              onDoubleClick={
+                onInverseSearch &&
+                ((event) => {
+                  const box = event.currentTarget.getBoundingClientRect();
+                  onInverseSearch({
+                    page,
+                    x: ((event.clientX - box.left) / box.width) * size.width,
+                    y: ((event.clientY - box.top) / box.height) * size.height,
+                  });
+                })
+              }
             >
-              {rendered !== undefined ? (
+              {rendered?.kind === 'svg' ? (
                 <img src={rendered.url} alt={`Live preview of page ${page}`} />
+              ) : rendered?.kind === 'pdf' ? (
+                <PdfPage page={rendered} label={`Live preview of page ${page}`} />
               ) : (
                 connection.state !== 'ended' && <p className="placeholder">Rendering…</p>
               )}
+              {highlights
+                .filter((rect) => rect.page === page)
+                .map((rect, index) => (
+                  <div
+                    key={index}
+                    className="pdf-highlight"
+                    style={{
+                      left: `${(rect.x / size.width) * 100}%`,
+                      top: `${(rect.y / size.height) * 100}%`,
+                      width: `${(rect.width / size.width) * 100}%`,
+                      height: `${(rect.height / size.height) * 100}%`,
+                    }}
+                  />
+                ))}
             </div>
           );
         })}
       </div>
     </div>
+  );
+}
+
+/** A page drawn by MuPDF, with an invisible text layer over it for selecting and copying. */
+function PdfPage({ page, label }: { page: LivePage & { kind: 'pdf' }; label: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return;
+    canvas.width = page.bitmap.width;
+    canvas.height = page.bitmap.height;
+    canvas.getContext('2d')?.drawImage(page.bitmap, 0, 0);
+  }, [page.bitmap]);
+  return (
+    <>
+      <canvas ref={canvasRef} role="img" aria-label={label} />
+      <div className="live-text" style={{ fontFamily: TEXT_FONT }}>
+        {page.lines.map((line, index) => (
+          // A line break after each line, so copied text keeps its lines.
+          <Fragment key={index}>
+            <span
+              style={{
+                left: `${(line.left / page.width) * 100}%`,
+                top: `${(line.top / page.height) * 100}%`,
+                fontSize: `${(line.height / page.width) * 100}cqw`,
+                transform: `scaleX(${line.stretch})`,
+              }}
+            >
+              {line.text}
+            </span>
+            <br />
+          </Fragment>
+        ))}
+      </div>
+    </>
   );
 }

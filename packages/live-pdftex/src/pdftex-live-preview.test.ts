@@ -7,12 +7,29 @@ import { ProjectId } from '@myleaf/doc-model';
 import type { LivePreviewEvent, LivePreviewSession } from '@myleaf/live-preview';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
+import * as mupdf from 'mupdf';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { kpathseaEnv } from './kpathsea-env.js';
 import { pauseOffset } from './pause-offset.js';
 import { PdftexLivePreview } from './pdftex-live-preview.js';
 
 const encoder = new TextEncoder();
+const images = new WeakMap<Uint8Array, string>();
+/** What a one-page PDF shows: its rendering at 72 dpi, as base64 PNG. */
+const look = (pdf: Uint8Array): string => {
+  let image = images.get(pdf);
+  if (image === undefined) {
+    const document = new mupdf.PDFDocument(pdf);
+    const pixmap = document
+      .loadPage(0)
+      .toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false);
+    image = Buffer.from(pixmap.asPNG()).toString('base64');
+    pixmap.destroy();
+    document.destroy();
+    images.set(pdf, image);
+  }
+  return image;
+};
 const bytes = (text: string) => encoder.encode(text);
 
 describe('pauseOffset', () => {
@@ -52,11 +69,7 @@ const tool = (name: string, args: string[]) => {
   }
 };
 const kpathsea = await kpathseaEnv();
-const available =
-  process.platform !== 'win32' &&
-  existsSync(command) &&
-  kpathsea !== null &&
-  tool('mutool', ['-v']) !== null;
+const available = process.platform !== 'win32' && existsSync(command) && kpathsea !== null;
 
 const main = (preamble: string, firstPage: string) =>
   bytes(String.raw`\documentclass{article}
@@ -84,9 +97,9 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     await rm(workRoot, { recursive: true, force: true });
   });
 
-  const open = async (files: ProjectFile[]) => {
+  const open = async (files: ProjectFile[], root = workRoot) => {
     events = [];
-    const backend = new PdftexLivePreview({ command, workRoot, kpathsea: kpathsea ?? {} });
+    const backend = new PdftexLivePreview({ command, workRoot: root, kpathsea: kpathsea ?? {} });
     session = await backend.open(
       { projectId: ProjectId('p'), rootFile: parseProjectPath('main.tex'), files },
       (event) => events.push(event),
@@ -95,25 +108,41 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
   };
   const pages = () =>
     events.flatMap((event) =>
-      event.type === 'page' ? [{ page: event.page, svg: event.svg }] : [],
+      event.type === 'page' && 'pdf' in event
+        ? [{ page: event.page, pdf: event.pdf, image: look(event.pdf) }]
+        : [],
     );
   const mainFile = (content: Uint8Array): ProjectFile => ({
     path: parseProjectPath('main.tex'),
     content,
   });
+  /** Waits until no event arrived for a second (reruns for the .aux included). */
+  const settled = () =>
+    expect
+      .poll(
+        async () => {
+          const before = events.length;
+          await new Promise((done) => setTimeout(done, 1000));
+          return events.length === before;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
 
   it('shows the requested pages and re-emits only pages that change', async () => {
     const live = await open([mainFile(main('', 'First page.'))]);
     live.showPages(1, 2);
+    await expect
+      .poll(() => events, { timeout: 20_000 })
+      .toContainEqual({ type: 'page-count', count: 2, final: true });
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
-    expect(events).toContainEqual({ type: 'page-count', count: 2, final: true });
     const [first] = pages();
-    expect(first?.svg).toMatch(/^<svg /);
+    expect(Buffer.from(first!.pdf.subarray(0, 5)).toString()).toBe('%PDF-');
 
     live.updateFile(mainFile(main('', 'First page, edited with more words.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(3);
     expect(pages()[2]?.page).toBe(1);
-    expect(pages()[2]?.svg).not.toBe(first?.svg);
+    expect(pages()[2]?.image).not.toBe(first?.image);
   });
 
   // After page 1 the document never ends: what is shown comes from finishers.
@@ -139,7 +168,7 @@ ${text}
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
     live.updateFile(mainFile(endless('After the edit.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
   });
 
   it('starts a new engine when the preamble or a file it read changes', async () => {
@@ -156,7 +185,7 @@ ${text}
 
     live.updateFile(mainFile(main('\\usepackage{local}\\pagestyle{empty}', 'Text.')));
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(3);
-    expect(new Set(pages().map((page) => page.svg)).size).toBe(3);
+    expect(new Set(pages().map((page) => page.image)).size).toBe(3);
   });
 
   it('brings references up to date without an edit', async () => {
@@ -167,7 +196,7 @@ ${text}
     // The first run has no .aux (section ??); a new engine reads the one it
     // wrote, and the page is typeset again.
     await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
   });
 
   // Three pages; typesetting page 1 takes a while, so a run that starts
@@ -202,9 +231,9 @@ ${third}
     );
     try {
       other.showPages(page, page);
-      const svg = () => fresh.find((event) => event.type === 'page' && event.page === page);
-      await expect.poll(svg, { timeout: 30_000 }).toBeDefined();
-      return (svg() as { svg: string }).svg;
+      const shown = () => fresh.find((event) => event.type === 'page' && event.page === page);
+      await expect.poll(shown, { timeout: 30_000 }).toBeDefined();
+      return look((shown() as { pdf: Uint8Array }).pdf);
     } finally {
       await other.close();
     }
@@ -234,8 +263,8 @@ ${third}
     const edited = threePages('First page, edited.', 'Third page, edited once more.');
     const startedOver = await timeToPages(live, edited, 3);
     expect(resumed).toBeLessThan(startedOver / 2);
-    expect(pages()[1]?.svg).toBe(await freshPage(third, 3));
-    expect(pages()[2]?.svg).toBe(await freshPage(edited, 3));
+    expect(pages()[1]?.image).toBe(await freshPage(third, 3));
+    expect(pages()[2]?.image).toBe(await freshPage(edited, 3));
   });
 
   it('resumes from the last snapshot before an edit in an \\input file', async () => {
@@ -269,8 +298,8 @@ ${third}
     const edited = chapter('First page, edited.', 'Third page, edited once more.');
     const startedOver = await timeToPages(live, edited, 3);
     expect(resumed).toBeLessThan(startedOver / 2);
-    expect(pages()[1]?.svg).toBe(await freshPage([root, third], 3));
-    expect(pages()[2]?.svg).toBe(await freshPage([root, edited], 3));
+    expect(pages()[1]?.image).toBe(await freshPage([root, third], 3));
+    expect(pages()[2]?.image).toBe(await freshPage([root, edited], 3));
   });
 
   it('keeps at most the snapshots asked for', async () => {
@@ -317,7 +346,7 @@ ${third}
     live.updateFile(mainFile(threePages('First page, edited.', 'Third page, edited.')));
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(4);
     await expect.poll(processes, { timeout: 10_000 }).toBe(2);
-    expect(pages().at(-1)?.svg).toBe(
+    expect(pages().at(-1)?.image).toBe(
       await freshPage(threePages('First page, edited.', 'Third page, edited.'), 3),
     );
   });
@@ -325,18 +354,6 @@ ${third}
   it('marks the pages a run typesets again as stale until they are shown or unchanged', async () => {
     const live = await open([mainFile(threePages('First page.', 'Third page.'))]);
     live.showPages(1, 3);
-    /** Waits until no event arrived for a second (reruns for the .aux included). */
-    const settled = () =>
-      expect
-        .poll(
-          async () => {
-            const before = events.length;
-            await new Promise((done) => setTimeout(done, 1000));
-            return events.length === before;
-          },
-          { timeout: 30_000 },
-        )
-        .toBe(true);
     const shown = () => pages().map((page) => page.page);
     const unchanged = () =>
       events.flatMap((event) => (event.type === 'page-unchanged' ? [event.page] : []));
@@ -380,7 +397,7 @@ ${third}
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
     const extra = { path: parseProjectPath('extra.tex'), content: bytes('% extra\n') };
     await timeToPages(live, extra, 2);
-    expect(pages()[1]?.svg).toBe(await freshPage([root, extra], 3));
+    expect(pages()[1]?.image).toBe(await freshPage([root, extra], 3));
   });
 
   it('does not resume from a snapshot that read a changed file', async () => {
@@ -393,7 +410,92 @@ ${third}
     await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(1);
     live.updateFile(body('First page, from another file.'));
     await expect.poll(() => pages().length, { timeout: 30_000 }).toBe(2);
-    expect(pages()[1]?.svg).not.toBe(pages()[0]?.svg);
+    expect(pages()[1]?.image).not.toBe(pages()[0]?.image);
+  });
+
+  it('maps between the source and the pages of the last run with SyncTeX', async () => {
+    const doc = (second: string) =>
+      bytes(String.raw`\documentclass{article}
+\begin{document}
+First page.
+\input{part}
+\newpage
+${second}
+\end{document}
+`);
+    const part = { path: parseProjectPath('part.tex'), content: bytes('Text from part.\n') };
+    const live = await open([mainFile(doc('Second page.')), part]);
+    const forward = (file: string, line: number) =>
+      live.forwardSearch!({ file: parseProjectPath(file), line, column: null });
+    const inverse = async (file: string, line: number) => {
+      const [rect] = await forward(file, line);
+      return rect
+        ? live.inverseSearch!({
+            page: rect.page,
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+          })
+        : null;
+    };
+    expect(await forward('main.tex', 3)).toEqual([]);
+    live.showPages(1, 2);
+    await settled();
+    expect(events).toContainEqual({ type: 'page-count', count: 2, final: true });
+    const pagesOf = async (file: string, line: number) =>
+      new Set((await forward(file, line)).map((rect) => rect.page));
+    expect(await pagesOf('main.tex', 3)).toEqual(new Set([1]));
+    expect(await pagesOf('part.tex', 1)).toEqual(new Set([1]));
+    expect(await pagesOf('main.tex', 6)).toEqual(new Set([2]));
+    expect(await inverse('main.tex', 6)).toEqual({
+      file: parseProjectPath('main.tex'),
+      line: 6,
+      column: null,
+    });
+    expect(await inverse('part.tex', 1)).toMatchObject({ file: parseProjectPath('part.tex') });
+
+    // A run that resumes after page 1 gives SyncTeX data for the whole document.
+    live.updateFile(mainFile(doc('Inserted.\n\nSecond page.')));
+    await settled();
+    expect(await pagesOf('main.tex', 3)).toEqual(new Set([1]));
+    expect(await pagesOf('part.tex', 1)).toEqual(new Set([1]));
+    expect(await pagesOf('main.tex', 8)).toEqual(new Set([2]));
+    expect(await inverse('main.tex', 8)).toMatchObject({ line: 8 });
+  });
+
+  it('does not send a page again when only objects written at the end differ', async () => {
+    // Like PGF: page resources refer to an object written at the end of the
+    // document, so the PDF that shows page 1 first lacks it.
+    const live = await open([
+      mainFile(
+        bytes(String.raw`\documentclass{article}
+\pdfobj reserveobjnum \edef\gs{\the\pdflastobj}
+\edef\x{/ExtGState \gs\space 0 R}\expandafter\pdfpageresources\expandafter{\x}
+\AtEndDocument{\immediate\pdfobj useobjnum \gs {<<>>}}
+\begin{document}
+First page.
+\newpage
+Second page.
+\end{document}
+`),
+      ),
+    ]);
+    live.showPages(1, 1);
+    await settled();
+    expect(pages().map((page) => page.page)).toEqual([1]);
+    expect(events).toContainEqual({ type: 'page-unchanged', page: 1 });
+  });
+
+  it('counts the pages of a run in a workspace with a long path', async () => {
+    // pdfTeX wraps log lines at 79 characters by default. A root this long
+    // puts a line break in "(2 pages" of the log's last line, "Output written
+    // on <root>/p/<session>/runs/1/main.pdf (2 pages, ...".
+    const length = 79 + ((((2 - workRoot.length - 1) % 79) + 79) % 79);
+    const root = join(workRoot, 'x'.repeat(length));
+    const live = await open([mainFile(main('', 'First page.'))], root);
+    live.showPages(1, 2);
+    await expect
+      .poll(() => events, { timeout: 20_000 })
+      .toContainEqual({ type: 'page-count', count: 2, final: true });
   });
 
   it('typesets a root file without \\begin{document} in full runs', async () => {

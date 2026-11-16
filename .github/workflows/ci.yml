@@ -27,7 +27,7 @@ jobs:
       - name: Install TeX Live, TeXpresso and pdfTeX build dependencies
         # latex-extra provides mylatexformat (ADR 0011); xetex and the libraries
         # are needed to build and run TeXpresso (vendor/texpresso/README.md);
-        # texinfo builds pdfTeX and mupdf-tools renders its pages (vendor/pdftex/README.md).
+        # texinfo builds pdfTeX (vendor/pdftex/README.md).
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -35,7 +35,7 @@ jobs:
             build-essential pkg-config libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev \
             libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev \
             libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
-            libpng-dev zlib1g-dev texinfo mupdf-tools
+            libpng-dev zlib1g-dev texinfo
       - name: Build TeXpresso
         run: vendor/texpresso/build.sh
       - name: Build pdfTeX (live preview with MYLEAF_LIVE_ENGINE=pdftex)

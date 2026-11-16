@@ -10,6 +10,10 @@ export default defineConfig({
     // Use workspace packages' TypeScript sources (see "@myleaf/source" exports).
     conditions: ['@myleaf/source', ...defaultClientConditions],
   },
+  // MuPDF (live preview) finds its WebAssembly next to its own module, which
+  // pre-bundling would move; its worker uses top-level await (ES modules).
+  optimizeDeps: { exclude: ['mupdf'] },
+  worker: { format: 'es' },
   server: { proxy: { '/api': apiProxy } },
   preview: { proxy: { '/api': apiProxy } },
 });

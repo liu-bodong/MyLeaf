@@ -72,6 +72,8 @@ export interface LivePreviewInfo {
    * (`MYLEAF_LIVE_MAX_SNAPSHOTS`), or `null` when the engine has none.
    */
   readonly maxSnapshots: number | null;
+  /** Whether live pages map to the source and back (SyncTeX `forward`/`inverse` messages). */
+  readonly synctex: boolean;
 }
 
 /** Messages the browser sends on a project's live-preview WebSocket. */
@@ -79,21 +81,60 @@ export type LiveClientMessage =
   /** Full text of a project file that changed (not necessarily saved yet). */
   | { readonly type: 'update'; readonly path: string; readonly content: string }
   /** The 1-based, inclusive range of pages the browser shows (at most 20 pages). */
-  | { readonly type: 'pages'; readonly first: number; readonly last: number };
+  | { readonly type: 'pages'; readonly first: number; readonly last: number }
+  /**
+   * SyncTeX on the live pages, as of the last finished run: the server
+   * answers with a `forward-result` or `inverse-result` of the same `id`.
+   */
+  | {
+      readonly type: 'forward';
+      readonly id: number;
+      readonly path: string;
+      readonly line: number;
+      readonly column: number | null;
+    }
+  | {
+      readonly type: 'inverse';
+      readonly id: number;
+      readonly page: number;
+      readonly x: number;
+      readonly y: number;
+    };
 
 /** Largest page range a browser may request in one `pages` message. */
 export const LIVE_MAX_PAGE_RANGE = 20;
+
+/**
+ * A live page as a PDF of that one page. It travels as one binary WebSocket
+ * message (`encodeLivePdfPage`).
+ */
+export interface LivePdfPageMessage {
+  readonly type: 'page';
+  readonly page: number;
+  readonly pdf: Uint8Array;
+  /** From a run older than the latest `stale` message covering the page. */
+  readonly stale?: true;
+}
 
 /** Messages the server sends on a project's live-preview WebSocket. */
 export type LiveServerMessage =
   /** `stale`: from a run older than the latest `stale` message covering the page. */
   | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
+  | LivePdfPageMessage
   /** The page was rendered again with the same content: it is up to date. */
   | { readonly type: 'page-unchanged'; readonly page: number }
   /** Pages from `from` on are being typeset again and may be out of date. */
   | { readonly type: 'stale'; readonly from: number }
   /** Pages typeset so far; `final` once the whole document is. */
   | { readonly type: 'page-count'; readonly count: number; readonly final: boolean }
+  /** Answers `forward`: none when the engine has no SyncTeX. */
+  | { readonly type: 'forward-result'; readonly id: number; readonly rects: readonly PdfRect[] }
+  /** Answers `inverse`: `null` when the engine has no SyncTeX. */
+  | {
+      readonly type: 'inverse-result';
+      readonly id: number;
+      readonly location: SourceLocation | null;
+    }
   | {
       readonly type: 'status';
       /**
@@ -104,6 +145,27 @@ export type LiveServerMessage =
       readonly state: 'starting' | 'unavailable' | 'busy' | 'stopped';
       readonly message?: string;
     };
+
+/** A PDF page message as binary: the message without `pdf` as a JSON line, then the PDF. */
+export function encodeLivePdfPage(message: LivePdfPageMessage): Uint8Array {
+  const { pdf, ...header } = message;
+  // The header is ASCII (a type, a number, a flag), so one byte per character.
+  const head = Uint8Array.from(`${JSON.stringify(header)}\n`, (char) => char.charCodeAt(0));
+  const data = new Uint8Array(head.length + pdf.length);
+  data.set(head);
+  data.set(pdf, head.length);
+  return data;
+}
+
+/** The message `encodeLivePdfPage` encoded. */
+export function decodeLivePdfPage(data: Uint8Array): LivePdfPageMessage {
+  const end = data.indexOf(0x0a);
+  const header = JSON.parse(String.fromCharCode(...data.subarray(0, end))) as Omit<
+    LivePdfPageMessage,
+    'pdf'
+  >;
+  return { ...header, pdf: data.subarray(end + 1) };
+}
 
 /** Body of every non-2xx JSON response. */
 export interface ErrorResponse {

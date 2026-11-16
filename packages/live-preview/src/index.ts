@@ -1,3 +1,4 @@
+import type { PdfPoint, PdfRect, SourceLocation } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
 import type { ProjectFile, ProjectPath } from '@myleaf/project';
 
@@ -16,11 +17,18 @@ export interface LivePreviewRequest {
 
 export type LivePreviewEvent =
   /**
-   * A page of the requested range was (re)rendered with new content. `svg`
-   * is a standalone, valid SVG document. `stale`: rendered from a run older
-   * than the latest `stale` event that covers the page.
+   * A page of the requested range was (re)rendered with new content: `svg`
+   * is a standalone, valid SVG document, or `pdf` a PDF of that one page.
+   * `stale`: rendered from a run older than the latest `stale` event that
+   * covers the page.
    */
   | { readonly type: 'page'; readonly page: number; readonly svg: string; readonly stale?: true }
+  | {
+      readonly type: 'page';
+      readonly page: number;
+      readonly pdf: Uint8Array;
+      readonly stale?: true;
+    }
   /** A page of the requested range was rendered again, with the content last emitted. */
   | { readonly type: 'page-unchanged'; readonly page: number }
   /**
@@ -51,6 +59,13 @@ export interface LivePreviewSession {
    * backend's), from the next run. Backends without snapshots omit it.
    */
   setMaxSnapshots?(max: number | null): void;
+  /**
+   * SyncTeX on the live pages: boxes on the pages that `location` produced,
+   * as of the last finished run. Backends without SyncTeX omit it.
+   */
+  forwardSearch?(location: SourceLocation): Promise<readonly PdfRect[]>;
+  /** SyncTeX: the source that produced `point` of a live page, as of the last finished run. */
+  inverseSearch?(point: PdfPoint): Promise<SourceLocation | null>;
   /** Stops the session and releases its resources. */
   close(): Promise<void>;
 }
@@ -71,6 +86,8 @@ export interface LivePreviewBackend {
    * a backend without snapshots.
    */
   readonly maxSnapshots?: number;
+  /** Whether sessions answer `forwardSearch` and `inverseSearch`. */
+  readonly synctex?: boolean;
   open(
     request: LivePreviewRequest,
     onEvent: (event: LivePreviewEvent) => void,

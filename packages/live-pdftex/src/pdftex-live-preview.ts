@@ -1,21 +1,25 @@
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Duplex } from 'node:stream';
 import { promisify } from 'node:util';
+import type { PdfPoint, PdfRect, SourceLocation } from '@myleaf/compile';
 import type {
   LivePreviewBackend,
   LivePreviewEvent,
   LivePreviewRequest,
   LivePreviewSession,
 } from '@myleaf/live-preview';
+import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile } from '@myleaf/project';
 import { pauseOffset } from './pause-offset.js';
-import { sanitizeSvg } from './sanitize-svg.js';
+import { extractPages } from './pdf-pages.js';
+import type { PdfPage } from './pdf-pages.js';
+import { parseSynctexRecords } from './synctex-output.js';
 
 const run = promisify(execFile);
 
@@ -41,8 +45,6 @@ export interface PdftexLivePreviewOptions {
    * Live (`kpathseaEnv()`).
    */
   readonly kpathsea: Readonly<Record<string, string>>;
-  /** MuPDF's command line tool, which renders PDF pages to SVG. Default: `mutool`. */
-  readonly mutool?: string;
   /**
    * Most snapshots a session keeps (a request can ask for fewer). When a
    * document has more pages, snapshots are spread out: one every
@@ -54,6 +56,8 @@ export interface PdftexLivePreviewOptions {
    * pages), for diagnosis (`MYLEAF_LIVE_TRACE` in the server).
    */
   readonly trace?: (line: string) => void;
+  /** The `synctex` command-line tool, for forward and inverse search. Default: `synctex`. */
+  readonly synctexCommand?: string;
 }
 
 /**
@@ -61,10 +65,12 @@ export interface PdftexLivePreviewOptions {
  * docs/spikes/pdflatex-live-preview.md). Per session, an engine process runs
  * the root file's preamble and pauses before `\begin{document}`; each edit
  * forks a child that typesets the document from there into a PDF, whose
- * pages are rendered to SVG with MuPDF. Output is pdfLaTeX's own. Pages of
- * the visible range are shown as soon as the child ships them out, and a new
- * edit cancels the rest of a run once they are on screen. The child leaves a
- * snapshot after each page; a run resumes from the last one before the edit.
+ * pages are sent as one-page PDFs (cut out with MuPDF). Output is pdfLaTeX's
+ * own. Pages of the visible range are shown as soon as the child ships them
+ * out, and a new edit cancels the rest of a run once they are on screen. The
+ * child leaves a snapshot after each page; a run resumes from the last one
+ * before the edit. SyncTeX maps between the source and the last finished
+ * run's pages.
  *
  *   <workRoot>/format/pdflatex.fmt          made with the patched binary
  *   <workRoot>/<project-id>/<session>/src/  source files, kept up to date
@@ -72,14 +78,15 @@ export interface PdftexLivePreviewOptions {
  */
 export class PdftexLivePreview implements LivePreviewBackend {
   readonly engine = 'pdflatex';
+  readonly synctex = true;
   readonly #options: Required<PdftexLivePreviewOptions>;
   #format: Promise<string> | null = null;
 
   constructor(options: PdftexLivePreviewOptions) {
     this.#options = {
-      mutool: 'mutool',
       maxSnapshots: DEFAULT_MAX_SNAPSHOTS,
       trace: () => {},
+      synctexCommand: 'synctex',
       ...options,
       workRoot: resolve(options.workRoot),
     };
@@ -238,6 +245,8 @@ class PdftexSession implements LivePreviewSession {
   #inFlight: InFlightRun | null = null;
   /** Writes a trace line, prefixed with this session (`trace` option). */
   readonly #trace: (line: string) => void;
+  /** MuPDF's warnings and errors about the run's PDFs, to the trace. */
+  readonly #mupdfLog = (message: string) => this.#trace(`mupdf: ${message}`);
   /** Most snapshots kept: the request's, at most the backend's. */
   #maxSnapshots: number;
 
@@ -313,6 +322,75 @@ class PdftexSession implements LivePreviewSession {
     const from = Math.max(1, Math.floor(first));
     this.#range = [from, Math.max(from, Math.floor(last))];
     void this.#render();
+  }
+
+  async forwardSearch(location: SourceLocation): Promise<readonly PdfRect[]> {
+    const pdf = this.#pdf;
+    if (!pdf) return [];
+    const srcDir = await realpath(this.#srcDir);
+    const input = join(srcDir, ...location.file.split('/'));
+    const output = await this.#synctex([
+      'view',
+      '-i',
+      `${location.line}:${location.column ?? 0}:${input}`,
+      '-o',
+      pdf.path,
+    ]);
+    return parseSynctexRecords(output, 'Page').flatMap((record) => {
+      const [page, h, v, width, height] = ['Page', 'h', 'v', 'W', 'H'].map((key) =>
+        Number(record.get(key)),
+      ) as [number, number, number, number, number];
+      if (![page, h, v, width, height].every(Number.isFinite)) return [];
+      // `v` is the baseline; the box extends `H` above it.
+      return [{ page, x: h, y: v - height, width, height }];
+    });
+  }
+
+  async inverseSearch(point: PdfPoint): Promise<SourceLocation | null> {
+    const pdf = this.#pdf;
+    if (!pdf) return null;
+    const output = await this.#synctex([
+      'edit',
+      '-o',
+      `${point.page}:${point.x}:${point.y}:${pdf.path}`,
+    ]);
+    const record = parseSynctexRecords(output, 'Output')[0];
+    const input = record?.get('Input') ?? '';
+    if (input === '') return null;
+    // SyncTeX records the directory pdfTeX ran in with symlinks resolved
+    // (e.g. /private/var/... for /var/... on macOS): compare both resolved.
+    const srcDir = await realpath(this.#srcDir);
+    const path = await realpath(resolve(srcDir, input)).catch(() => input);
+    const rel = relative(srcDir, path);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+    const line = Number(record?.get('Line'));
+    const column = Number(record?.get('Column'));
+    if (!Number.isInteger(line) || line < 1) return null;
+    try {
+      return {
+        file: parseProjectPath(rel.split(sep).join('/')),
+        line,
+        column: Number.isInteger(column) && column >= 1 ? column : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Runs the `synctex` tool on the last finished run's output. A run that
+   * finishes meanwhile removes it: the search then finds nothing.
+   */
+  async #synctex(args: readonly string[]): Promise<string> {
+    try {
+      const { stdout } = await run(this.#options.synctexCommand, args, {
+        cwd: this.#srcDir,
+        timeout: 10_000,
+      });
+      return stdout;
+    } catch {
+      return '';
+    }
   }
 
   async close(): Promise<void> {
@@ -471,34 +549,18 @@ class PdftexSession implements LivePreviewSession {
   async #renderNow(): Promise<void> {
     const pdf = this.#pdf;
     if (!pdf || this.#closing) return;
-    const first = Math.min(this.#range[0], pdf.pages);
-    const last = Math.min(this.#range[1], pdf.pages);
-    const pattern = join(dirname(pdf.path), 'page-%d.svg');
-    await run(this.#options.mutool, [
-      'draw',
-      '-q',
-      '-F',
-      'svg',
-      '-o',
-      pattern,
-      pdf.path,
-      `${first}-${last}`,
-    ]);
-    for (let page = first; page <= last; page++) {
-      const raw = await readFile(join(dirname(pdf.path), `page-${page}.svg`), 'utf8');
-      if (this.#closing || this.#pdf !== pdf) return;
-      this.#emitPage(page, pdf.run, raw);
-    }
+    const [first, last] = this.#range;
+    const pages = await extractPages(pdf.path, first, last, this.#mupdfLog);
+    if (this.#closing || this.#pdf !== pdf) return;
+    for (const [page, extracted] of pages) this.#emitPage(page, pdf.run, extracted);
   }
 
   /** Emits a page rendered from run `run`, unless a newer run's is shown. */
-  #emitPage(page: number, run: number, raw: string): void {
+  #emitPage(page: number, run: number, { pdf, hash }: PdfPage): void {
     if ((this.#pageRuns.get(page) ?? 0) > run) return;
     this.#pageRuns.set(page, run);
     // From a run older than the latest one that typesets this page again.
     const stale = run < this.#staleSince(page);
-    const svg = sanitizeSvg(raw);
-    const hash = createHash('sha1').update(svg).digest('base64');
     if (this.#emitted.get(page) === hash) {
       this.#trace(`page ${page} of run ${run}: unchanged${stale ? ', stale' : ''}`);
       if (!stale) this.#onEvent({ type: 'page-unchanged', page });
@@ -506,9 +568,9 @@ class PdftexSession implements LivePreviewSession {
     }
     this.#emitted.set(page, hash);
     this.#trace(
-      `page ${page} of run ${run}: emitted, ${svg.length} chars${stale ? ', stale' : ''}`,
+      `page ${page} of run ${run}: emitted, ${pdf.length} bytes${stale ? ', stale' : ''}`,
     );
-    this.#onEvent(stale ? { type: 'page', page, svg, stale } : { type: 'page', page, svg });
+    this.#onEvent(stale ? { type: 'page', page, pdf, stale } : { type: 'page', page, pdf });
   }
 
   /** Run `run` typesets pages from `from` on again. */
@@ -531,20 +593,9 @@ class PdftexSession implements LivePreviewSession {
       .then(async () => {
         const id = Number(inFlight.id);
         if (this.#closing || (this.#pageRuns.get(page) ?? 0) >= id) return;
-        const pattern = join(dirname(pdf), 'page-%d.svg');
-        await run(this.#options.mutool, [
-          'draw',
-          '-q',
-          '-F',
-          'svg',
-          '-o',
-          pattern,
-          pdf,
-          String(page),
-        ]);
-        const raw = await readFile(join(dirname(pdf), `page-${page}.svg`), 'utf8');
-        if (this.#closing) return;
-        this.#emitPage(page, id, raw);
+        const extracted = (await extractPages(pdf, page, page, this.#mupdfLog)).get(page);
+        if (this.#closing || extracted === undefined) return;
+        this.#emitPage(page, id, extracted);
         this.#onEvent({ type: 'page-count', count: page, final: false });
         if (page >= this.#range[1] && this.#inFlight === inFlight) {
           inFlight.shown = true;
@@ -633,7 +684,9 @@ class PdftexSession implements LivePreviewSession {
   }
 
   #env(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-    return { ...process.env, ...this.#options.kpathsea, ...extra };
+    // Unwrapped log lines: "Output written on <path> (N pages" can be parsed
+    // with a long path.
+    return { ...process.env, ...this.#options.kpathsea, max_print_line: '10000', ...extra };
   }
 
   #args(): string[] {
@@ -641,6 +694,8 @@ class PdftexSession implements LivePreviewSession {
       `-fmt=${this.#format}`,
       '-progname=pdflatex',
       '-interaction=nonstopmode',
+      // Uncompressed: the patched pdfTeX gives each run its own copy (vendor/pdftex).
+      '-synctex=-1',
       this.#rootFile,
     ];
   }
