@@ -65,6 +65,29 @@ Rejected: a pre-started pdfTeX process (no gain: pdfTeX loads the format only
 after reading the file name); `\includeonly` for the edited chapter (changes
 the output).
 
+7. **Image options** (added later), per project, for compiles and live
+   preview:
+   - `reuseImages` (default on, pdfLaTeX): pdfTeX decodes PNGs with
+     transparency (an alpha channel or `tRNS`, as matplotlib writes them)
+     or interlacing, and compresses them again, on every compile. The TeX
+     Live adapter converts each such image once, in the background after
+     the compile that first sees it, into a one-page PDF made by pdfTeX
+     itself, and later compiles use that copy under the image's own name
+     (pdfTeX recognises image types by their first bytes). pdfTeX copies
+     the PDF's streams as they are; pages look the same pixel for pixel.
+     Copies are keyed by content and TeX version and shared by projects
+     (`<builds>/.images`, least recently used beyond 500 MB removed).
+     A document that sets `\pdfimageresolution` or applies gamma would see
+     its PNGs at the defaults instead; such documents can turn it off.
+   - `draftImages` (default off): `\csname Gin@drafttrue\endcsname` is
+     inserted right after `\begin{document}` on the same line of the
+     compiled copy of the root file, so graphicx draws boxes with file
+     names. Line numbers and the preamble (and so the precompiled
+     preamble) do not change. The command line (`-pretex`) cannot be used:
+     `mylatexformat` skips it.
+   - Live preview applies both to the files it typesets (converted images
+     only with the pdfTeX engine); changing either starts a new session.
+
 ## Results
 
 Server compile, median of 5 (`pnpm bench`, TeX Live 2023):
@@ -110,3 +133,15 @@ last full PDF. It may pay off on long documents when editing early pages.
 - Live rendering (L3, TeXpresso approach) remains the next step for
   sub-second feedback; showing the PDF after the first pass needs the push
   channel planned for phase 2.
+
+Image options (`pnpm bench:images`: five figures, three of them 2400 x 1800
+transparent PNGs; precompiled preamble, median of 5, TeX Live 2023):
+
+| Text edit                  | No option | Reuse images | Draft images |
+| -------------------------- | --------: | -----------: | -----------: |
+| Recompile                  |  1,173 ms |       350 ms |       361 ms |
+| Auto-compile (single pass) |  1,023 ms |       216 ms |       212 ms |
+
+pdfTeX live preview on the same paper, time to re-typeset the whole
+document after an edit (median of 7): 1,411 ms, 128 ms reusing images,
+86 ms with draft images.

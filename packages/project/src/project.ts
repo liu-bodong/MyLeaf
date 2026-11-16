@@ -14,6 +14,14 @@ export interface ProjectSettings {
    * server's maximum; `null` for the server's maximum.
    */
   readonly liveSnapshots: number | null;
+  /**
+   * Keep converted copies of images that are slow to embed (PNGs with
+   * transparency) between compiles, so unchanged images are not converted
+   * again (pdfLaTeX).
+   */
+  readonly reuseImages: boolean;
+  /** Draw images as boxes of their size (graphicx's `draft`), for faster compiles. */
+  readonly draftImages: boolean;
 }
 
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
@@ -21,6 +29,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   precompilePreamble: true,
   livePreview: false,
   liveSnapshots: null,
+  reuseImages: true,
+  draftImages: false,
 };
 
 export interface ProjectSummary {

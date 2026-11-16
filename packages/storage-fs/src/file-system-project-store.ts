@@ -307,7 +307,7 @@ function hasProjectSummaryShape(value: unknown): boolean {
   const record = settings as Record<string, unknown>;
   const snapshots = record.liveSnapshots;
   return (
-    ['autoCompile', 'precompilePreamble', 'livePreview'].every(
+    ['autoCompile', 'precompilePreamble', 'livePreview', 'reuseImages', 'draftImages'].every(
       (key) => record[key] === undefined || typeof record[key] === 'boolean',
     ) &&
     (snapshots === undefined ||

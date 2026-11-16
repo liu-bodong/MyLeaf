@@ -7,6 +7,7 @@ import type { ProjectStore } from '@myleaf/project';
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from '@fastify/websocket';
 import type { LiveSessionHandle, LiveSessionPool } from '../live/live-session-pool.js';
+import type { LiveSources } from '../live/live-sources.js';
 
 const send = (socket: WebSocket, message: LiveServerMessage) => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
@@ -79,6 +80,7 @@ export function registerLiveRoutes(
   store: ProjectStore,
   compiler: CompileBackend,
   pool: LiveSessionPool | null,
+  sources: LiveSources | null = null,
 ): void {
   app.get('/api/live-preview', (): LivePreviewInfo => ({
     available: pool !== null,
@@ -119,10 +121,11 @@ export function registerLiveRoutes(
         handle.touch();
         const { session } = handle;
         if (message.type === 'update') {
-          session.updateFile({
+          const file = {
             path: parseProjectPath(message.path),
             content: new TextEncoder().encode(message.content),
-          });
+          };
+          session.updateFile(sources ? sources.text(project, file) : file);
         } else if (message.type === 'pages') {
           session.showPages(message.first, message.last);
         } else if (message.type === 'forward') {
@@ -162,10 +165,14 @@ export function registerLiveRoutes(
       // Citations come from the latest compile's bibliography (TeXpresso does
       // not run BibTeX); it replaces a stored file of the same name.
       const bibliography = await compiler.readBibliography(projectId);
-      const files =
+      const all =
         bibliography === null
           ? stored
           : [...stored.filter((file) => file.path !== bibliography.path), bibliography];
+      // The project's image options (draft, converted images).
+      const { files, convert } = sources
+        ? await sources.files(project, all)
+        : { files: all, convert: () => {} };
       handle = await pool.open(
         {
           projectId,
@@ -215,6 +222,17 @@ export function registerLiveRoutes(
         return;
       }
       send(socket, { type: 'status', state: 'starting' });
+      // Images converted meanwhile replace the originals, unless they were replaced.
+      convert((converted, original) => {
+        void store.readFile(projectId, original.path).then(
+          (current) => {
+            if (!socketClosed && Buffer.from(current).equals(original.content)) {
+              handle?.session.updateFile(converted);
+            }
+          },
+          () => {},
+        );
+      });
       for (const message of pending.splice(0)) apply(message);
     },
   );
