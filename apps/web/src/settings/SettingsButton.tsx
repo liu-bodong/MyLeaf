@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { Icon } from '../ui/icons.js';
 import { SettingsDialog } from './SettingsDialog.js';
 
-/** Gear button that opens the settings window. */
-export function SettingsButton() {
+/** Gear button that opens the settings window; `projectSection` adds the open project's settings. */
+export function SettingsButton({ projectSection }: { readonly projectSection?: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -16,7 +17,7 @@ export function SettingsButton() {
       >
         <Icon name="settings" />
       </button>
-      {open && <SettingsDialog onClose={() => setOpen(false)} />}
+      {open && <SettingsDialog onClose={() => setOpen(false)} projectSection={projectSection} />}
     </>
   );
 }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTO_COMPILE_DELAY_MAX,
   DEFAULT_SETTINGS,
   FONT_SIZE_MAX,
   LINE_HEIGHT_MIN,
+  formatSeconds,
   parseSettings,
   resolveTheme,
 } from './settings.js';
@@ -17,6 +19,9 @@ describe('parseSettings', () => {
       lineNumbers: false,
       lineWrapping: false,
       highlightActiveLine: false,
+      autoCompileDelay: 2500,
+      autoCompilePasses: 'full',
+      compileOnLiveOff: false,
     };
     expect(parseSettings(JSON.stringify(saved))).toEqual(saved);
   });
@@ -33,9 +38,24 @@ describe('parseSettings', () => {
   });
 
   it('clamps numbers to their ranges', () => {
-    const parsed = parseSettings('{"editorFontSize":100,"editorLineHeight":0.2}');
+    const parsed = parseSettings(
+      '{"editorFontSize":100,"editorLineHeight":0.2,"autoCompileDelay":60000}',
+    );
     expect(parsed.editorFontSize).toBe(FONT_SIZE_MAX);
     expect(parsed.editorLineHeight).toBe(LINE_HEIGHT_MIN);
+    expect(parsed.autoCompileDelay).toBe(AUTO_COMPILE_DELAY_MAX);
+  });
+
+  it('ignores unknown auto-compile passes', () => {
+    expect(parseSettings('{"autoCompilePasses":"triple"}').autoCompilePasses).toBe('single');
+  });
+});
+
+describe('formatSeconds', () => {
+  it('shows seconds without trailing zeros', () => {
+    expect(formatSeconds(1000)).toBe('1 s');
+    expect(formatSeconds(500)).toBe('0.5 s');
+    expect(formatSeconds(2250)).toBe('2.25 s');
   });
 });
 

@@ -1,27 +1,44 @@
 import { LIVE_MAX_PAGE_RANGE, decodeLivePdfPage } from '@myleaf/api';
 import type { LiveClientMessage, LiveServerMessage } from '@myleaf/api';
-import type { PdfPoint, PdfRect, SourceLocation, TexEngine } from '@myleaf/compile';
+import type { PdfPoint, PdfRect, SourceLocation } from '@myleaf/compile';
 import type { ProjectId } from '@myleaf/doc-model';
-import { Fragment, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import type { Ref } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import type { KeyboardEvent, Ref } from 'react';
 import { api } from '../api/client.js';
-import { engineName } from './engine-name.js';
+import { stepZoom } from '../pdf/zoom.js';
+import type { PdfZoom } from '../pdf/zoom.js';
 import type { LiveChannel } from './live-channel.js';
 import { PdfRenderer } from './pdf-renderer.js';
-import type { TextLine } from './pdf-renderer.js';
+import { MIN_SLOT_WIDTH, geometryZoom, slotGeometry } from './slot-geometry.js';
+import type { PaneMeasure } from './slot-geometry.js';
+import type { RenderedPage, TextLine } from './pdf-renderer.js';
 import './live-preview.css';
 
 interface LivePreviewPaneProps {
   readonly projectId: ProjectId;
   readonly channel: LiveChannel;
-  /** The engine that typesets the live pages. */
-  readonly engine: TexEngine;
   /** Called once the session runs, so the latest unsaved text can be sent. */
   readonly onReady: () => void;
-  /** Offered when the session ended: switch the output pane to the PDF. */
-  readonly onShowPdf: () => void;
-  /** Offered when the session ended: start a new session. */
-  readonly onRetry: () => void;
+  /**
+   * The compiled PDF and the page shown in it, read when the pane mounts: its
+   * pages stand in (dimmed) until live pages arrive, and the pane opens at
+   * that page.
+   */
+  readonly seed?: LiveSeed | null;
+  /** Defaults to fitting the page width. */
+  readonly zoom?: PdfZoom;
+  /** Called when a keyboard shortcut changes the zoom (Mod-+ / Mod--). */
+  readonly onZoom?: (zoom: PdfZoom) => void;
+  /** What the pane shows, for the toolbar. */
+  readonly onViewChange?: (state: LiveViewState) => void;
   /** Boxes to highlight, e.g. from forward search. The first is scrolled into view. */
   readonly highlights?: readonly PdfRect[];
   /** Double-click on a page. Coordinates are PDF points from the page's top-left. */
@@ -29,7 +46,28 @@ interface LivePreviewPaneProps {
   readonly ref?: Ref<LivePreviewHandle>;
 }
 
-/** SyncTeX on the live pages, as of the server's last finished run. */
+export interface LiveSeed {
+  readonly url: string;
+  /** 1-based page to open at. */
+  readonly page: number;
+}
+
+export type LiveConnection =
+  | { readonly state: 'connecting' }
+  | { readonly state: 'live' }
+  | { readonly state: 'ended'; readonly message: string };
+
+/** What the live pane shows, for the toolbar. */
+export interface LiveViewState {
+  /** 1-based page shown most. */
+  readonly page: number;
+  readonly pages: number;
+  /** Zoom factor in effect (1 = 100 %), or null before the pane is measured. */
+  readonly zoom: number | null;
+  readonly connection: LiveConnection;
+}
+
+/** SyncTeX on the live pages, as of the server's last finished run; page navigation. */
 export interface LivePreviewHandle {
   /** Boxes on the live pages that `location` produced; none without SyncTeX. */
   forwardSearch(location: SourceLocation): Promise<readonly PdfRect[]>;
@@ -40,6 +78,10 @@ export interface LivePreviewHandle {
    * search places its target), for inverse search. Null when nothing is shown.
    */
   readingPoint(): PdfPoint | null;
+  /** Scrolls page `page` (1-based) to the top. */
+  goToPage(page: number): void;
+  /** The page shown most, 1-based. */
+  currentPage(): number;
 }
 
 /** Where the reading line sits, as a share of the visible height (as in PdfViewer). */
@@ -54,11 +96,6 @@ type SearchRequest =
 /** The server's answer to a SyncTeX request. */
 type SearchResult = Extract<LiveServerMessage, { type: 'forward-result' | 'inverse-result' }>;
 
-type Connection =
-  | { readonly state: 'connecting' }
-  | { readonly state: 'live' }
-  | { readonly state: 'ended'; readonly message: string };
-
 /** A shown page: an SVG (TeXpresso) or a PDF drawn by MuPDF (pdfTeX). */
 type LivePage =
   | {
@@ -70,8 +107,11 @@ type LivePage =
     }
   | {
       readonly kind: 'pdf';
-      readonly pdf: Uint8Array;
+      /** Draws the page again at another width (after a resize or zoom). */
+      readonly redraw: (pixelWidth: number) => Promise<RenderedPage>;
       readonly bitmap: ImageBitmap;
+      /** A page of the compiled PDF, standing in until the live page arrives. */
+      readonly compiled: boolean;
       /** Page size in PDF points. */
       readonly width: number;
       readonly height: number;
@@ -99,22 +139,12 @@ function placeLines(lines: readonly TextLine[]): PlacedLine[] {
   });
 }
 
-/**
- * Where page slots go in the scroller, on whole device pixels: a canvas
- * shown at a fractional size or position is resampled, which blurs it.
- */
-interface SlotGeometry {
-  readonly dpr: number;
-  /** Slot width in device pixels; pages are drawn this wide. */
-  readonly width: number;
-  /** Left margin in CSS pixels that moves slots onto a device pixel. */
-  readonly offset: number;
-}
-
 /** Tolerance for floating-point error in positions, in device pixels. */
 const EPSILON = 0.01;
+/** Padding around the pages in `.live-pages`, in CSS pixels. */
+const PAGE_GAP = 12;
 
-function measureSlots(scroller: HTMLElement): SlotGeometry {
+function measurePane(scroller: HTMLElement): PaneMeasure {
   const dpr = window.devicePixelRatio;
   const style = getComputedStyle(scroller);
   const box = scroller.getBoundingClientRect();
@@ -126,8 +156,10 @@ function measureSlots(scroller: HTMLElement): SlotGeometry {
   const start = Math.ceil(left - EPSILON);
   return {
     dpr,
-    width: Math.max(100, Math.floor(right + EPSILON) - start),
-    offset: Math.max(0, start - left) / dpr,
+    left,
+    start,
+    width: Math.max(MIN_SLOT_WIDTH, Math.floor(right + EPSILON) - start),
+    height: scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
   };
 }
 
@@ -147,7 +179,7 @@ function watchPixelRatio(onChange: () => void): () => void {
   return () => query?.removeEventListener('change', changed);
 }
 
-/** Time to wait after the pane is resized before drawing pages at the new size. */
+/** Time to wait after the pane is resized or zoomed before drawing pages at the new size. */
 const RESIZE_DELAY_MS = 200;
 
 const release = (page: LivePage) => {
@@ -157,6 +189,8 @@ const release = (page: LivePage) => {
 
 /** US Letter, until the first page arrives. */
 const DEFAULT_SIZE = { width: 612, height: 792 };
+/** Visible shares at which the shown page is worked out again. */
+const THRESHOLDS = Array.from({ length: 11 }, (_, index) => index / 10);
 /** Pages rendered beyond the visible ones in each direction. */
 const PREFETCH = 1;
 
@@ -168,36 +202,48 @@ function svgSize(svg: string): { width: number; height: number } | null {
 /**
  * Live-rendered pages over the project's live-preview WebSocket (ADR 0012,
  * 0014), in one continuous scroll. The visible pages (plus PREFETCH) are
- * requested from the server; other pages keep their latest rendering or a
- * placeholder of the same size. Each mount is one session.
+ * requested from the server; other pages keep their latest rendering, a
+ * page of the compiled PDF (`seed`), or a placeholder of the same size.
+ * Each mount is one session. Status, page and zoom go to the toolbar
+ * through `onViewChange`.
  */
 export function LivePreviewPane({
   projectId,
   channel,
-  engine,
   onReady,
-  onShowPdf,
-  onRetry,
+  seed = null,
+  zoom = 'fit-width',
+  onZoom,
+  onViewChange,
   highlights = [],
   onInverseSearch,
   ref,
 }: LivePreviewPaneProps) {
-  const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
+  const [connection, setConnection] = useState<LiveConnection>({ state: 'connecting' });
   const [pages, setPages] = useState<ReadonlyMap<number, LivePage>>(new Map());
-  /** Pages being typeset again since their image was rendered: shown dimmed. */
+  /** Pages being typeset again since their image was rendered, or from the compiled PDF: shown dimmed. */
   const [stale, setStale] = useState<ReadonlySet<number>>(new Set());
   /** Pages to lay out: the final count, or the most seen while re-typesetting. */
   const [count, setCount] = useState(1);
   const [current, setCurrent] = useState(1);
-  const [geometry, setGeometry] = useState<SlotGeometry | null>(null);
+  const [pane, setPane] = useState<PaneMeasure | null>(null);
+  /** Page to scroll to once laid out (the seed's page). */
+  const [openAt, setOpenAt] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const onReadyRef = useRef(onReady);
   useEffect(() => {
     onReadyRef.current = onReady;
   });
+  const seedRef = useRef(seed);
   /** Sends a SyncTeX request on the session; resolves with `null` if it ends first. */
   const searchRef = useRef<((message: SearchRequest) => Promise<SearchResult | null>) | null>(null);
+  /** Width pages are drawn at, in device pixels (the slot width). */
+  const drawWidthRef = useRef(800);
+  /** Draws every shown page again at `drawWidthRef`'s width. */
+  const redrawRef = useRef<(() => void) | null>(null);
+  /** Asks for pages `first`–`last` (visible plus prefetch). */
+  const showPagesRef = useRef<((first: number, last: number) => void) | null>(null);
 
   useEffect(() => {
     const socket = new WebSocket(api.livePreviewUrl(projectId));
@@ -206,12 +252,19 @@ export function LivePreviewPane({
     let ended = false;
     let closed = false;
     const live = new Map<number, LivePage>();
-    /** Page messages received per page; a drawn page is shown only if it is the latest. */
+    /**
+     * Page messages received (and redraws started) per page; a drawn page is
+     * shown only if it is the latest. 0 (absent): only the seed may draw it.
+     */
     const received = new Map<number, number>();
     const staleNow = new Set<number>();
     const renderer = new PdfRenderer();
-    /** Where slots go (see measureSlots); pages are drawn at its width. */
-    let measured: SlotGeometry | null = null;
+    /** The compiled PDF that stands in for pages not rendered live yet. */
+    let seedDocument: { key: string; pdf: Uint8Array; pages: number } | null = null;
+    const seeding = new Set<number>();
+    /** Whether the server reported a page count (which overrides the seed's). */
+    let counted = false;
+    let wanted: { first: number; last: number } | null = null;
     const searches = new Map<number, (result: SearchResult | null) => void>();
     let nextSearch = 0;
     searchRef.current = (message) =>
@@ -235,7 +288,7 @@ export function LivePreviewPane({
     };
     /** Shows `next` for `page` if no newer message for it arrived meanwhile. */
     const show = (page: number, sequence: number, next: LivePage) => {
-      if (closed || received.get(page) !== sequence) {
+      if (closed || (received.get(page) ?? 0) !== sequence) {
         release(next);
         return;
       }
@@ -244,21 +297,26 @@ export function LivePreviewPane({
       live.set(page, next);
       setPages(new Map(live));
     };
-    const draw = (page: number, sequence: number, pdf: Uint8Array) => {
-      renderer
-        .render(pdf, measured?.width ?? 800)
-        .then(({ bitmap, width, height, lines }) =>
+    const draw = (
+      page: number,
+      sequence: number,
+      redraw: (pixelWidth: number) => Promise<RenderedPage>,
+      compiled = false,
+    ) =>
+      redraw(drawWidthRef.current)
+        .then((rendered) => {
           show(page, sequence, {
             kind: 'pdf',
-            pdf,
-            bitmap,
-            width,
-            height,
-            lines: placeLines(lines),
-          }),
-        )
-        .catch(() => {});
-    };
+            redraw,
+            compiled,
+            bitmap: rendered.bitmap,
+            width: rendered.width,
+            height: rendered.height,
+            lines: placeLines(rendered.lines),
+          });
+          return rendered;
+        })
+        .catch(() => null);
     /** Counts a new message for `page`; returns its sequence number. */
     const receive = (page: number, isStale: boolean) => {
       const sequence = (received.get(page) ?? 0) + 1;
@@ -268,40 +326,67 @@ export function LivePreviewPane({
       setStale(new Set(staleNow));
       return sequence;
     };
-
-    // Slots follow the pane's size at once; pages are drawn again at the new
-    // width once resizing pauses.
-    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-    const measure = () => {
-      const scroller = scrollerRef.current;
-      if (scroller === null) return;
-      const next = measureSlots(scroller);
-      const previous = measured;
-      if (
-        previous !== null &&
-        previous.dpr === next.dpr &&
-        previous.width === next.width &&
-        previous.offset === next.offset
-      ) {
-        return;
-      }
-      measured = next;
-      setGeometry(next);
-      if (previous === null || previous.width === next.width) return;
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        for (const [page, shown] of live) {
-          if (shown.kind !== 'pdf') continue;
-          const sequence = (received.get(page) ?? 0) + 1;
-          received.set(page, sequence);
-          draw(page, sequence, shown.pdf);
-        }
-      }, RESIZE_DELAY_MS);
+    /** Draws a page of the compiled PDF where no live page arrived yet. */
+    const drawSeed = (page: number) => {
+      const document = seedDocument;
+      if (document === null || page > document.pages) return;
+      if (received.has(page) || seeding.has(page) || live.has(page)) return;
+      seeding.add(page);
+      staleNow.add(page);
+      setStale(new Set(staleNow));
+      void draw(page, 0, (width) => renderer.renderPage(document, page, width), true);
     };
-    measure();
-    const resizes = new ResizeObserver(measure);
-    if (scrollerRef.current !== null) resizes.observe(scrollerRef.current);
-    const unwatchPixelRatio = watchPixelRatio(measure);
+    redrawRef.current = () => {
+      for (const [page, shown] of live) {
+        if (shown.kind !== 'pdf') continue;
+        const sequence = (received.get(page) ?? 0) + 1;
+        received.set(page, sequence);
+        void draw(page, sequence, shown.redraw, shown.compiled);
+      }
+    };
+    showPagesRef.current = (first, last) => {
+      wanted = { first, last };
+      if (socket.readyState === WebSocket.OPEN) {
+        const message: LiveClientMessage = { type: 'pages', first, last };
+        socket.send(JSON.stringify(message));
+      }
+      for (let page = first; page <= last; page++) drawSeed(page);
+    };
+
+    const opening = seedRef.current;
+    if (opening !== null) {
+      void (async () => {
+        const response = await fetch(opening.url);
+        if (!response.ok || closed) return;
+        const document = {
+          key: opening.url,
+          pdf: new Uint8Array(await response.arrayBuffer()),
+          pages: 0,
+        };
+        // The seed's page first: it is the one shown, and it tells the page count.
+        const page = Math.max(1, opening.page);
+        seeding.add(page);
+        const rendered = await draw(
+          page,
+          0,
+          (width) => renderer.renderPage(document, page, width),
+          true,
+        );
+        if (rendered === null || closed) return;
+        seedDocument = { ...document, pages: rendered.pages };
+        if (!received.has(page)) {
+          staleNow.add(page);
+          setStale(new Set(staleNow));
+        }
+        if (!counted) setCount(rendered.pages);
+        setOpenAt(Math.min(page, rendered.pages));
+        // Set by the visible-range observer meanwhile (TypeScript cannot see that).
+        const range = wanted as { first: number; last: number } | null;
+        if (range !== null) {
+          for (let next = range.first; next <= range.last; next++) drawSeed(next);
+        }
+      })().catch(() => {});
+    }
 
     socket.addEventListener('message', (event: MessageEvent<string | ArrayBuffer>) => {
       const message: LiveServerMessage =
@@ -309,8 +394,10 @@ export function LivePreviewPane({
           ? (JSON.parse(event.data) as LiveServerMessage)
           : decodeLivePdfPage(new Uint8Array(event.data));
       if (message.type === 'page' && 'pdf' in message) {
-        const { page } = message;
-        draw(page, receive(page, message.stale === true), message.pdf);
+        const { page, pdf } = message;
+        void draw(page, receive(page, message.stale === true), (width) =>
+          renderer.render(pdf, width),
+        );
       } else if (message.type === 'page') {
         const { page } = message;
         const sequence = receive(page, message.stale === true);
@@ -333,6 +420,7 @@ export function LivePreviewPane({
         searches.get(message.id)?.(message);
         searches.delete(message.id);
       } else if (message.type === 'page-count') {
+        counted = true;
         setCount((shown) =>
           message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
         );
@@ -345,7 +433,8 @@ export function LivePreviewPane({
     });
     socket.addEventListener('close', () => {
       endSearches();
-      if (!ended) end('Disconnected');
+      // Not after unmounting (or React's development remount): the pane is gone.
+      if (!ended && !closed) end('Disconnected');
     });
     const unsubscribe = channel.subscribe((update) => {
       const message: LiveClientMessage = {
@@ -362,14 +451,40 @@ export function LivePreviewPane({
       socket.close();
       socketRef.current = null;
       searchRef.current = null;
+      redrawRef.current = null;
+      showPagesRef.current = null;
       endSearches();
-      resizes.disconnect();
-      unwatchPixelRatio();
-      clearTimeout(resizeTimer);
       renderer.close();
       for (const page of live.values()) release(page);
     };
   }, [projectId, channel]);
+
+  // Measure the pane: slots follow its size at once.
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (scroller === null) return;
+    const measure = () => {
+      if (scroller.clientWidth === 0) return; // Hidden: keep the last size.
+      const next = measurePane(scroller);
+      setPane((previous) =>
+        previous !== null &&
+        previous.dpr === next.dpr &&
+        previous.left === next.left &&
+        previous.width === next.width &&
+        previous.height === next.height
+          ? previous
+          : next,
+      );
+    };
+    measure();
+    const resizes = new ResizeObserver(measure);
+    resizes.observe(scroller);
+    const unwatchPixelRatio = watchPixelRatio(measure);
+    return () => {
+      resizes.disconnect();
+      unwatchPixelRatio();
+    };
+  }, []);
 
   // Requests the visible pages whenever they change (scrolling, resizing,
   // pages appearing or disappearing).
@@ -377,38 +492,56 @@ export function LivePreviewPane({
     const scroller = scrollerRef.current;
     if (scroller === null) return;
     const visible = new Set<number>();
+    /** Visible height of each visible page, updated at THRESHOLDS. */
+    const shares = new Map<number, number>();
     let requested = '';
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           const page = Number((entry.target as HTMLElement).dataset.page);
-          if (entry.isIntersecting) visible.add(page);
-          else visible.delete(page);
+          if (entry.isIntersecting) {
+            visible.add(page);
+            shares.set(page, entry.intersectionRect.height);
+          } else {
+            visible.delete(page);
+            shares.delete(page);
+          }
         }
         if (visible.size === 0) return;
         const shown = [...visible].sort((a, b) => a - b);
         const firstVisible = shown[0] ?? 1;
-        setCurrent(firstVisible);
+        // The page shown most, as in the PDF viewer; the first on a tie.
+        setCurrent(
+          shown.reduce((best, page) =>
+            (shares.get(page) ?? 0) > (shares.get(best) ?? 0) ? page : best,
+          ),
+        );
         const first = Math.max(1, firstVisible - PREFETCH);
         const last = Math.min(
           (shown.at(-1) ?? firstVisible) + PREFETCH,
           first + LIVE_MAX_PAGE_RANGE - 1,
         );
         const key = `${first}-${last}`;
-        const socket = socketRef.current;
-        if (key !== requested && socket?.readyState === WebSocket.OPEN) {
+        if (key !== requested) {
           requested = key;
-          const message: LiveClientMessage = { type: 'pages', first, last };
-          socket.send(JSON.stringify(message));
+          showPagesRef.current?.(first, last);
         }
       },
-      { root: scroller },
+      { root: scroller, threshold: THRESHOLDS },
     );
     for (const slot of scroller.querySelectorAll('[data-page]')) observer.observe(slot);
     return () => observer.disconnect();
   }, [count, connection.state]);
 
   const fallbackSize = pages.get(current) ?? pages.values().next().value ?? DEFAULT_SIZE;
+  /** Page size the zoom is worked out from. */
+  const reference = { width: fallbackSize.width, height: fallbackSize.height };
+  const geometry = useMemo(
+    () => (pane === null ? null : slotGeometry(pane, zoom, reference)),
+    // Only the reference's size matters, not the object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pane, zoom, reference.width, reference.height],
+  );
   const slots = Array.from({ length: count }, (_, index) => index + 1);
   /** Page size in PDF points: the page's own, or that of the pages around it. */
   const sizeOf = (page: number) => pages.get(page) ?? fallbackSize;
@@ -416,6 +549,63 @@ export function LivePreviewPane({
   useEffect(() => {
     sizeOfRef.current = sizeOf;
   });
+
+  /** Scroll position as page and share of its height, kept across zooms. */
+  const anchor = useRef<{ page: number; fraction: number } | null>(null);
+  const slotAt = (page: number) =>
+    scrollerRef.current?.querySelector<HTMLElement>(`[data-page="${page}"]`) ?? null;
+  const updateAnchor = () => {
+    const scroller = scrollerRef.current;
+    if (scroller === null) return;
+    const top = scroller.scrollTop;
+    const slot = [...scroller.querySelectorAll<HTMLElement>('[data-page]')].findLast(
+      (element) => element.offsetTop <= top + PAGE_GAP,
+    );
+    if (slot === undefined) return;
+    anchor.current = {
+      page: Number(slot.dataset.page),
+      fraction: (top - slot.offsetTop) / Math.max(1, slot.offsetHeight),
+    };
+  };
+
+  // Pages are drawn at the slot width: again once a resize or zoom settles,
+  // keeping the same part of the document in view.
+  const drawnWidth = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (geometry === null) return;
+    drawWidthRef.current = geometry.width;
+    const previous = drawnWidth.current;
+    drawnWidth.current = geometry.width;
+    if (previous === null || previous === geometry.width) return;
+    const position = anchor.current;
+    const slot = position === null ? null : slotAt(position.page);
+    if (position !== null && slot !== null) {
+      scrollerRef.current?.scrollTo({
+        top: slot.offsetTop + position.fraction * slot.offsetHeight,
+      });
+    }
+    const timer = setTimeout(() => redrawRef.current?.(), RESIZE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [geometry]);
+
+  // Open at the seed's page once the seed laid the pages out.
+  const openedAt = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (openAt === null || openedAt.current === openAt) return;
+    openedAt.current = openAt;
+    const slot = slotAt(openAt);
+    if (slot !== null) scrollerRef.current?.scrollTo({ top: slot.offsetTop - PAGE_GAP });
+  }, [openAt]);
+
+  const factor = geometry === null ? null : geometryZoom(geometry, reference);
+  const shownPage = Math.min(current, count);
+  const onViewChangeRef = useRef(onViewChange);
+  useLayoutEffect(() => {
+    onViewChangeRef.current = onViewChange;
+  });
+  useEffect(() => {
+    onViewChangeRef.current?.({ page: shownPage, pages: count, zoom: factor, connection });
+  }, [shownPage, count, factor, connection]);
 
   // Scroll each new set of highlights into view once.
   const scrolledTo = useRef<readonly PdfRect[] | null>(null);
@@ -438,6 +628,17 @@ export function LivePreviewPane({
       behavior: 'smooth',
     });
   }, [highlights]);
+
+  const goToPage = (page: number) => {
+    const slot = slotAt(Math.min(Math.max(page, 1), count));
+    if (slot !== null) scrollerRef.current?.scrollTo({ top: slot.offsetTop - PAGE_GAP });
+  };
+  const goToPageRef = useRef(goToPage);
+  const currentRef = useRef(shownPage);
+  useLayoutEffect(() => {
+    goToPageRef.current = goToPage;
+    currentRef.current = shownPage;
+  });
 
   useImperativeHandle(
     ref,
@@ -473,29 +674,46 @@ export function LivePreviewPane({
           y: Math.min(Math.max((line - box.top) / scale, 0), size.height),
         };
       },
+      goToPage(page) {
+        goToPageRef.current(page);
+      },
+      currentPage() {
+        return currentRef.current;
+      },
     }),
     [],
   );
 
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && (event.key === '=' || event.key === '+')) {
+      if (factor === null) return;
+      event.preventDefault();
+      onZoom?.(stepZoom(factor, 1));
+    } else if (mod && event.key === '-') {
+      if (factor === null) return;
+      event.preventDefault();
+      onZoom?.(stepZoom(factor, -1));
+    } else if (event.key === 'PageDown') {
+      event.preventDefault();
+      goToPage(shownPage + 1);
+    } else if (event.key === 'PageUp') {
+      event.preventDefault();
+      goToPage(shownPage - 1);
+    }
+  };
+
   return (
     <div className="live-pane" data-testid="live-preview">
-      <header>
-        <span className="live-badge">Live · {engineName(engine)}</span>
-        <span data-testid="live-page">
-          Page {Math.min(current, count)} of {count}
-        </span>
-        <span className="live-status" role="status">
-          {connection.state === 'connecting' && 'Starting…'}
-          {connection.state === 'ended' && connection.message}
-        </span>
-        {connection.state === 'ended' && (
-          <>
-            <button onClick={onRetry}>Retry</button>
-            <button onClick={onShowPdf}>Show PDF</button>
-          </>
-        )}
-      </header>
-      <div className="live-pages" ref={scrollerRef}>
+      <div
+        className="live-pages"
+        ref={scrollerRef}
+        role="region"
+        aria-label="Live pages"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onScroll={updateAnchor}
+      >
         {slots.map((page) => {
           const rendered = pages.get(page);
           const size = rendered ?? fallbackSize;
@@ -528,7 +746,14 @@ export function LivePreviewPane({
               {rendered?.kind === 'svg' ? (
                 <img src={rendered.url} alt={`Live preview of page ${page}`} />
               ) : rendered?.kind === 'pdf' ? (
-                <PdfPage page={rendered} label={`Live preview of page ${page}`} />
+                <PdfPage
+                  page={rendered}
+                  label={
+                    rendered.compiled
+                      ? `Page ${page} of the last compile`
+                      : `Live preview of page ${page}`
+                  }
+                />
               ) : (
                 connection.state !== 'ended' && <p className="placeholder">Rendering…</p>
               )}

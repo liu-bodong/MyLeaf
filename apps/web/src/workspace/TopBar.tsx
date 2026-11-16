@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SettingsButton } from '../settings/SettingsButton.js';
 import { Dropdown, MenuBar, NOT_AVAILABLE } from '../ui/Menu.js';
 import type { MenuDefinition, MenuItem } from '../ui/Menu.js';
@@ -12,10 +13,19 @@ interface TopBarProps {
   readonly projectItems: readonly MenuItem[];
   /** Items of the Layout dropdown. */
   readonly layoutItems: readonly MenuItem[];
+  /** The project's settings, in the settings window. */
+  readonly projectSettings?: ReactNode;
 }
 
 /** Application bar: menus, project title, and project-level actions. */
-export function TopBar({ projectName, saveState, menus, projectItems, layoutItems }: TopBarProps) {
+export function TopBar({
+  projectName,
+  saveState,
+  menus,
+  projectItems,
+  layoutItems,
+  projectSettings,
+}: TopBarProps) {
   return (
     <header className="topbar">
       <a href="#/" className="icon-button home" aria-label="Back to projects" title="Projects">
@@ -62,7 +72,7 @@ export function TopBar({ projectName, saveState, menus, projectItems, layoutItem
           <Icon name="share" />
           Share
         </button>
-        <SettingsButton />
+        <SettingsButton projectSection={projectSettings} />
       </div>
     </header>
   );

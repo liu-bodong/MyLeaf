@@ -14,7 +14,16 @@ export interface Settings {
   readonly lineNumbers: boolean;
   readonly lineWrapping: boolean;
   readonly highlightActiveLine: boolean;
+  /** Pause in typing before auto-compile starts, in milliseconds. */
+  readonly autoCompileDelay: number;
+  /** Auto-compile runs one engine pass (faster) or until references settle. */
+  readonly autoCompilePasses: AutoCompilePasses;
+  /** Compile when live preview is turned off and the PDF is behind the edits. */
+  readonly compileOnLiveOff: boolean;
 }
+
+export type AutoCompilePasses = 'single' | 'full';
+export const AUTO_COMPILE_PASSES: readonly AutoCompilePasses[] = ['single', 'full'];
 
 export const THEMES: readonly ThemePreference[] = ['system', 'light', 'dark'];
 
@@ -34,6 +43,13 @@ export const FONT_SIZE_MIN = 10;
 export const FONT_SIZE_MAX = 28;
 export const LINE_HEIGHT_MIN = 1;
 export const LINE_HEIGHT_MAX = 2.5;
+export const AUTO_COMPILE_DELAY_MIN = 200;
+export const AUTO_COMPILE_DELAY_MAX = 10_000;
+
+/** "1 s", "0.5 s", "2.5 s". */
+export function formatSeconds(ms: number): string {
+  return `${Number((ms / 1000).toFixed(2))} s`;
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
@@ -43,6 +59,9 @@ export const DEFAULT_SETTINGS: Settings = {
   lineNumbers: true,
   lineWrapping: true,
   highlightActiveLine: true,
+  autoCompileDelay: 1000,
+  autoCompilePasses: 'single',
+  compileOnLiveOff: true,
 };
 
 const STORAGE_KEY = 'myleaf.settings';
@@ -85,6 +104,13 @@ export function parseSettings(raw: string | null): Settings {
     lineNumbers: bool(saved.lineNumbers, d.lineNumbers),
     lineWrapping: bool(saved.lineWrapping, d.lineWrapping),
     highlightActiveLine: bool(saved.highlightActiveLine, d.highlightActiveLine),
+    autoCompileDelay: finiteNumber(saved.autoCompileDelay)
+      ? clamp(Math.round(saved.autoCompileDelay), AUTO_COMPILE_DELAY_MIN, AUTO_COMPILE_DELAY_MAX)
+      : d.autoCompileDelay,
+    autoCompilePasses:
+      AUTO_COMPILE_PASSES.find((passes) => passes === saved.autoCompilePasses) ??
+      d.autoCompilePasses,
+    compileOnLiveOff: bool(saved.compileOnLiveOff, d.compileOnLiveOff),
   };
 }
 

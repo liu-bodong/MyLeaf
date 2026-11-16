@@ -4,7 +4,15 @@ import * as mupdf from 'mupdf';
 
 export interface RenderRequest {
   readonly id: number;
-  readonly pdf: Uint8Array;
+  /**
+   * The document; omitted when `key` names the document the worker kept from
+   * an earlier request.
+   */
+  readonly pdf?: Uint8Array;
+  /** Keeps the document open under this key for later requests (one at a time). */
+  readonly key?: string;
+  /** 0-based page to draw; default the first. */
+  readonly page?: number;
   /** Width to draw the page at, in device pixels. */
   readonly pixelWidth: number;
 }
@@ -26,8 +34,29 @@ export type RenderResponse =
       readonly width: number;
       readonly height: number;
       readonly lines: readonly TextLine[];
+      /** Pages in the document. */
+      readonly pages: number;
     }
   | { readonly id: number; readonly error: string };
+
+/** Sent once the worker takes requests. */
+export interface WorkerReady {
+  readonly ready: true;
+}
+
+/** The document kept open for requests that name its key. */
+let kept: { readonly key: string; readonly document: mupdf.PDFDocument } | null = null;
+
+function openDocument({ pdf, key }: RenderRequest): mupdf.PDFDocument {
+  if (key !== undefined && kept?.key === key) return kept.document;
+  if (pdf === undefined) throw new Error(`No document for ${key ?? 'the request'}`);
+  const document = new mupdf.PDFDocument(pdf);
+  if (key !== undefined) {
+    kept?.document.destroy();
+    kept = { key, document };
+  }
+  return document;
+}
 
 /** The page's lines of text with their extent, from MuPDF's character quads. */
 function textLines(page: mupdf.PDFPage): TextLine[] {
@@ -62,10 +91,11 @@ function textLines(page: mupdf.PDFPage): TextLine[] {
 }
 
 self.onmessage = async (event: MessageEvent<RenderRequest>) => {
-  const { id, pdf, pixelWidth } = event.data;
+  const { id, key, pixelWidth } = event.data;
   try {
-    const document = new mupdf.PDFDocument(pdf);
-    const page = document.loadPage(0);
+    const document = openDocument(event.data);
+    const pages = document.countPages();
+    const page = document.loadPage(Math.min(event.data.page ?? 0, pages - 1));
     const [x0, y0, x1, y1] = page.getBounds();
     const scale = pixelWidth / (x1 - x0);
     const width = Math.max(1, Math.round((x1 - x0) * scale));
@@ -86,11 +116,21 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
     device.destroy();
     pixmap.destroy();
     page.destroy();
-    document.destroy();
-    const response: RenderResponse = { id, bitmap, width: x1 - x0, height: y1 - y0, lines };
+    if (key === undefined) document.destroy();
+    const response: RenderResponse = {
+      id,
+      bitmap,
+      width: x1 - x0,
+      height: y1 - y0,
+      lines,
+      pages,
+    };
     self.postMessage(response, [bitmap]);
   } catch (error) {
     const response: RenderResponse = { id, error: String(error) };
     self.postMessage(response);
   }
 };
+
+const ready: WorkerReady = { ready: true };
+self.postMessage(ready);

@@ -17,9 +17,10 @@ import { api } from '../api/client.js';
 import { FilePreview } from '../files/FilePreview.js';
 import { previewType } from '../files/file-types.js';
 import { itemsFromFileList } from '../files/upload-items.js';
+import { engineName } from '../live/engine-name.js';
 import { LiveChannel } from '../live/live-channel.js';
 import { LivePreviewPane } from '../live/LivePreviewPane.js';
-import type { LivePreviewHandle } from '../live/LivePreviewPane.js';
+import type { LivePreviewHandle, LiveSeed, LiveViewState } from '../live/LivePreviewPane.js';
 import type { UploadItem } from '../files/upload-items.js';
 import { LatexEditor } from '../editor/LatexEditor.js';
 import type { EditHistory, LatexEditorHandle } from '../editor/LatexEditor.js';
@@ -29,6 +30,7 @@ import { useOutline } from '../editor/use-outline.js';
 import { useProjectMacros } from '../editor/use-project-macros.js';
 import { useReferences } from '../editor/use-references.js';
 import { PdfViewer } from '../pdf/PdfViewer.js';
+import { useSettings } from '../settings/use-settings.js';
 import type { PdfViewState, PdfViewerHandle } from '../pdf/PdfViewer.js';
 import { Dialog } from '../ui/Dialog.js';
 import { Icon } from '../ui/icons.js';
@@ -52,6 +54,7 @@ import {
 } from './layout.js';
 import type { Layout, LayoutView } from './layout.js';
 import { PdfToolbar } from './PdfToolbar.js';
+import { ProjectSettingsSection } from './ProjectSettingsSection.js';
 import { shortcut } from './shortcuts.js';
 import { TopBar } from './TopBar.js';
 
@@ -60,8 +63,6 @@ const SAVE_DELAY_MS = 800;
 /** Full compiles (until references settle) or one engine pass while editing. */
 type CompileKind = 'full' | 'single';
 
-/** Pause in editing after which auto-compile starts. */
-const AUTO_COMPILE_DELAY_MS = 1000;
 /** How long a forward-search highlight stays in the PDF; keep in sync with `pdf-highlight-fade`. */
 const HIGHLIGHT_MS = 1000;
 
@@ -105,10 +106,17 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Whether the live pages map to the source and back (SyncTeX). */
   const [liveSynctex, setLiveSynctex] = useState(false);
   const [liveChannel] = useState(() => new LiveChannel());
-  /** Output shown while live preview is on; the PDF stays reachable. */
-  const [outputView, setOutputView] = useState<'live' | 'pdf'>('live');
   /** Changing it remounts the live pane, which starts a new session. */
   const [liveAttempt, setLiveAttempt] = useState(0);
+  /** What the live pane shows, while live preview is on. */
+  const [liveView, setLiveView] = useState<LiveViewState | null>(null);
+  /** The compiled PDF and page the live pane opens with, set when live preview is turned on. */
+  const [liveSeed, setLiveSeed] = useState<LiveSeed | null>(null);
+  /** Page of the live pane to show in the PDF once live preview is off. */
+  const pdfPageAfterLive = useRef<number | null>(null);
+  /** Whether the source changed since the last compile started. */
+  const editedSinceCompile = useRef(false);
+  const { settings: preferences } = useSettings();
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -256,6 +264,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         let next: CompileKind | null = kind;
         while (next !== null) {
           compileQueued.current = null;
+          editedSinceCompile.current = false;
           await flushSave();
           const compiled = await api.compile(projectId, { singlePass: next === 'single' });
           setResult(compiled);
@@ -282,7 +291,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
 
   const showLive = liveEngine !== null && project?.settings.livePreview === true;
   /** Source and PDF positions map to the live pages, not the compiled PDF. */
-  const syncLive = showLive && liveSynctex && outputView === 'live';
+  const syncLive = showLive && liveSynctex;
   /** Live preview already updates as you type: auto-compile pauses while it is on. */
   const autoCompile = project?.settings.autoCompile === true && !showLive;
 
@@ -306,13 +315,35 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
       setSaveState('unsaved');
       liveChannel.publish({ path: document.path, text });
       noteOutlineEdit(text);
+      editedSinceCompile.current = true;
       if (autoCompile) {
         if (autoCompileTimer.current !== null) clearTimeout(autoCompileTimer.current);
-        autoCompileTimer.current = setTimeout(() => void compile('single'), AUTO_COMPILE_DELAY_MS);
+        autoCompileTimer.current = setTimeout(
+          () => void compile(preferences.autoCompilePasses),
+          preferences.autoCompileDelay,
+        );
       }
     },
-    [autoCompile, compile, document, flushSave, liveChannel, noteOutlineEdit, report],
+    [
+      autoCompile,
+      compile,
+      document,
+      flushSave,
+      liveChannel,
+      noteOutlineEdit,
+      preferences.autoCompileDelay,
+      preferences.autoCompilePasses,
+      report,
+    ],
   );
+
+  // Once the PDF is back, show the page the live pane was on.
+  useEffect(() => {
+    const page = pdfPageAfterLive.current;
+    if (showLive || page === null) return;
+    pdfPageAfterLive.current = null;
+    pdfRef.current?.goToPage(page);
+  }, [showLive]);
 
   /** A new live session starts from saved files: send the open document's unsaved text. */
   const sendOpenDocumentToLive = useCallback(() => {
@@ -481,9 +512,29 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
 
   const hasPdf = pdfVersion > 0;
   const pdfUrl = hasPdf ? api.pdfUrl(projectId, pdfVersion) : null;
-  const pdfShown = !showLive || outputView === 'pdf';
-  const canShowInPdf = document?.kind === 'text' && (syncLive || hasPdf);
-  const canShowInSource = (syncLive || (hasPdf && pdfShown)) && layout.view !== 'editor';
+  /** SyncTeX works on what is shown: the live pages (if they support it) or the PDF. */
+  const canSync = syncLive || (hasPdf && !showLive);
+  const canShowInPdf = document?.kind === 'text' && canSync;
+  const canShowInSource = canSync && layout.view !== 'editor';
+
+  /**
+   * Live preview on or off. Each side starts from what the other showed: the
+   * live pane opens on the PDF's page with its pages standing in until live
+   * pages arrive; the PDF opens on the live pane's page and, if the source
+   * changed since it was compiled, compiles at once.
+   */
+  const setLive = (on: boolean) => {
+    if (on) {
+      setLiveSeed(pdfUrl === null ? null : { url: pdfUrl, page: Math.max(1, pdfView.page) });
+      setLiveView(null);
+    } else {
+      pdfPageAfterLive.current = liveRef.current?.currentPage() ?? null;
+      if (preferences.compileOnLiveOff && editedSinceCompile.current) {
+        void compile('full').catch(report);
+      }
+    }
+    void updateSettings({ livePreview: on }).catch(report);
+  };
   const downloadPdf = () => {
     if (pdfUrl === null) return;
     const link = window.document.createElement('a');
@@ -495,7 +546,6 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Forward search; makes the PDF visible first. */
   const goToPdf = () => {
     if (layout.view === 'editor') updateLayout({ view: 'split' });
-    if (!syncLive) setOutputView('pdf');
     void showInPdf().catch(report);
   };
   /** Inverse search from the PDF; makes the editor visible. */
@@ -507,7 +557,6 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
   /** Forward search to an outline heading; makes the PDF visible first. */
   const goToHeading = (entry: OutlineEntry) => {
     if (layout.view === 'editor') updateLayout({ view: 'split' });
-    if (!syncLive) setOutputView('pdf');
     void forwardSearch({
       file: parseProjectPath(entry.file),
       line: entry.line,
@@ -593,7 +642,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         },
         { kind: 'separator' },
         { label: 'Show in PDF', onSelect: goToPdf, disabled: !canShowInPdf },
-        { label: 'Show in source', onSelect: goToSource, disabled: !(syncLive || hasPdf) },
+        { label: 'Show in source', onSelect: goToSource, disabled: !canSync },
       ],
     },
     {
@@ -634,6 +683,20 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         menus={menus}
         projectItems={projectItems}
         layoutItems={viewItems}
+        projectSettings={
+          <ProjectSettingsSection
+            settings={project.settings}
+            liveEngine={liveEngine && engineName(liveEngine)}
+            maxSnapshots={maxSnapshots}
+            onChange={(settings) => {
+              if (settings.livePreview !== undefined && settings.livePreview !== showLive) {
+                setLive(settings.livePreview);
+              } else {
+                void updateSettings(settings).catch(report);
+              }
+            }}
+          />
+        }
       />
       {error !== null && (
         <div className="error-bar" role="alert">
@@ -800,13 +863,9 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 compileSettings={
                   <CompileSettings
                     settings={project.settings}
-                    liveEngine={liveEngine}
                     livePreviewOn={showLive}
-                    maxSnapshots={maxSnapshots}
-                    onChange={(settings) => {
-                      if (settings.livePreview === true) setOutputView('live');
-                      void updateSettings(settings).catch(report);
-                    }}
+                    autoCompileDelay={preferences.autoCompileDelay}
+                    onChange={(settings) => void updateSettings(settings).catch(report)}
                   />
                 }
                 errorCount={errorCount}
@@ -814,39 +873,36 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                 onToggleLogs={() => updateLayout({ logs: !layout.logs })}
                 downloadUrl={pdfUrl}
                 downloadName={`${project.name}.pdf`}
-                outputTabs={
-                  showLive && (
-                    <div className="segmented output-tabs" role="tablist" aria-label="Output">
-                      {(['live', 'pdf'] as const).map((view) => (
-                        <button
-                          key={view}
-                          type="button"
-                          role="tab"
-                          aria-selected={outputView === view}
-                          onClick={() => setOutputView(view)}
-                        >
-                          {view === 'live' ? 'Live' : 'PDF'}
-                        </button>
-                      ))}
-                    </div>
-                  )
+                live={{
+                  engine: liveEngine && engineName(liveEngine),
+                  on: showLive,
+                  onToggle: () => setLive(!showLive),
+                  connection: showLive ? (liveView?.connection ?? { state: 'connecting' }) : null,
+                  onRetry: () => setLiveAttempt((attempt) => attempt + 1),
+                }}
+                view={
+                  showLive
+                    ? {
+                        page: liveView?.page ?? 0,
+                        pages: liveView?.pages ?? 0,
+                        zoom: liveView?.zoom ?? null,
+                      }
+                    : pdfView
                 }
-                pdfControls={pdfShown}
-                view={pdfView}
-                onGoToPage={(page) => pdfRef.current?.goToPage(page)}
+                onGoToPage={(page) => (showLive ? liveRef.current : pdfRef.current)?.goToPage(page)}
                 onZoom={(zoom) => updateLayout({ zoom })}
               />
-              {/* The live pane stays mounted while the PDF is shown, keeping its session. */}
               {showLive && liveEngine && (
-                <div className="output-view" hidden={outputView !== 'live'}>
+                <div className="output-view">
                   <LivePreviewPane
                     key={liveAttempt}
                     projectId={projectId}
                     channel={liveChannel}
-                    engine={liveEngine}
                     onReady={sendOpenDocumentToLive}
-                    onShowPdf={() => setOutputView('pdf')}
-                    onRetry={() => setLiveAttempt((attempt) => attempt + 1)}
+                    seed={liveSeed ?? (pdfUrl === null ? null : { url: pdfUrl, page: 1 })}
+                    zoom={layout.zoom}
+                    onZoom={(zoom) => updateLayout({ zoom })}
+                    onViewChange={setLiveView}
                     ref={liveRef}
                     highlights={liveHighlights}
                     onInverseSearch={
@@ -857,7 +913,8 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                   />
                 </div>
               )}
-              <div className="output-view" hidden={!pdfShown}>
+              {/* Stays mounted while live preview is on, so the PDF comes back at once. */}
+              <div className="output-view" hidden={showLive}>
                 <PdfViewer
                   ref={pdfRef}
                   url={pdfUrl}
@@ -905,7 +962,7 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
         >
           <OutlinePanel
             entries={outlineEntries}
-            canNavigate={hasPdf}
+            canNavigate={canSync}
             onSelect={goToHeading}
             onClose={() => updateLayout({ outline: false })}
           />

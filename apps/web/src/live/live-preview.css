@@ -1,6 +1,8 @@
 /* Continuous live preview (ADR 0014). The pane frame is in styles.css. */
 
 .live-pages {
+  /* Slot offsetTop is measured from here (zoom keeps the scroll position). */
+  position: relative;
   flex: 1;
   overflow: auto;
   padding: 12px;
