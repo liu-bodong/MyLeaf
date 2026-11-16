@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # Branches are checked through their pull request; pushing to a branch with
+  # an open pull request used to run everything twice.
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,11 +15,29 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Three jobs run in parallel; the slowest (unit tests, mostly the pdfTeX live
+# preview suite) sets the wall time.
 jobs:
-  check:
+  checks:
+    name: Format, lint, types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+
+  unit:
+    name: Unit tests
     runs-on: ubuntu-latest
     env:
-      # Enables live-preview tests (ADR 0012); built below.
+      # Enables live-preview tests (ADR 0012); built by setup-tex.
       MYLEAF_TEXPRESSO: ${{ github.workspace }}/vendor/texpresso/build/bin/texpresso
     steps:
       - uses: actions/checkout@v7
@@ -24,27 +46,24 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Install TeX Live, TeXpresso and pdfTeX build dependencies
-        # latex-extra provides mylatexformat (ADR 0011); xetex and the libraries
-        # are needed to build and run TeXpresso (vendor/texpresso/README.md);
-        # texinfo builds pdfTeX (vendor/pdftex/README.md).
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            texlive-latex-base texlive-latex-extra texlive-xetex latexmk \
-            build-essential pkg-config libsdl2-dev libmupdf-dev libmujs-dev libfreetype-dev \
-            libgumbo-dev libjbig2dec0-dev libjpeg-dev libopenjp2-7-dev libssl-dev \
-            libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
-            libpng-dev zlib1g-dev texinfo
-      - name: Build TeXpresso
-        run: vendor/texpresso/build.sh
-      - name: Build pdfTeX (live preview with MYLEAF_LIVE_ENGINE=pdftex)
-        run: vendor/pdftex/build.sh
+      - uses: ./.github/actions/setup-tex
       - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
-      - run: pnpm lint
-      - run: pnpm typecheck
       - run: pnpm test
+
+  e2e:
+    name: Build and browser tests
+    runs-on: ubuntu-latest
+    env:
+      MYLEAF_TEXPRESSO: ${{ github.workspace }}/vendor/texpresso/build/bin/texpresso
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: ./.github/actions/setup-tex
+      - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Install Playwright browser
         run: pnpm exec playwright install --with-deps chromium
