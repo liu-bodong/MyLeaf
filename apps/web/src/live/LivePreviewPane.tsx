@@ -59,6 +59,8 @@ export function LivePreviewPane({
 }: LivePreviewPaneProps) {
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
   const [pages, setPages] = useState<ReadonlyMap<number, LivePage>>(new Map());
+  /** Pages being typeset again since their image was rendered: shown dimmed. */
+  const [stale, setStale] = useState<ReadonlySet<number>>(new Set());
   /** Pages to lay out: the final count, or the most seen while re-typesetting. */
   const [count, setCount] = useState(1);
   const [current, setCurrent] = useState(1);
@@ -73,7 +75,11 @@ export function LivePreviewPane({
     const socket = new WebSocket(api.livePreviewUrl(projectId));
     socketRef.current = socket;
     let ended = false;
+    let closed = false;
     const live = new Map<number, LivePage>();
+    /** Page messages received per page; a decoded image is shown only if it is the latest. */
+    const received = new Map<number, number>();
+    const staleNow = new Set<number>();
     const end = (message: string) => {
       ended = true;
       setConnection({ state: 'ended', message });
@@ -82,11 +88,36 @@ export function LivePreviewPane({
     socket.addEventListener('message', (event: MessageEvent<string>) => {
       const message = JSON.parse(event.data) as LiveServerMessage;
       if (message.type === 'page') {
-        const previous = live.get(message.page);
-        if (previous !== undefined) URL.revokeObjectURL(previous.url);
+        const { page } = message;
+        const sequence = (received.get(page) ?? 0) + 1;
+        received.set(page, sequence);
+        if (message.stale) staleNow.add(page);
+        else staleNow.delete(page);
+        setStale(new Set(staleNow));
         const url = URL.createObjectURL(new Blob([message.svg], { type: 'image/svg+xml' }));
-        live.set(message.page, { url, ...(svgSize(message.svg) ?? DEFAULT_SIZE) });
-        setPages(new Map(live));
+        const size = svgSize(message.svg) ?? DEFAULT_SIZE;
+        // Decoded before it replaces the shown image, so the page does not flash blank.
+        const image = new Image();
+        image.src = url;
+        void image
+          .decode()
+          .catch(() => {})
+          .then(() => {
+            if (closed || received.get(page) !== sequence) {
+              URL.revokeObjectURL(url);
+              return;
+            }
+            const previous = live.get(page);
+            if (previous !== undefined) URL.revokeObjectURL(previous.url);
+            live.set(page, { url, ...size });
+            setPages(new Map(live));
+          });
+      } else if (message.type === 'page-unchanged') {
+        staleNow.delete(message.page);
+        setStale(new Set(staleNow));
+      } else if (message.type === 'stale') {
+        for (const page of received.keys()) if (page >= message.from) staleNow.add(page);
+        setStale(new Set(staleNow));
       } else if (message.type === 'page-count') {
         setCount((shown) =>
           message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
@@ -111,6 +142,7 @@ export function LivePreviewPane({
     });
 
     return () => {
+      closed = true;
       unsubscribe();
       socket.close();
       socketRef.current = null;
@@ -183,7 +215,7 @@ export function LivePreviewPane({
           return (
             <div
               key={page}
-              className="live-slot"
+              className={stale.has(page) ? 'live-slot stale' : 'live-slot'}
               data-page={page}
               style={{ aspectRatio: `${size.width} / ${size.height}` }}
             >

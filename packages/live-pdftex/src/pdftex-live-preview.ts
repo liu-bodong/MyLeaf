@@ -233,6 +233,8 @@ class PdftexSession implements LivePreviewSession {
   readonly #emitted = new Map<number, string>();
   /** The run whose content each emitted page shows: an older run's page never replaces it. */
   readonly #pageRuns = new Map<number, number>();
+  /** Where runs started typesetting again, by run: see #staleSince. */
+  #stales: { readonly from: number; readonly run: number }[] = [];
   #inFlight: InFlightRun | null = null;
   /** Writes a trace line, prefixed with this session (`trace` option). */
   readonly #trace: (line: string) => void;
@@ -379,8 +381,16 @@ class PdftexSession implements LivePreviewSession {
     // The engine may have been stopped during the writes above (close()
     // ends its control connection): writing to it then would throw.
     // Level 3: the run resumes from the last snapshot before the edit.
-    if (engine && !(await this.#resume(engine, files))) engine = null;
+    let from = 1;
+    if (engine) {
+      const after = await this.#resume(engine, files);
+      if (after === null) engine = null;
+      else from = after + 1;
+    }
     if (this.#closing) return;
+    // Pages from `from` on are typeset again (all of them in a full run):
+    // shown ones may be out of date.
+    this.#markStale(engine && !engine.control.writableEnded ? from : 1, Number(id));
     if (engine && !engine.control.writableEnded) {
       // Pages of the visible range are shown as soon as the child ships them
       // out (level 3): a finisher closes the PDF there.
@@ -481,19 +491,38 @@ class PdftexSession implements LivePreviewSession {
     }
   }
 
-  /** Emits a page rendered from run `run`, unless it is unchanged or a newer run's is shown. */
+  /** Emits a page rendered from run `run`, unless a newer run's is shown. */
   #emitPage(page: number, run: number, raw: string): void {
     if ((this.#pageRuns.get(page) ?? 0) > run) return;
     this.#pageRuns.set(page, run);
+    // From a run older than the latest one that typesets this page again.
+    const stale = run < this.#staleSince(page);
     const svg = sanitizeSvg(raw);
     const hash = createHash('sha1').update(svg).digest('base64');
     if (this.#emitted.get(page) === hash) {
-      this.#trace(`page ${page} of run ${run}: unchanged`);
+      this.#trace(`page ${page} of run ${run}: unchanged${stale ? ', stale' : ''}`);
+      if (!stale) this.#onEvent({ type: 'page-unchanged', page });
       return;
     }
     this.#emitted.set(page, hash);
-    this.#trace(`page ${page} of run ${run}: emitted, ${svg.length} chars`);
-    this.#onEvent({ type: 'page', page, svg });
+    this.#trace(
+      `page ${page} of run ${run}: emitted, ${svg.length} chars${stale ? ', stale' : ''}`,
+    );
+    this.#onEvent(stale ? { type: 'page', page, svg, stale } : { type: 'page', page, svg });
+  }
+
+  /** Run `run` typesets pages from `from` on again. */
+  #markStale(from: number, run: number): void {
+    // Runs only grow, so an earlier mark from `from` or later is covered by this one.
+    this.#stales = [...this.#stales.filter((mark) => mark.from < from), { from, run }];
+    this.#onEvent({ type: 'stale', from });
+  }
+
+  /** The latest run that typesets `page` again (0: none since the session opened). */
+  #staleSince(page: number): number {
+    let since = 0;
+    for (const mark of this.#stales) if (mark.from <= page) since = Math.max(since, mark.run);
+    return since;
   }
 
   /** Shows page `page` of a running child from its finisher's PDF (pages 1 to `page`). */
@@ -535,25 +564,27 @@ class PdftexSession implements LivePreviewSession {
   /**
    * Makes the last snapshot whose state still holds for `files` (or the
    * engine itself) read commands: kills the processes after it in the chain
-   * and waits for its `resumed`. Returns false if the engine exited.
+   * and waits for its `resumed`. Returns the page it resumes after (0 for
+   * the engine), or null if the engine exited.
    */
-  async #resume(engine: Engine, files: Sources): Promise<boolean> {
+  async #resume(engine: Engine, files: Sources): Promise<number | null> {
     let kept = 0;
     const limit = Math.min(engine.snapshots.length, this.#maxSnapshots);
     while (kept < limit && this.#holds(engine.snapshots[kept]!, files)) kept++;
     const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
-    if (target === undefined) return false;
+    if (target === undefined) return null;
+    const after = kept > 0 ? engine.snapshots[kept - 1]!.page : 0;
     this.#trace(
       `resume from ${kept > 0 ? `snapshot after page ${engine.snapshots[kept - 1]!.page}` : 'the engine'} (pid ${target}), ${kept} of ${engine.snapshots.length} snapshots kept`,
     );
-    if (engine.reader === target) return true;
+    if (engine.reader === target) return after;
     const resumed = new Promise<boolean>((resolveResumed) => {
       engine.resumed.set(target, resolveResumed);
     });
     // In chain order, so none of them reads commands before it dies.
     for (const snapshot of engine.snapshots.splice(kept)) kill(snapshot.pid);
     if (engine.leaf !== null) kill(engine.leaf);
-    return resumed;
+    return (await resumed) ? after : null;
   }
 
   /**
