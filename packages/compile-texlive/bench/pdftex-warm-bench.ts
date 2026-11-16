@@ -124,7 +124,7 @@ try {
       return /^(started|resumed|read)\t/.test(line.value) ? next() : line.value;
     };
     let inputs = 0;
-    while ((await next()) !== 'ready') inputs++;
+    while (!(await next()).startsWith('ready')) inputs++;
     const ready = performance.now() - start;
 
     /** Milliseconds since the engine started (its \\pdfelapsedtime). */
