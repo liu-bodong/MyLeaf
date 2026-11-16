@@ -20,13 +20,18 @@ runs:
           libfontconfig-dev libleptonica-dev libharfbuzz-dev libgraphite2-dev libicu-dev \
           libpng-dev zlib1g-dev texinfo
     # The keys cover only what the build scripts read, so any change to them
-    # rebuilds; ImageOS rebuilds on a new runner OS. Bump v1 to force a rebuild.
+    # rebuilds, plus the runner image (e.g. ubuntu24), whose libraries TeXpresso
+    # links against. Bump v1 to force a rebuild.
+    - name: Read runner image
+      id: image
+      shell: bash
+      run: echo "name=${ImageOS:-unknown}" >> "$GITHUB_OUTPUT"
     - name: Restore TeXpresso
       id: texpresso
       uses: actions/cache@v6
       with:
         path: vendor/texpresso/build/bin
-        key: texpresso-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ hashFiles('vendor/texpresso/build.sh', 'vendor/texpresso/*.patch') }}
+        key: texpresso-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.name }}-${{ hashFiles('vendor/texpresso/build.sh', 'vendor/texpresso/*.patch') }}
     - name: Build TeXpresso
       if: steps.texpresso.outputs.cache-hit != 'true'
       shell: bash
@@ -36,7 +41,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: vendor/pdftex/build/bin
-        key: pdftex-v1-${{ runner.os }}-${{ env.ImageOS }}-${{ hashFiles('vendor/pdftex/build.sh', 'vendor/pdftex/*.patch') }}
+        key: pdftex-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.name }}-${{ hashFiles('vendor/pdftex/build.sh', 'vendor/pdftex/*.patch') }}
     - name: Build pdfTeX (live preview with MYLEAF_LIVE_ENGINE=pdftex)
       if: steps.pdftex.outputs.cache-hit != 'true'
       shell: bash
