@@ -262,7 +262,7 @@ export function LivePreviewPane({
     /** The compiled PDF that stands in for pages not rendered live yet. */
     let seedDocument: { key: string; pdf: Uint8Array; pages: number } | null = null;
     const seeding = new Set<number>();
-    /** Whether the server reported a page count (which overrides the seed's). */
+    /** Whether the server reported the final page count (which overrides the seed's). */
     let counted = false;
     let wanted: { first: number; last: number } | null = null;
     const searches = new Map<number, (result: SearchResult | null) => void>();
@@ -378,7 +378,8 @@ export function LivePreviewPane({
           staleNow.add(page);
           setStale(new Set(staleNow));
         }
-        if (!counted) setCount(rendered.pages);
+        // Until the server's count is final, at least the compiled PDF's pages.
+        if (!counted) setCount((shown) => Math.max(shown, rendered.pages));
         setOpenAt(Math.min(page, rendered.pages));
         // Set by the visible-range observer meanwhile (TypeScript cannot see that).
         const range = wanted as { first: number; last: number } | null;
@@ -420,7 +421,7 @@ export function LivePreviewPane({
         searches.get(message.id)?.(message);
         searches.delete(message.id);
       } else if (message.type === 'page-count') {
-        counted = true;
+        if (message.final) counted = true;
         setCount((shown) =>
           message.final ? Math.max(1, message.count) : Math.max(shown, message.count),
         );
