@@ -40,6 +40,7 @@ const EDITS = Number(process.env.BENCH_EDITS ?? 10);
 for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
   const workRoot = await mkdtemp(join(tmpdir(), 'myleaf-settle-bench-'));
   const received = new Set<number>();
+  const latest = new Map<number, Uint8Array>();
   const stale = new Set<number>();
   let count = 0;
   let final = false;
@@ -63,6 +64,7 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
       lastEvent = performance.now();
       if (event.type === 'page') {
         received.add(event.page);
+        if ('pdf' in event) latest.set(event.page, event.pdf);
         if (event.stale) stale.add(event.page);
         else stale.delete(event.page);
       } else if (event.type === 'page-unchanged') stale.delete(event.page);
@@ -84,7 +86,9 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
   session.showPages(1, 3);
   let typed = 'Typed';
   for (let edit = 0; edit < EDITS; edit++) {
-    typed += ` word${edit}`;
+    typed += process.env.BENCH_BIG
+      ? ` word${edit} \\par ${'Lorem ipsum dolor sit amet. '.repeat(30)}`
+      : ` word${edit}`;
     final = false;
     settledAt = 0;
     session.updateFile(main(typed));
@@ -99,6 +103,32 @@ for (let round = 0; round < Number(process.env.BENCH_ROUNDS ?? 3); round++) {
         ? `still dimmed after 4 s quiet: ${dimmed.join(',')}`
         : `all settled ${Math.round(settledAt - last)} ms after the last edit`),
   );
+  if (process.env.BENCH_VERIFY) {
+    const mupdf = await import('mupdf');
+    const look = (pdf: Uint8Array, index = 0) => {
+      const doc = mupdf.Document.openDocument(pdf, 'application/pdf');
+      return doc.loadPage(index).toStructuredText().asText().replace(/\s+/g, ' ').trim();
+    };
+    const { execFileSync } = await import('node:child_process');
+    const { writeFileSync, readFileSync, mkdtempSync, cpSync } = await import('node:fs');
+    const dir = mkdtempSync(join(tmpdir(), 'verify-'));
+    cpSync(sample, dir, { recursive: true });
+    writeFileSync(join(dir, 'main.tex'), main(typed).content);
+    for (let i = 0; i < 3; i++)
+      execFileSync('pdflatex', ['-interaction=nonstopmode', 'main.tex'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+    const full = readFileSync(join(dir, 'main.pdf'));
+    const bad: string[] = [];
+    for (const [page, pdf] of [...latest].sort((a, b) => a[0] - b[0])) {
+      const mine = look(pdf);
+      let match = -1;
+      for (let index = 0; index < count; index++) if (look(full, index) === mine) match = index + 1;
+      if (match !== page) bad.push(`${page}->${match}`);
+    }
+    console.log(`verify: ${bad.length === 0 ? 'all pages match' : `mismatched ${bad.join(' ')}`}`);
+  }
   await session.close();
   await rm(workRoot, { recursive: true, force: true });
 }
