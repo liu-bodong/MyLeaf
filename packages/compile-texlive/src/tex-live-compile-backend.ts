@@ -16,6 +16,8 @@ import type {
 import type { ProjectId } from '@myleaf/doc-model';
 import { parseProjectPath } from '@myleaf/project';
 import type { ProjectFile, ProjectPath } from '@myleaf/project';
+import { withDraftImages } from './draft-images.js';
+import { ImageCache } from './image-cache.js';
 import { FORMAT_NAME, PreambleFormatStore, extractPreamble, formatKey } from './preamble-format.js';
 import { runProcess } from './run-process.js';
 import type { ProcessResult } from './run-process.js';
@@ -29,6 +31,11 @@ export interface TexLiveCompileBackendOptions {
   readonly latexmkCommand?: string;
   readonly pdflatexCommand?: string;
   readonly synctexCommand?: string;
+  /**
+   * Converted images for `reuseImages`, which a live preview can share.
+   * Default: one in `<workRoot>/.images`.
+   */
+  readonly imageCache?: ImageCache;
 }
 
 const ENGINE_FLAGS: Record<TexEngine, string> = {
@@ -62,12 +69,19 @@ interface PreamblePlan {
  *                                  their timestamps so latexmk can skip work
  *   <workRoot>/<project-id>/out/   aux files, log, PDF, SyncTeX data
  *   <workRoot>/<project-id>/out/fmt/  precompiled preamble (pdfLaTeX only)
+ *   <workRoot>/.images/            converted images, shared (`ImageCache`)
  *
  * Precompiled preamble (ADR 0011): the part of the root file before
  * `\begin{document}` is dumped into a TeX format with `mylatexformat`, in the
  * background after the compile that first sees it. Later compiles load the
  * format instead of the packages. It is rebuilt when the preamble, a project
  * file it reads (e.g. a local .sty), or the TeX version changes.
+ *
+ * Images (`reuseImages`, pdfLaTeX only): PNGs that pdfTeX would decode and
+ * compress again on every compile (with transparency) are converted to PDFs
+ * once, in the background after the compile that first sees them; later
+ * compiles copy the converted image instead. `draftImages` turns on
+ * graphicx's draft mode in the source copy (`withDraftImages`).
  *
  * Hardening (not a sandbox; see ADR 0010): latexmk ignores rc files (they are
  * Perl code), shell escape is disabled, and TeX may only read and write files
@@ -80,6 +94,7 @@ export class TexLiveCompileBackend implements CompileBackend {
   readonly #pdflatex: string;
   readonly #synctex: string;
   #texVersion: Promise<string> | null = null;
+  readonly #images: ImageCache;
   /** Tail of each project's compile queue. */
   readonly #queues = new Map<ProjectId, Promise<unknown>>();
 
@@ -89,15 +104,27 @@ export class TexLiveCompileBackend implements CompileBackend {
     this.#latexmk = options.latexmkCommand ?? 'latexmk';
     this.#pdflatex = options.pdflatexCommand ?? 'pdflatex';
     this.#synctex = options.synctexCommand ?? 'synctex';
+    this.#images =
+      options.imageCache ??
+      new ImageCache({ dir: join(this.#workRoot, '.images'), timeoutMs: this.#timeoutMs });
   }
 
   async compile(request: CompileRequest): Promise<CompileResult> {
-    const { result, key } = await this.#serialize(request.projectId, () => this.#compile(request));
+    const { result, key, images } = await this.#serialize(request.projectId, () =>
+      this.#compile(request),
+    );
+    // Not awaited; not queued either, as it does not touch the project's workspace.
+    if (images.length > 0) void this.#images.convertPending(images);
     if (result.preamble === 'building' && key !== null) {
       // Queued behind this compile and ahead of the next one; not awaited.
       void this.#serialize(request.projectId, () => this.#buildFormat(request, key));
     }
     return result;
+  }
+
+  /** Resolves once images being converted for `reuseImages` are converted (benchmarks, tests). */
+  imagesConverted(): Promise<void> {
+    return this.#images.idle();
   }
 
   async readPdf(projectId: ProjectId): Promise<Uint8Array | null> {
@@ -205,12 +232,18 @@ export class TexLiveCompileBackend implements CompileBackend {
     );
   }
 
-  async #compile(request: CompileRequest): Promise<{ result: CompileResult; key: string | null }> {
+  async #compile(request: CompileRequest): Promise<{
+    result: CompileResult;
+    key: string | null;
+    /** Images to convert for later compiles. */
+    images: readonly ProjectFile[];
+  }> {
     const started = performance.now();
     const { projectId, rootFile } = request;
     const outDir = this.#outDir(projectId);
     await mkdir(outDir, { recursive: true });
-    const changed = await syncDirectory(this.#srcDir(projectId), request.files);
+    const { files, images } = await this.#prepareFiles(request);
+    const changed = await syncDirectory(this.#srcDir(projectId), files);
 
     const jobName = rootFile.slice(rootFile.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '');
     // A single pass needs the previous compile's .aux of the same root file.
@@ -246,6 +279,7 @@ export class TexLiveCompileBackend implements CompileBackend {
 
     return {
       key: plan.key,
+      images,
       result: {
         status: run.timedOut ? 'timeout' : run.exitCode === 0 ? 'success' : 'failure',
         hasPdf: output.pdf !== null,
@@ -255,6 +289,25 @@ export class TexLiveCompileBackend implements CompileBackend {
         preamble,
       },
     };
+  }
+
+  /** The files to compile: with converted images (`reuseImages`) or draft mode (`draftImages`). */
+  async #prepareFiles(
+    request: CompileRequest,
+  ): Promise<{ files: readonly ProjectFile[]; images: readonly ProjectFile[] }> {
+    const { options, rootFile } = request;
+    if (options.draftImages === true) {
+      // Images are not embedded: nothing to convert.
+      const files = request.files.map((file) =>
+        file.path === rootFile ? { path: file.path, content: withDraftImages(file.content) } : file,
+      );
+      return { files, images: [] };
+    }
+    if (options.reuseImages === true && request.engine === 'pdflatex') {
+      const applied = await this.#images.apply(request.files);
+      return { files: applied.files, images: applied.pending };
+    }
+    return { files: request.files, images: [] };
   }
 
   async #planPreamble(request: CompileRequest): Promise<PreamblePlan> {

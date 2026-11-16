@@ -805,7 +805,16 @@ export function Workspace({ projectId }: { readonly projectId: ProjectId }) {
                     maxSnapshots={maxSnapshots}
                     onChange={(settings) => {
                       if (settings.livePreview === true) setOutputView('live');
-                      void updateSettings(settings).catch(report);
+                      const images =
+                        settings.draftImages !== undefined || settings.reuseImages !== undefined;
+                      void updateSettings(settings)
+                        .then(() => {
+                          // Show the change: a new live session, or a new PDF.
+                          if (!images) return;
+                          if (showLive) setLiveAttempt((attempt) => attempt + 1);
+                          else void compile().catch(report);
+                        })
+                        .catch(report);
                     }}
                   />
                 }

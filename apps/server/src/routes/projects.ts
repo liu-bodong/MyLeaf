@@ -119,6 +119,8 @@ export function registerProjectRoutes(
                 precompilePreamble: { type: 'boolean' },
                 livePreview: { type: 'boolean' },
                 liveSnapshots: { type: ['integer', 'null'], minimum: 0 },
+                reuseImages: { type: 'boolean' },
+                draftImages: { type: 'boolean' },
               },
               additionalProperties: false,
             },
