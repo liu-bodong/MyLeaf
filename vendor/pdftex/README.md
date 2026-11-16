@@ -66,7 +66,7 @@ directory. Messages are lines of tab-separated fields:
 | Direction       | Message                                                              | Meaning                                                            |
 | --------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | engine → driver | `input <path>`                                                       | A file read before the pause (preamble dependencies)               |
-| engine → driver | `ready`                                                              | Paused before byte `<n>`                                           |
+| engine → driver | `ready pause`                                                        | Paused before byte `<n>`; `pause`: runs can be paused (below)      |
 | driver → engine | `run <id> <main-file> <output-dir> [<first> <last> [<every> <max>]]` | Fork a child; its bytes before the pause must equal the original's |
 | engine → driver | `started <id> <pid>`                                                 | The child's process (to cancel the run, the driver kills it)       |
 | engine → driver | `read <path>`                                                        | A file a child opened                                              |
@@ -108,6 +108,14 @@ waits for its child to exit, then says `done` (for its child's run) and
 after a killed one exit too. Outputs are copied from their descriptors (they
 are opened for reading as well), so a snapshot still works after the driver
 deleted its run's directory.
+
+A driver can pause a run: SIGUSR1 to the run's typesetting process makes
+it stop itself (SIGSTOP) until SIGCONT. The engine, snapshots and
+finishers ignore SIGUSR1, and it is blocked across each fork, so a pid that
+has just become a snapshot ignores it; the driver then sends it to the
+child that the snapshot's `snapshot` line names. Live preview pauses a run
+once the visible pages are shown, until typing pauses or the visible pages
+move past it.
 
 With `-synctex=-1` (uncompressed), the `.synctex` file is wrapped like the
 other outputs (`synctex.c`): each child and finisher writes its own copy,
