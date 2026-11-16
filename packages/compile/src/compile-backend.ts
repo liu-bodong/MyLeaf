@@ -19,6 +19,17 @@ export interface CompileOptions {
    * compile. Default: false.
    */
   readonly singlePass?: boolean;
+  /**
+   * Reuse converted copies of images that are slow to embed, made after an
+   * earlier compile, where the backend supports it. Default: false.
+   */
+  readonly reuseImages?: boolean;
+  /**
+   * Draw included graphics as boxes of their size with their file name
+   * (graphicx's `draft` option), which skips reading and embedding them.
+   * Default: false.
+   */
+  readonly draftImages?: boolean;
 }
 
 /**

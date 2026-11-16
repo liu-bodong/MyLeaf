@@ -89,6 +89,8 @@ describe('server API', () => {
         precompilePreamble: true,
         livePreview: false,
         liveSnapshots: null,
+        reuseImages: true,
+        draftImages: false,
       });
       const response = await app.inject({
         method: 'PATCH',
@@ -100,12 +102,15 @@ describe('server API', () => {
         precompilePreamble: true,
         livePreview: true,
         liveSnapshots: 8,
+        reuseImages: true,
+        draftImages: false,
       });
       for (const settings of [
         { autoCompile: 'yes' },
         { unknown: true },
         { liveSnapshots: -1 },
         { liveSnapshots: 1.5 },
+        { draftImages: 'yes' },
       ]) {
         const invalid = await app.inject({
           method: 'PATCH',
@@ -264,6 +269,25 @@ describe('server API', () => {
       });
       expect(compiler.requests.map((r) => r.options.precompilePreamble)).toEqual([true, false]);
       expect(second.json()).toMatchObject({ preamble: 'disabled' });
+    });
+
+    it("passes the project's image settings to the compiler", async () => {
+      await app.inject({ method: 'POST', url: `/api/projects/${project.id}/compile` });
+      await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${project.id}`,
+        payload: { settings: { reuseImages: false, draftImages: true } },
+      });
+      await app.inject({ method: 'POST', url: `/api/projects/${project.id}/compile` });
+      expect(
+        compiler.requests.map(({ options: { reuseImages, draftImages } }) => ({
+          reuseImages,
+          draftImages,
+        })),
+      ).toEqual([
+        { reuseImages: true, draftImages: false },
+        { reuseImages: false, draftImages: true },
+      ]);
     });
 
     it('returns the references of the latest compile', async () => {

@@ -14,7 +14,8 @@ An open-source, self-hostable collaborative LaTeX editor.
 - **PDF viewer**: PDF.js with SyncTeX navigation between source and PDF, and
   a document outline panel.
 - **Compiling**: TeX Live through `latexmk`, with optional live preview
-  (TeXpresso or a patched pdfTeX).
+  (TeXpresso or a patched pdfTeX); unchanged images are reused between
+  compiles, and a draft mode shows images as boxes for faster compiles.
 - **Projects**: file tree, drag-and-drop upload and `.zip` import.
 - **Appearance**: light and dark themes, editor font and layout settings.
 
@@ -37,6 +38,7 @@ pnpm dev          # server on 127.0.0.1:3000, web app on http://localhost:5173,
 pnpm check        # format, lint, typecheck, test, build (as CI)
 pnpm e2e          # end-to-end browser test (after `pnpm build`)
 pnpm bench        # compile-time benchmark (ADR 0011)
+pnpm bench:images # compile times with the image options (ADR 0011)
 ```
 
 Server configuration (environment variables):

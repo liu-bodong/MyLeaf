@@ -7,6 +7,8 @@ import {
   DEFAULT_TAIL_DELAY_MS,
   PdftexLivePreview,
 } from '@myleaf/live-pdftex';
+import { ImageCache, TexLiveCompileBackend } from '@myleaf/compile-texlive';
+import { DEFAULT_MAX_SNAPSHOTS, PdftexLivePreview } from '@myleaf/live-pdftex';
 import type { LivePreviewBackend } from '@myleaf/live-preview';
 import { TexpressoLivePreview } from '@myleaf/live-texpresso';
 import { FileSystemProjectStore } from '@myleaf/storage-fs';
@@ -44,7 +46,9 @@ const sampleCreated =
     name: 'ICML 2027 example',
     rootFile: 'example_paper.tex',
   }));
-const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds') });
+// Converted images (reuseImages), shared by compiles and live previews.
+const imageCache = new ImageCache({ dir: join(dataDir, 'builds', '.images') });
+const compiler = new TexLiveCompileBackend({ workRoot: join(dataDir, 'builds'), imageCache });
 
 // Live sessions do not survive a restart: remove workspaces a crash left behind.
 const liveRoot = join(dataDir, 'live');
@@ -109,7 +113,7 @@ const livePreview =
         idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
       });
 
-const app = buildApp({ store, compiler, livePreview }, { logger: true });
+const app = buildApp({ store, compiler, livePreview, imageCache }, { logger: true });
 
 // Close live-preview sessions (and their TeXpresso processes) on shutdown.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
