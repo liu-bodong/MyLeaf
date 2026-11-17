@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type {
   LivePreviewBackend,
   LivePreviewEvent,
@@ -22,6 +22,11 @@ export interface TexpressoLivePreviewOptions {
    * them (crash, SIGKILL). Default: this process.
    */
   readonly ownerPid?: number;
+  /**
+   * Receives a line per command sent to TeXpresso and per message from it,
+   * for diagnosis (`MYLEAF_LIVE_TRACE` in the server).
+   */
+  readonly trace?: (line: string) => void;
 }
 
 /** Exit statuses of sh for a command that is not executable (126) or missing (127). */
@@ -70,11 +75,13 @@ export class TexpressoLivePreview implements LivePreviewBackend {
   readonly #command: string;
   readonly #workRoot: string;
   readonly #ownerPid: number;
+  readonly #trace: (line: string) => void;
 
   constructor(options: TexpressoLivePreviewOptions) {
     this.#command = options.command;
     this.#workRoot = resolve(options.workRoot);
     this.#ownerPid = options.ownerPid ?? process.pid;
+    this.#trace = options.trace ?? (() => {});
   }
 
   async open(
@@ -111,7 +118,10 @@ export class TexpressoLivePreview implements LivePreviewBackend {
         detached: true,
       },
     );
-    const session = new TexpressoSession(child, dir, onEvent);
+    const tag = basename(dir).slice(0, 8);
+    const session = new TexpressoSession(child, dir, onEvent, (line) =>
+      this.#trace(`${tag} ${line}`),
+    );
     // Rerun with the previous pass's .aux once edits pause, so \ref, \pageref
     // and the table of contents resolve (at most 5 passes, upstream default).
     session.enableReruns();
@@ -129,8 +139,15 @@ class TexpressoSession implements LivePreviewSession {
   readonly #emitted = new Map<number, string>();
   /** Serializes page reads so events are emitted in export order. */
   #reads: Promise<void> = Promise.resolve();
+  readonly #trace: (line: string) => void;
 
-  constructor(child: ChildProcess, dir: string, onEvent: (event: LivePreviewEvent) => void) {
+  constructor(
+    child: ChildProcess,
+    dir: string,
+    onEvent: (event: LivePreviewEvent) => void,
+    trace: (line: string) => void = () => {},
+  ) {
+    this.#trace = trace;
     this.#child = child;
     this.#dir = dir;
     this.#onEvent = onEvent;
@@ -206,6 +223,8 @@ class TexpressoSession implements LivePreviewSession {
   }
 
   #handleLine(line: string): void {
+    // Log and terminal output ("append") would flood the trace.
+    if (!line.startsWith('["append"')) this.#trace(`< ${line}`);
     let message: unknown;
     try {
       message = JSON.parse(line);
@@ -228,7 +247,10 @@ class TexpressoSession implements LivePreviewSession {
       if (raw === null || this.#closing) return;
       const svg = sanitizeSvg(raw);
       const hash = createHash('sha1').update(svg).digest('base64');
-      if (this.#emitted.get(page) === hash) return;
+      if (this.#emitted.get(page) === hash) {
+        this.#trace(`page ${page}: unchanged`);
+        return;
+      }
       this.#emitted.set(page, hash);
       this.#onEvent({ type: 'page', page, svg });
     });
@@ -236,6 +258,13 @@ class TexpressoSession implements LivePreviewSession {
 
   #send(command: readonly unknown[]): void {
     if (!this.#closing && this.#child.stdin?.writable) {
+      // File contents are long: only their size goes to the trace.
+      const [verb, path, content] = command;
+      this.#trace(
+        verb === 'open-base64'
+          ? `> open-base64 ${String(path)} ${String(content).length} base64 chars`
+          : `> ${JSON.stringify(command)}`,
+      );
       this.#child.stdin.write(`${JSON.stringify(command)}\n`);
     }
   }

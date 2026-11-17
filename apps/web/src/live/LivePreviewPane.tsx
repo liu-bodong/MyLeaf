@@ -17,6 +17,7 @@ import { stepZoom } from '../pdf/zoom.js';
 import type { PdfZoom } from '../pdf/zoom.js';
 import type { LiveChannel } from './live-channel.js';
 import { PdfRenderer } from './pdf-renderer.js';
+import { liveMark, liveMarkAfterPaint, liveTimingOn } from './live-timing.js';
 import { MIN_SLOT_WIDTH, geometryZoom, slotGeometry } from './slot-geometry.js';
 import type { PaneMeasure } from './slot-geometry.js';
 import type { RenderedPage, TextLine } from './pdf-renderer.js';
@@ -96,8 +97,14 @@ type SearchRequest =
 /** The server's answer to a SyncTeX request. */
 type SearchResult = Extract<LiveServerMessage, { type: 'forward-result' | 'inverse-result' }>;
 
+/** A page message, as live timing (live-timing.ts) names it: page and its sequence number. */
+interface TimingKey {
+  readonly page: number;
+  readonly sequence: number;
+}
+
 /** A shown page: an SVG (TeXpresso) or a PDF drawn by MuPDF (pdfTeX). */
-type LivePage =
+type LivePage = (
   | {
       readonly kind: 'svg';
       readonly url: string;
@@ -116,7 +123,11 @@ type LivePage =
       readonly width: number;
       readonly height: number;
       readonly lines: readonly PlacedLine[];
-    };
+    }
+) & {
+  /** With live timing on: the message this page came from, marked once painted. */
+  readonly timing?: TimingKey;
+};
 
 /** A line of the text layer, with the horizontal stretch that makes it as wide as on the page. */
 interface PlacedLine extends TextLine {
@@ -302,6 +313,7 @@ export function LivePreviewPane({
       }
       const previous = live.get(page);
       if (previous !== undefined) release(previous);
+      if (next.timing) liveMark('shown', { ...next.timing });
       live.set(page, next);
       setPages(new Map(live));
     };
@@ -313,7 +325,17 @@ export function LivePreviewPane({
     ) =>
       redraw(drawWidthRef.current)
         .then((rendered) => {
+          const timed = liveTimingOn && sequence > 0 && !compiled;
+          if (timed) {
+            liveMark('drawn', {
+              page,
+              sequence,
+              ...rendered.timing,
+              pixels: rendered.bitmap.width * rendered.bitmap.height,
+            });
+          }
           show(page, sequence, {
+            ...(timed ? { timing: { page, sequence } } : {}),
             kind: 'pdf',
             redraw,
             compiled,
@@ -409,6 +431,11 @@ export function LivePreviewPane({
         fonts.clear();
       } else if (message.type === 'page' && 'pdf' in message) {
         const { page, pdf } = message;
+        const sequence = receive(page, message.stale === true);
+        if (liveTimingOn) {
+          const bytes = typeof event.data === 'string' ? event.data.length : event.data.byteLength;
+          liveMark('recv', { page, sequence, format: 'pdf', bytes, stale: message.stale === true });
+        }
         const pageFonts =
           message.fonts === undefined
             ? undefined
@@ -418,12 +445,14 @@ export function LivePreviewPane({
                   return data === undefined ? [] : [[id, data] as const];
                 }),
               );
-        void draw(page, receive(page, message.stale === true), (width) =>
-          renderer.render(pdf, width, pageFonts),
-        );
+        void draw(page, sequence, (width) => renderer.render(pdf, width, pageFonts));
       } else if (message.type === 'page') {
         const { page } = message;
         const sequence = receive(page, message.stale === true);
+        const stale = message.stale === true;
+        if (liveTimingOn) {
+          liveMark('recv', { page, sequence, format: 'svg', bytes: message.svg.length, stale });
+        }
         const url = URL.createObjectURL(new Blob([message.svg], { type: 'image/svg+xml' }));
         const size = svgSize(message.svg) ?? DEFAULT_SIZE;
         // Decoded before it replaces the shown image, so the page does not flash blank.
@@ -432,7 +461,15 @@ export function LivePreviewPane({
         void image
           .decode()
           .catch(() => {})
-          .then(() => show(page, sequence, { kind: 'svg', url, ...size }));
+          .then(() => {
+            if (liveTimingOn) liveMark('drawn', { page, sequence });
+            show(page, sequence, {
+              ...(liveTimingOn ? { timing: { page, sequence } } : {}),
+              kind: 'svg',
+              url,
+              ...size,
+            });
+          });
       } else if (message.type === 'page-unchanged') {
         staleNow.delete(message.page);
         setStale(new Set(staleNow));
@@ -465,7 +502,10 @@ export function LivePreviewPane({
         path: update.path,
         content: update.text,
       };
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+      if (socket.readyState === WebSocket.OPEN) {
+        if (liveTimingOn) liveMark('send', { path: update.path, bytes: update.text.length });
+        socket.send(JSON.stringify(message));
+      }
     });
 
     return () => {
@@ -580,6 +620,18 @@ export function LivePreviewPane({
   useEffect(() => {
     sizeOfRef.current = sizeOf;
   });
+
+  // Live timing: a page is painted with the frame after its commit (canvases
+  // are drawn in PdfPage's effect, which runs before this one).
+  const paintMarked = useRef(new WeakSet<TimingKey>());
+  useEffect(() => {
+    if (!liveTimingOn) return;
+    for (const shown of pages.values()) {
+      if (shown.timing === undefined || paintMarked.current.has(shown.timing)) continue;
+      paintMarked.current.add(shown.timing);
+      liveMarkAfterPaint('painted', { ...shown.timing });
+    }
+  }, [pages]);
 
   /** Scroll position as page and share of its height, kept across zooms. */
   const anchor = useRef<{ page: number; fraction: number } | null>(null);

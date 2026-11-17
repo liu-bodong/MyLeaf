@@ -1,6 +1,12 @@
-import type { RenderRequest, RenderResponse, TextLine, WorkerReady } from './mupdf-worker.js';
+import type {
+  RenderRequest,
+  RenderResponse,
+  RenderTiming,
+  TextLine,
+  WorkerReady,
+} from './mupdf-worker.js';
 
-export type { TextLine };
+export type { RenderTiming, TextLine };
 
 export interface RenderedPage {
   readonly bitmap: ImageBitmap;
@@ -10,6 +16,8 @@ export interface RenderedPage {
   readonly lines: readonly TextLine[];
   /** Pages in the document. */
   readonly pages: number;
+  /** Time spent in the worker, per step. */
+  readonly timing: RenderTiming;
 }
 
 /** Draws one-page PDFs with MuPDF in a Web Worker, one at a time, in order. */

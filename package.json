@@ -22,6 +22,7 @@
     "bench:live-compression": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-compression-bench.ts",
     "bench:live-fonts": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-fonts-bench.ts",
     "bench:live-fonts-session": "pnpm --filter \"@myleaf/server...\" run build && node apps/server/bench/live-fonts-session.ts",
+    "bench:live-engines": "pnpm --filter \"@myleaf/server...\" run build && pnpm --filter @myleaf/web run build && node apps/server/bench/live-engines-bench.ts",
     "bench:live-typing": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/typing-bench.ts",
     "bench:live-settle": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/settle-bench.ts",
     "check:live-pdftex": "pnpm --filter \"@myleaf/live-pdftex...\" run build && node packages/live-pdftex/bench/fuzz-check.ts",

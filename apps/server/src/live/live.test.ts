@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { WebSocket as WsSocket } from 'ws';
 import { DRAFT_IMAGES_CODE } from '@myleaf/compile-texlive';
 import { buildApp } from '../app.js';
+import type { LiveTiming } from '../routes/live.js';
 import { LiveSessionPool } from './live-session-pool.js';
 
 class FakeLiveSession implements LivePreviewSession {
@@ -139,7 +140,12 @@ describe('live preview routes', () => {
   const sockets: WsSocket[] = [];
 
   const start = async (
-    options: { maxSessions?: number; idleMs?: number; enabled?: boolean } = {},
+    options: {
+      maxSessions?: number;
+      idleMs?: number;
+      enabled?: boolean;
+      liveTiming?: LiveTiming;
+    } = {},
   ) => {
     backend = new FakeLivePreview();
     compiler = new FakeCompileBackend();
@@ -154,6 +160,7 @@ describe('live preview routes', () => {
       store: new InMemoryProjectStore(),
       compiler,
       livePreview: pool,
+      liveTiming: options.liveTiming ?? null,
     });
     await app.ready();
     project = (
@@ -240,6 +247,34 @@ describe('live preview routes', () => {
       { type: 'page-unchanged', page: 5 },
       { type: 'page-count', count: 7, final: true },
     ]);
+  });
+
+  it('gives a timing mark per edit and page with MYLEAF_LIVE_TIMING', async () => {
+    const marks: Parameters<LiveTiming>[0][] = [];
+    await start({ liveTiming: (mark) => marks.push(mark) });
+    const { socket, messages } = await connect();
+    await until(() => messages.find((m) => m.type === 'status'), 'starting');
+    const session = backend.sessions[0]!;
+    socket.send(JSON.stringify({ type: 'update', path: 'main.tex', content: 'edited' }));
+    await until(() => session.updates[0], 'update');
+    session.emit({ type: 'stale', from: 2 });
+    session.emit({
+      type: 'page',
+      page: 2,
+      pdf: new Uint8Array([37, 80, 68, 70, 10]),
+      fonts: [{ id: 'a', data: new Uint8Array([1, 2, 3]) }],
+    });
+    session.emit({ type: 'page', page: 3, svg: '<svg/>', stale: true });
+    session.emit({ type: 'page-unchanged', page: 4 });
+    expect(marks.map(({ t, ...mark }) => (expect(t).toBeGreaterThan(0), mark))).toEqual([
+      { kind: 'update', path: 'main.tex', bytes: 6 },
+      { kind: 'stale', from: 2 },
+      { kind: 'page', page: 2, format: 'pdf', bytes: 5, stale: false },
+      { kind: 'fonts', bytes: 3 },
+      { kind: 'page', page: 3, format: 'svg', bytes: 6, stale: true },
+      { kind: 'page-unchanged', page: 4, format: null, bytes: 0, stale: false },
+    ]);
+    expect(marks.every((mark, index) => index === 0 || mark.t >= marks[index - 1]!.t)).toBe(true);
   });
 
   it('sends the fonts that PDF pages leave out once per connection', async () => {

@@ -15,6 +15,7 @@ import { LiveSessionPool } from './live/live-session-pool.js';
 import { choosePdftex } from './live/pdftex-command.js';
 import { chooseTexpresso } from './live/texpresso-command.js';
 import { seedSampleProject } from './sample-project.js';
+import type { LiveTiming } from './routes/live.js';
 
 function positiveInt(name: string, fallback: number, minimum = 1): number {
   const raw = process.env[name];
@@ -55,6 +56,14 @@ const liveTrace =
   liveTracePath === undefined || liveTracePath === ''
     ? null
     : createWriteStream(resolve(liveTracePath), { flags: 'a' });
+// For comparing engines (`pnpm bench:live-engines`): a JSON line per live message.
+const liveTimingPath = process.env.MYLEAF_LIVE_TIMING;
+const liveTimingFile =
+  liveTimingPath === undefined || liveTimingPath === ''
+    ? null
+    : createWriteStream(resolve(liveTimingPath), { flags: 'a' });
+const liveTiming: LiveTiming | null =
+  liveTimingFile && ((mark) => liveTimingFile.write(`${JSON.stringify(mark)}\n`));
 await rm(liveRoot, { recursive: true, force: true });
 
 // Live preview engine: the patched TeXpresso (ADR 0012, default) or the
@@ -95,7 +104,14 @@ if (liveEngine === 'pdftex') {
     resolve(import.meta.dirname, '../../../vendor/texpresso/build/bin/texpresso'),
   );
   if (texpresso.kind === 'enabled') {
-    liveBackend = new TexpressoLivePreview({ command: texpresso.command, workRoot: liveRoot });
+    liveBackend = new TexpressoLivePreview({
+      command: texpresso.command,
+      workRoot: liveRoot,
+      // For diagnosis: a timestamped line per command to and message from TeXpresso.
+      ...(liveTrace === null
+        ? {}
+        : { trace: (line: string) => liveTrace.write(`${new Date().toISOString()} ${line}\n`) }),
+    });
     liveStatus = { level: 'info', message: `Live preview: enabled (${texpresso.command})` };
   } else {
     liveStatus = { level: texpresso.level, message: `Live preview disabled: ${texpresso.reason}` };
@@ -113,7 +129,7 @@ const livePreview =
         idleMs: positiveInt('MYLEAF_LIVE_IDLE_MINUTES', 10) * 60_000,
       });
 
-const app = buildApp({ store, compiler, livePreview, imageCache }, { logger: true });
+const app = buildApp({ store, compiler, livePreview, imageCache, liveTiming }, { logger: true });
 
 // Close live-preview sessions (and their TeXpresso processes) on shutdown.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

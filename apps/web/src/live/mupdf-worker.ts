@@ -39,8 +39,18 @@ export type RenderResponse =
       readonly lines: readonly TextLine[];
       /** Pages in the document. */
       readonly pages: number;
+      /** Milliseconds spent per step, for live timing (live-timing.ts). */
+      readonly timing: RenderTiming;
     }
   | { readonly id: number; readonly error: string };
+
+/** Milliseconds a render spent opening the PDF, drawing, making the bitmap and reading the text. */
+export interface RenderTiming {
+  readonly open: number;
+  readonly draw: number;
+  readonly bitmap: number;
+  readonly text: number;
+}
 
 /** Sent once the worker takes requests. */
 export interface WorkerReady {
@@ -100,10 +110,12 @@ function textLines(page: mupdf.PDFPage): TextLine[] {
 self.onmessage = async (event: MessageEvent<RenderRequest>) => {
   const { id, key, pixelWidth } = event.data;
   try {
+    const started = performance.now();
     const document = openDocument(event.data);
     const pages = document.countPages();
     const page = document.loadPage(Math.min(event.data.page ?? 0, pages - 1));
     const [x0, y0, x1, y1] = page.getBounds();
+    const opened = performance.now();
     const scale = pixelWidth / (x1 - x0);
     const width = Math.max(1, Math.round((x1 - x0) * scale));
     const height = Math.max(1, Math.round((y1 - y0) * scale));
@@ -113,13 +125,21 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
     const device = new mupdf.DrawDevice([scale, 0, 0, scale, -x0 * scale, -y0 * scale], pixmap);
     page.run(device, mupdf.Matrix.identity);
     device.close();
+    const drawn = performance.now();
     const pixels = new Uint8ClampedArray(pixmap.getPixels());
     const bitmap = await createImageBitmap(new ImageData(pixels, width, height));
+    const imaged = performance.now();
     const lines = textLines(page).map((line) => ({
       ...line,
       left: line.left - x0,
       top: line.top - y0,
     }));
+    const timing: RenderTiming = {
+      open: opened - started,
+      draw: drawn - opened,
+      bitmap: imaged - drawn,
+      text: performance.now() - imaged,
+    };
     device.destroy();
     pixmap.destroy();
     page.destroy();
@@ -131,6 +151,7 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
       height: y1 - y0,
       lines,
       pages,
+      timing,
     };
     self.postMessage(response, [bitmap]);
   } catch (error) {
