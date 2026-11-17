@@ -43,20 +43,21 @@ pnpm bench:images # compile times with the image options (ADR 0011)
 
 Server configuration (environment variables):
 
-| Variable                    | Default     | Purpose                                                                                            |
-| --------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `HOST`                      | `127.0.0.1` | Address to listen on                                                                               |
-| `PORT`                      | `3000`      | Port to listen on                                                                                  |
-| `MYLEAF_DATA_DIR`           | `./data`    | Project files (`projects/`) and builds (`builds/`)                                                 |
-| `MYLEAF_LIVE_ENGINE`        | `texpresso` | Live preview engine: `texpresso` or `pdftex` (alias `pdflatex`)                                    |
-| `MYLEAF_TEXPRESSO`          | (unset)     | Patched TeXpresso binary for live preview; `off` disables it (see below)                           |
-| `MYLEAF_PDFTEX`             | (unset)     | Patched pdfTeX binary, with `MYLEAF_LIVE_ENGINE=pdftex`                                            |
-| `MYLEAF_LIVE_MAX_SESSIONS`  | `4`         | Live previews open at once (~250 MB each)                                                          |
-| `MYLEAF_LIVE_IDLE_MINUTES`  | `10`        | Inactivity before a live preview is closed                                                         |
-| `MYLEAF_LIVE_MAX_SNAPSHOTS` | `32`        | Most pdfTeX live-preview snapshots per session (~3 MB each; `0`: none)                             |
-| `MYLEAF_LIVE_TAIL_DELAY_MS` | `300`       | pdfTeX live preview: pages past the visible ones wait until typing pauses this long (`0`: no wait) |
-| `MYLEAF_LIVE_TRACE`         | (unset)     | File to append a trace of pdfTeX live preview to (edits, runs, pdfTeX messages, pages)             |
-| `MYLEAF_SAMPLE_PROJECT`     | (unset)     | Folder to create the sample project from if missing (`pnpm dev` sets it)                           |
+| Variable                    | Default     | Purpose                                                                                                                   |
+| --------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                      | `127.0.0.1` | Address to listen on                                                                                                      |
+| `PORT`                      | `3000`      | Port to listen on                                                                                                         |
+| `MYLEAF_DATA_DIR`           | `./data`    | Project files (`projects/`) and builds (`builds/`)                                                                        |
+| `MYLEAF_LIVE_ENGINE`        | `texpresso` | Live preview engine: `texpresso` or `pdftex` (alias `pdflatex`)                                                           |
+| `MYLEAF_TEXPRESSO`          | (unset)     | Patched TeXpresso binary for live preview; `off` disables it (see below)                                                  |
+| `MYLEAF_PDFTEX`             | (unset)     | Patched pdfTeX binary, with `MYLEAF_LIVE_ENGINE=pdftex`                                                                   |
+| `MYLEAF_LIVE_MAX_SESSIONS`  | `4`         | Live previews open at once (~250 MB each)                                                                                 |
+| `MYLEAF_LIVE_IDLE_MINUTES`  | `10`        | Inactivity before a live preview is closed                                                                                |
+| `MYLEAF_LIVE_MAX_SNAPSHOTS` | `32`        | Most pdfTeX live-preview snapshots per session (~3 MB each; `0`: none)                                                    |
+| `MYLEAF_LIVE_TAIL_DELAY_MS` | `300`       | pdfTeX live preview: pages past the visible ones wait until typing pauses this long (`0`: no wait)                        |
+| `MYLEAF_LIVE_TRACE`         | (unset)     | File to append a trace of live preview to (pdfTeX: edits, runs, pdfTeX messages, pages; TeXpresso: commands and messages) |
+| `MYLEAF_LIVE_TIMING`        | (unset)     | File to append a JSON line per live edit and page to, for `pnpm bench:live-engines`                                       |
+| `MYLEAF_SAMPLE_PROJECT`     | (unset)     | Folder to create the sample project from if missing (`pnpm dev` sets it)                                                  |
 
 Live preview (optional, ADR 0012) needs the patched TeXpresso: install the
 packages listed in `vendor/texpresso/README.md` (Ubuntu and macOS; only

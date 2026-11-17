@@ -10,6 +10,18 @@ import { LiveFonts } from '../live/live-fonts.js';
 import type { LiveSessionHandle, LiveSessionPool } from '../live/live-session-pool.js';
 import type { LiveSources } from '../live/live-sources.js';
 
+/**
+ * Receives a timing mark per live-preview message (MYLEAF_LIVE_TIMING), to
+ * compare engines stage by stage (`pnpm bench:live-engines`). `t` is
+ * `performance.timeOrigin + performance.now()`, as in the browser's marks
+ * (apps/web/src/live/live-timing.ts).
+ */
+export type LiveTiming = (
+  mark: { readonly t: number; readonly kind: string } & Record<string, unknown>,
+) => void;
+
+const now = () => performance.timeOrigin + performance.now();
+
 const send = (socket: WebSocket, message: LiveServerMessage) => {
   if (socket.readyState !== socket.OPEN) return;
   const binary = message.type === 'font' || (message.type === 'page' && 'pdf' in message);
@@ -84,6 +96,7 @@ export function registerLiveRoutes(
   compiler: CompileBackend,
   pool: LiveSessionPool | null,
   sources: LiveSources | null = null,
+  timing: LiveTiming | null = null,
 ): void {
   app.get('/api/live-preview', (): LivePreviewInfo => ({
     available: pool !== null,
@@ -125,6 +138,7 @@ export function registerLiveRoutes(
         handle.touch();
         const { session } = handle;
         if (message.type === 'update') {
+          timing?.({ t: now(), kind: 'update', path: message.path, bytes: message.content.length });
           const file = {
             path: parseProjectPath(message.path),
             content: new TextEncoder().encode(message.content),
@@ -187,10 +201,35 @@ export function registerLiveRoutes(
             : { maxSnapshots: project.settings.liveSnapshots }),
         },
         (event) => {
+          if (timing !== null && (event.type === 'page' || event.type === 'page-unchanged')) {
+            const format = event.type === 'page-unchanged' ? null : 'pdf' in event ? 'pdf' : 'svg';
+            const bytes =
+              event.type === 'page-unchanged'
+                ? 0
+                : 'pdf' in event
+                  ? event.pdf.length
+                  : event.svg.length;
+            timing({
+              t: now(),
+              kind: event.type,
+              page: event.page,
+              format,
+              bytes,
+              stale: event.type === 'page' && event.stale === true,
+            });
+          } else if (timing !== null && event.type === 'stale') {
+            timing({ t: now(), kind: 'stale', from: event.from });
+          }
           if (event.type === 'page' && 'pdf' in event) {
             const { page, pdf, stale } = event;
             // Fonts the page leaves out go first, once per connection.
-            for (const message of fonts.send(event.fonts ?? [])) send(socket, message);
+            let fontBytes = 0;
+            for (const message of fonts.send(event.fonts ?? [])) {
+              if (message.type === 'font') fontBytes += message.data.length;
+              send(socket, message);
+            }
+            if (timing !== null && fontBytes > 0)
+              timing({ t: now(), kind: 'fonts', bytes: fontBytes });
             const ids = event.fonts?.length ? { fonts: event.fonts.map((font) => font.id) } : {};
             send(
               socket,

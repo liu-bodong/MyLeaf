@@ -10,6 +10,7 @@ import { LiveSources } from './live/live-sources.js';
 import { registerCompileRoutes } from './routes/compile.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerLiveRoutes } from './routes/live.js';
+import type { LiveTiming } from './routes/live.js';
 import { registerProjectRoutes } from './routes/projects.js';
 
 export interface AppDependencies {
@@ -19,6 +20,8 @@ export interface AppDependencies {
   readonly livePreview?: LiveSessionPool | null;
   /** Converted images the compiler keeps (`reuseImages`), for live previews too. */
   readonly imageCache?: ImageCache | null;
+  /** Receives live-preview timing marks (MYLEAF_LIVE_TIMING); see `LiveTiming`. */
+  readonly liveTiming?: LiveTiming | null;
 }
 
 /**
@@ -34,7 +37,7 @@ export const liveSocketCompression = {
 } as const;
 
 export function buildApp(
-  { store, compiler, livePreview = null, imageCache = null }: AppDependencies,
+  { store, compiler, livePreview = null, imageCache = null, liveTiming = null }: AppDependencies,
   options: FastifyServerOptions = {},
 ): FastifyInstance {
   const app = Fastify({
@@ -50,7 +53,7 @@ export function buildApp(
   registerCompileRoutes(app, store, compiler, livePreview);
   void app.register(websocket, { options: { perMessageDeflate: liveSocketCompression } });
   void app.register((scoped, _options, done) => {
-    registerLiveRoutes(scoped, store, compiler, livePreview, liveSources);
+    registerLiveRoutes(scoped, store, compiler, livePreview, liveSources, liveTiming);
     done();
   });
   app.addHook('onClose', async () => {

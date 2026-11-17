@@ -427,6 +427,27 @@ messages and UI are unchanged.
   a segmentation fault on the first edit of the ICML sample and of the
   paper, so there is no side-by-side measurement.
 
+## Side by side with TeXpresso (2026-11-17)
+
+`pnpm bench:live-engines` (`apps/server/bench/live-engines-bench.ts`)
+types into the benchmark paper in a real browser with each engine and
+splits keystroke to screen into stages, from timing marks in the browser
+(`apps/web/src/live/live-timing.ts`, on with `?liveTiming` or
+`localStorage['myleaf.liveTiming'] = '1'`) and the server
+(`MYLEAF_LIVE_TIMING`). It runs at device pixel ratios 2 and 1, at the top
+of page 1 and at a paragraph low on a later page.
+
+Cloud container, pdfTeX only (TeXpresso still crashes on the first edit
+here), medians of 6 isolated keys:
+
+| Spot, pixel ratio    | Key to painted | Server: edit to page event | Browser: draw (raster, bitmap) |
+| -------------------- | -------------- | -------------------------- | ------------------------------ |
+| Page 1 top, 2x       | 109–110 ms     | 51–56 ms                   | 33–35 ms (14, 11)              |
+| Page 5, 88% down, 2x | 124 ms         | ~63 ms                     | ~38 ms                         |
+| Page 1 top, 1x       | 100 ms         | 52 ms                      | 22 ms (12, 2)                  |
+
+The comparison with TeXpresso is to be run on the owner's Mac.
+
 ## Next step
 
 Done: pdfTeX built with stream hooks (finding 5); the level 2 engine
