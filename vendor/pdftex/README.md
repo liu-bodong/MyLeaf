@@ -63,18 +63,18 @@ the `.aux`). Each
 and writes all output (including a copy of the log so far) to its own
 directory. Messages are lines of tab-separated fields:
 
-| Direction       | Message                                                              | Meaning                                                            |
-| --------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| engine → driver | `input <path>`                                                       | A file read before the pause (preamble dependencies)               |
-| engine → driver | `ready pause`                                                        | Paused before byte `<n>`; `pause`: runs can be paused (below)      |
-| driver → engine | `run <id> <main-file> <output-dir> [<first> <last> [<every> <max>]]` | Fork a child; its bytes before the pause must equal the original's |
-| engine → driver | `started <id> <pid>`                                                 | The child's process (to cancel the run, the driver kills it)       |
-| engine → driver | `read <path>`                                                        | A file a child opened                                              |
-| engine → driver | `page <id> <n> <dir>`                                                | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3)   |
-| engine → driver | `file <pid> <bytes> <eof> <path>`                                    | Snapshot `<pid>` read `<bytes>` of `<path>` (`<eof>`: to its end)  |
-| engine → driver | `snapshot <id> <n> <pos> <pid> <child-pid>`                          | A snapshot after page `<n>` and `<pos>` bytes (level 3)            |
-| engine → driver | `done <id> <status>`                                                 | The child exited (exit status, or minus the signal)                |
-| engine → driver | `resumed <pid>`                                                      | That process (engine or snapshot) reads commands again             |
+| Direction       | Message                                                                                         | Meaning                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| engine → driver | `input <path>`                                                                                  | A file read before the pause (preamble dependencies)               |
+| engine → driver | `ready pause`                                                                                   | Paused before byte `<n>`; `pause`: runs can be paused (below)      |
+| driver → engine | `run <id> <main-file> <output-dir> [<first> <last> [<every> <max> [<fence-file> <fence-pos>]]]` | Fork a child; its bytes before the pause must equal the original's |
+| engine → driver | `started <id> <pid>`                                                                            | The child's process (to cancel the run, the driver kills it)       |
+| engine → driver | `read <path>`                                                                                   | A file a child opened                                              |
+| engine → driver | `page <id> <n> <dir>`                                                                           | Page `<n>` (in `<first>`–`<last>`) is in `<dir>`'s PDF (level 3)   |
+| engine → driver | `file <pid> <bytes> <eof> <path>`                                                               | Snapshot `<pid>` read `<bytes>` of `<path>` (`<eof>`: to its end)  |
+| engine → driver | `snapshot <id> <n> <pos> <pid> <child-pid> [fence]`                                             | A snapshot after page `<n>` and `<pos>` bytes (level 3)            |
+| engine → driver | `done <id> <status>`                                                                            | The child exited (exit status, or minus the signal)                |
+| engine → driver | `resumed <pid>`                                                                                 | That process (engine or snapshot) reads commands again             |
 
 With `<first>` and `<last>` (level 3, page-by-page output), each time the
 child ships out a page in that range it forks a finisher: a copy that closes
@@ -100,7 +100,14 @@ new child opens each input that was open at the snapshot again, by name, at
 the position read so far. With `<every>` and `<max>`, the child takes
 snapshots only after pages that are multiples of `<every>`, and at most
 `<max>` of them (`0`: none); the driver uses them to bound the number of
-snapshot processes. The engine and its
+snapshot processes. With a fence as well, the child also forks a snapshot
+when it is about to read byte `<fence-pos>` of `<fence-file>` (pdfTeX's name
+for it, as in `input` and `read` lines): reads of that file stop at the
+fence, so a 512-byte block never crosses it. That snapshot's line ends in
+`fence`, its `<n>` is the last page shipped out, and it does not count
+against `<max>`. The driver sets the fence at the start of the line being
+edited, so the next keystroke in that line resumes there instead of at the
+top of the page (as TeXpresso does). The engine and its
 snapshots form a chain, and only the last paused process reads `<fd>`: each
 waits for its child to exit, then says `done` (for its child's run) and
 `resumed`. To run from snapshot _k_, the driver kills the snapshots after it
