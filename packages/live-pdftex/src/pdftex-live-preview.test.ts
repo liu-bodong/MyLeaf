@@ -154,6 +154,32 @@ describe.skipIf(!available)('PdftexLivePreview', { timeout: 60_000 }, () => {
     expect(pages()[2]?.image).not.toBe(first?.image);
   });
 
+  it('starts no run for an update with the text it has', async () => {
+    const trace: string[] = [];
+    const live = await open([mainFile(main('', 'First page.'))], workRoot, {
+      trace: (line) => trace.push(line),
+    });
+    live.showPages(1, 1);
+    await settled();
+    const runs = () => trace.filter((line) => / run \d+: /.test(line)).length;
+    const before = runs();
+    live.updateFile(mainFile(main('', 'First page.')));
+    await settled();
+    expect(runs()).toBe(before);
+    expect(trace).toContainEqual(expect.stringMatching(/edit main\.tex: unchanged$/));
+  });
+
+  it('reads the font map in the engine, before it pauses', async () => {
+    const trace: string[] = [];
+    const live = await open([mainFile(main('', 'First page.'))], workRoot, {
+      trace: (line) => trace.push(line),
+    });
+    live.showPages(1, 1);
+    await expect.poll(() => pages().length, { timeout: 20_000 }).toBe(1);
+    // Files the engine read before its pause come as `input` lines.
+    expect(trace).toContainEqual(expect.stringMatching(/< \d+ input\t.*pdftex\.map$/));
+  });
+
   // After page 1 the document never ends: what is shown comes from finishers.
   const endless = (text: string) =>
     bytes(String.raw`\documentclass{article}

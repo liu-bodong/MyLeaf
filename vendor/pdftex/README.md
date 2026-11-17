@@ -124,6 +124,11 @@ to `<job>.synctex` in its own directory at the end. The `synctex` tool then
 maps between the source and that directory's PDF. Compressed SyncTeX
 (`-synctex=1`) is not wrapped, so all runs would write to one file.
 
+Before it pauses, the engine reads pdfTeX's font map (`pdftex.map`, which
+pdfTeX otherwise reads at the first shipout), so run children share it
+instead of each parsing it again: in a full TeX Live the map is about
+5 MB, and parsing it took about 130 ms per run on macOS.
+
 The child's terminal output goes to `<output-dir>/terminal.txt`. Files the
 child reads (`.aux`, included files, images) come from disk: the driver
 writes them before `run`. When the preamble or a file in an `input` line
