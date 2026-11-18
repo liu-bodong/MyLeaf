@@ -202,7 +202,15 @@ interface Snapshot {
   readonly files: Sources;
   /** What it read of them: a run can resume there if those bytes are unchanged. */
   readonly reads: readonly Read[];
+  /**
+   * Taken at a fence (mid-page, at the start of the line being edited)
+   * rather than after a page; counts against `maxSnapshots` like the others.
+   */
+  readonly fence: boolean;
 }
+
+/** Most fence snapshots in an engine's chain, so that page snapshots keep most of `maxSnapshots`. */
+const MAX_FENCES = 8;
 
 /** Most runs in a row without an edit to bring references up to date. */
 const MAX_SETTLE_RUNS = 3;
@@ -290,6 +298,10 @@ class PdftexSession implements LivePreviewSession {
   readonly #mupdfLog = (message: string) => this.#trace(`mupdf: ${message}`);
   /** Most snapshots kept: the request's, at most the backend's. */
   #maxSnapshots: number;
+  /** The sources of the last run, to find where the next one's edit is. */
+  #lastRun: Sources | null = null;
+  /** The name pdfTeX gave each project file it read, by project path (for fences). */
+  readonly #pdftexNames = new Map<string, string>();
 
   constructor(
     options: Required<PdftexLivePreviewOptions>,
@@ -512,10 +524,16 @@ class PdftexSession implements LivePreviewSession {
     // ends its control connection): writing to it then would throw.
     // Level 3: the run resumes from the last snapshot before the edit.
     let from = 1;
+    let fence = '';
+    const lastRun = this.#lastRun;
+    this.#lastRun = files;
     if (engine) {
-      const after = await this.#resume(engine, files);
-      if (after === null) engine = null;
-      else from = after + 1;
+      const resumed = await this.#resume(engine, files);
+      if (resumed === null) engine = null;
+      else {
+        from = resumed.page + 1;
+        fence = this.#fence(engine, resumed.snapshot, lastRun, files, offset ?? 0);
+      }
     }
     if (this.#closing) return;
     // Pages from `from` on are typeset again (all of them in a full run):
@@ -533,13 +551,13 @@ class PdftexSession implements LivePreviewSession {
       // (as of the last run).
       const pages = this.#pdf?.pages ?? 0;
       const every = this.#maxSnapshots > 0 ? Math.max(1, Math.ceil(pages / this.#maxSnapshots)) : 1;
-      const more = Math.max(0, this.#maxSnapshots - engine.snapshots.length);
+      const more = Math.max(0, this.#maxSnapshots - engine.snapshots.length - (fence ? 1 : 0));
       status = await new Promise<number | null>((resolveRun) => {
         engine.waiting.set(id, resolveRun);
         engine.pages.set(id, (page, pageDir) => {
           void this.#renderFinished(inFlight, page, join(pageDir, `${this.#job}.pdf`));
         });
-        const command = `run\t${id}\t${main}\t${out}\t${first}\t${last}\t${every}\t${more}`;
+        const command = `run\t${id}\t${main}\t${out}\t${first}\t${last}\t${every}\t${more}${fence}`;
         this.#trace(`> ${engine.process.pid} ${command}`);
         engine.control.write(`${command}\n`);
       });
@@ -763,17 +781,25 @@ class PdftexSession implements LivePreviewSession {
    * Makes the last snapshot whose state still holds for `files` (or the
    * engine itself) read commands: kills the processes after it in the chain
    * and waits for its `resumed`. Returns the page it resumes after (0 for
-   * the engine), or null if the engine exited.
+   * the engine) and the snapshot (null: the engine), or null if the engine
+   * exited.
    */
-  async #resume(engine: Engine, files: Sources): Promise<number | null> {
+  async #resume(
+    engine: Engine,
+    files: Sources,
+  ): Promise<{ page: number; snapshot: Snapshot | null } | null> {
     let kept = 0;
-    const limit = Math.min(engine.snapshots.length, this.#maxSnapshots);
-    while (kept < limit && this.#holds(engine.snapshots[kept]!, files)) kept++;
-    const target = kept > 0 ? engine.snapshots[kept - 1]!.pid : engine.process.pid;
+    // At most #maxSnapshots (the setting may have been lowered).
+    while (kept < Math.min(engine.snapshots.length, this.#maxSnapshots)) {
+      if (!this.#holds(engine.snapshots[kept]!, files)) break;
+      kept++;
+    }
+    const snapshot = kept > 0 ? engine.snapshots[kept - 1]! : null;
+    const target = snapshot ? snapshot.pid : engine.process.pid;
     if (target === undefined) return null;
-    const after = kept > 0 ? engine.snapshots[kept - 1]!.page : 0;
+    const after = { page: snapshot?.page ?? 0, snapshot };
     this.#trace(
-      `resume from ${kept > 0 ? `snapshot after page ${engine.snapshots[kept - 1]!.page}` : 'the engine'} (pid ${target}), ${kept} of ${engine.snapshots.length} snapshots kept`,
+      `resume from ${snapshot ? `${snapshot.fence ? 'fence' : 'snapshot'} after page ${snapshot.page}` : 'the engine'} (pid ${target}), ${kept} of ${engine.snapshots.length} snapshots kept`,
     );
     if (engine.reader === target) return after;
     const resumed = new Promise<boolean>((resolveResumed) => {
@@ -783,6 +809,45 @@ class PdftexSession implements LivePreviewSession {
     for (const snapshot of engine.snapshots.splice(kept)) kill(snapshot.pid);
     if (engine.leaf !== null) kill(engine.leaf);
     return (await resumed) ? after : null;
+  }
+
+  /**
+   * The fence for a run of `files` (see vendor/pdftex: the `run` command's
+   * last two fields, with their tabs), or '' for none. When one project
+   * file changed since the last run, the fence is the start of the first
+   * changed line: the run takes a snapshot there, and the next edit in
+   * that line (typing) resumes from it instead of from the top of the page.
+   * Only past where `snapshot` (null: the engine, paused at `pause` of the
+   * root file) had read that file.
+   */
+  #fence(
+    engine: Engine,
+    snapshot: Snapshot | null,
+    previous: Sources | null,
+    files: Sources,
+    pause: number,
+  ): string {
+    if (previous === null || engine.snapshots.length >= this.#maxSnapshots) return '';
+    if (engine.snapshots.filter((kept) => kept.fence).length >= MAX_FENCES) return '';
+    const changed = [...files].filter(([path, content]) => previous.get(path) !== content);
+    if (changed.length !== 1) return '';
+    const [path, now] = changed[0]!;
+    const then = previous.get(path);
+    const name = this.#pdftexNames.get(path);
+    if (!then || name === undefined || /[\t\n]/.test(name)) return '';
+    const length = Math.min(then.length, now.length);
+    let edit = 0;
+    while (edit < length && then[edit] === now[edit]) edit++;
+    // (lastIndexOf counts a negative start from the end.)
+    const line = edit === 0 ? 0 : now.lastIndexOf(0x0a, edit - 1) + 1;
+    const read = snapshot
+      ? (snapshot.reads.find((entry) => entry.path === path)?.bytes ?? 0)
+      : path === this.#rootFile
+        ? pause
+        : 0;
+    if (line <= read) return '';
+    this.#trace(`fence at ${path}:${line}`);
+    return `\t${name}\t${line}`;
   }
 
   /**
@@ -909,10 +974,17 @@ class PdftexSession implements LivePreviewSession {
       const [kind, first, second, third] = fields;
       if (kind === 'input' && first !== undefined) {
         const path = this.#projectPath(first);
-        if (path !== null) inputs.add(path);
+        if (path !== null) {
+          inputs.add(path);
+          this.#pdftexNames.set(path, first);
+        }
       } else if (kind === 'read' && first !== undefined) {
-        const path = this.#projectPath(fields.slice(1).join('\t'));
-        if (path !== null) this.#hookedReads.add(path);
+        const name = fields.slice(1).join('\t');
+        const path = this.#projectPath(name);
+        if (path !== null) {
+          this.#hookedReads.add(path);
+          this.#pdftexNames.set(path, name);
+        }
       } else if (kind === 'file' && fields.length >= 5) {
         const path = this.#projectPath(fields.slice(4).join('\t'));
         const pid = Number(first);
@@ -929,13 +1001,17 @@ class PdftexSession implements LivePreviewSession {
         pages.get(first)?.(Number(second), third);
       } else if (kind === 'started' && second !== undefined) {
         engine.leaf = Number(second);
-      } else if (kind === 'snapshot' && first !== undefined && fields.length === 6) {
+      } else if (
+        kind === 'snapshot' &&
+        first !== undefined &&
+        (fields.length === 6 || (fields.length === 7 && fields[6] === 'fence'))
+      ) {
         const files = engine.runs.get(first);
         const [page, , pid, leaf] = fields.slice(2).map(Number) as [number, number, number, number];
         const reads = engine.reads.get(pid) ?? [];
         engine.reads.delete(pid);
         if (files) {
-          engine.snapshots.push({ pid, page, files, reads });
+          engine.snapshots.push({ pid, page, files, reads, fence: fields.length === 7 });
           engine.leaf = leaf;
         }
         // Asked to pause as it forked: the snapshot ignored it; ask its child.

@@ -302,6 +302,35 @@ ${third}
     expect(pages()[2]?.image).toBe(await freshPage(edited, 3));
   });
 
+  it('resumes typing in a line from a fence at its start, mid-page', async () => {
+    const trace: string[] = [];
+    const filler = Array.from({ length: 12 }, (_, i) => `Paragraph ${i} of filler text.`).join(
+      '\n\n',
+    );
+    const doc = (typed: string) =>
+      bytes(String.raw`\documentclass{article}
+\begin{document}
+${filler}
+
+Typed here:${typed} and the rest of the line.
+
+Last paragraph.
+\end{document}
+`);
+    const live = await open([mainFile(doc(''))], workRoot, { trace: (line) => trace.push(line) });
+    live.showPages(1, 1);
+    await settled();
+    // The first edit in the line sets a fence there; the next ones resume from it.
+    live.updateFile(mainFile(doc(' a')));
+    await settled();
+    expect(trace).toContainEqual(expect.stringMatching(/fence at main\.tex:\d+$/));
+    expect(trace).toContainEqual(expect.stringMatching(/< \d+ snapshot\t\d+\t0\t.*\tfence$/));
+    live.updateFile(mainFile(doc(' ab')));
+    await settled();
+    expect(trace).toContainEqual(expect.stringMatching(/resume from fence after page 0/));
+    expect(pages().at(-1)?.image).toBe(await freshPage(doc(' ab'), 1));
+  });
+
   it('resumes from the last snapshot before an edit in an \\input file', async () => {
     const chapter = (first: string, third: string) => ({
       path: parseProjectPath('chapter.tex'),
@@ -404,8 +433,8 @@ ${third}
       events.filter((event) => event.type === 'page-count' && event.final).length;
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(2);
     await expect.poll(processes, { timeout: 10_000 }).toBe(1);
-    // The backend's 3: a snapshot after each page (after page 3, when
-    // \end{document} reads the .aux).
+    // The backend's 3: a fence at the edited line, then snapshots after pages
+    // (fences count against the most).
     live.setMaxSnapshots?.(null);
     live.updateFile(mainFile(threePages('First page, edited.', 'Third page.')));
     await expect.poll(finalCounts, { timeout: 30_000 }).toBe(3);
