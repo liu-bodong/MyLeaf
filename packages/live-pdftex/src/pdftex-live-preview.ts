@@ -348,6 +348,12 @@ class PdftexSession implements LivePreviewSession {
 
   updateFile(file: ProjectFile): void {
     if (this.#closing) return;
+    // Saving a file sends the text the editor sent already: no run for that.
+    const current = this.#files.get(file.path);
+    if (current && Buffer.from(current).equals(file.content)) {
+      this.#trace(`edit ${file.path}: unchanged`);
+      return;
+    }
     this.#trace(`edit ${file.path} ${file.content.length} bytes`);
     this.#files.set(file.path, file.content);
     this.#dirty.add(file.path);
